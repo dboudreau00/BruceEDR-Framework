@@ -434,7 +434,7 @@
       "description": "A script body that names amsiInitFailed, AmsiScanBuffer or the AmsiUtils type is trying to disable the very interface that just handed us the script. Treat as high confidence: there is no benign reason for ordinary automation to touch these symbols.",
       "author": "ProcessShield",
       "severity": "critical",
-      "score": 70,
+      "score": 65,
       "techniques": ["T1562.001", "T1059.001"],
       "references": ["https://attack.mitre.org/techniques/T1562/001/"],
       "enabled": true,

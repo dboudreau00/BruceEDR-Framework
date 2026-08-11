@@ -40,8 +40,11 @@ opt-in (sections 7 and 9).
    - `ProcessShield.csproj` - the agent (app)
    - `tests\ProcessShield.Tests\` - the xUnit test project
    - `kernel\ShieldFilter\` - the C minifilter (built separately with the WDK)
-   - `rules\` - sample YARA rules
+   - `rules\` - sample YARA rules, and `rules\detection\` - the JSON detection packs
+   - `Replay\scenarios\` - detection scenarios replayed by `--selftest`
+   - `intel\feeds\` - drop your indicator feeds here
    - `tools\simulate-benign-stealer.ps1` - the safe detection demo
+   - `tools\verify.ps1` - build + tests + rules + replay in one command
    - `shield.config.json` - configuration
 
 ---
@@ -89,7 +92,7 @@ detection walkthrough below works with either front-end.
 
 ## 4. Run the unit tests
 
-- In VS: **Test -> Run All Tests** (opens Test Explorer). All 1,882 tests should pass.
+- In VS: **Test -> Run All Tests** (opens Test Explorer). All 1,969 tests should pass.
   They cover the exfil-chain scoring, the JSON rule engine, ATT&CK mapping, beacon and
   DGA analytics, the process tree (including PID reuse and hostile parent cycles), PE
   parsing against malformed files, indicator feeds, the encrypted quarantine vault,
@@ -149,9 +152,11 @@ You should see it start the ETW monitor and print the prompt:
 shield>
 ```
 
-**Console commands:** `list` / `list all`, `info N`, `resume N`, `suspend N`,
-`kill N`, `stats`, `reload` (re-read config), `audit` (verify the tamper-evident
-log), `quit`.
+**Console commands:** `list` / `list all`, `info N`, `tree N`, `resume N`, `suspend N`,
+`kill N`, `stats`, `metrics`, `reload` (re-read config, rules and intel), `audit` (verify
+the tamper-evident log), `attack`, `rules [id]`, `intel`, `surface [pid]`, `api ...`,
+`vault ...`, `isolate on|off`, `triage N`, `replay <file>`, `quit`. Type `help` for the
+full list.
 
 ---
 
@@ -363,7 +368,7 @@ Two capabilities are intentionally not shippable here because they're gated behi
 Microsoft programs: **PPL/ELAM tamper protection** and **production driver
 signing**. See `README.md` -> "Security model & honest limitations".
 
-What *is* verified on every build: the solution compiles with zero warnings, 1,882 unit
+What *is* verified on every build: the solution compiles with zero warnings, 1,969 unit
 tests pass, all 72 detection rules validate, and all three replay scenarios meet their
 expectations — including the benign one that must produce no verdicts at all.
 
