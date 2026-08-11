@@ -1,9 +1,12 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Hosting;
+using ProcessShield.Api;
 using ProcessShield.Configuration;
 using ProcessShield.Core;
 using ProcessShield.Detection;
 using ProcessShield.Driver;
+using ProcessShield.Intel;
 using ProcessShield.Memory;
 using ProcessShield.Response;
 using ProcessShield.Security;
@@ -23,15 +26,35 @@ public sealed class Composition : IDisposable
     public Logger Log { get; }
     public ShieldConfig Config { get; private set; }
 
+    /// <summary>Declarative rules currently loaded. Replaced wholesale on hot reload.</summary>
+    public RuleSet Rules { get; private set; } = new(Array.Empty<DetectionRule>(), Array.Empty<RuleValidationError>());
+    /// <summary>Indicator feeds currently loaded.</summary>
+    public IocFeed Intel { get; private set; } = new();
+    /// <summary>Observed network/API surface, shared with the engine.</summary>
+    public ApiSurfaceInventory Surface { get; }
+    /// <summary>Encrypted quarantine store, or null when the operator disabled it.</summary>
+    public QuarantineVault? Vault { get; }
+    /// <summary>Most recent events, for the GUI feed and the control API.</summary>
+    public RingBufferSink Events { get; }
+    public NetworkIsolation Isolation { get; }
+    /// <summary>Safety policy governing every outbound API Studio request.</summary>
+    public ApiSafetyPolicy ApiPolicy { get; private set; }
+
     private readonly string _configPath;
     private readonly AuthenticodeVerifier _verifier;
     private readonly CompositeSink _sink;
     private readonly IMemoryScanner _scanner;
+    private readonly RuleEngineHolder _ruleHolder;
+    private readonly IocFeedHolder _intelHolder;
     private FileSystemWatcher? _configWatcher;
     private MinifilterClient? _minifilter;
+    private ControlServer? _control;
 
     private Composition(string configPath, ShieldConfig config, Logger log,
-        AuthenticodeVerifier verifier, CompositeSink sink, IMemoryScanner scanner, ShieldHost host)
+        AuthenticodeVerifier verifier, CompositeSink sink, IMemoryScanner scanner, ShieldHost host,
+        ApiSurfaceInventory surface, QuarantineVault? vault, RingBufferSink events,
+        NetworkIsolation isolation, RuleEngineHolder ruleHolder, IocFeedHolder intelHolder,
+        ApiSafetyPolicy apiPolicy)
     {
         _configPath = configPath;
         Config = config;
@@ -40,18 +63,43 @@ public sealed class Composition : IDisposable
         _sink = sink;
         _scanner = scanner;
         Host = host;
+        Surface = surface;
+        Vault = vault;
+        Events = events;
+        Isolation = isolation;
+        _ruleHolder = ruleHolder;
+        _intelHolder = intelHolder;
+        ApiPolicy = apiPolicy;
     }
 
     public static Composition Build(string configPath, IEventSink? extraSink = null)
     {
         var log = new Logger();
         var cfg = ConfigLoader.Load(configPath, m => log.Info("config: " + m));
+        var clock = SystemClock.Instance;
 
-        var sink = BuildSink(cfg.Telemetry, log, extraSink);
+        var events = new RingBufferSink(512);
+        var sink = BuildSink(cfg.Telemetry, log, extraSink, events);
         log.SetSink(sink);
 
         var verifier = new AuthenticodeVerifier(cfg.Allowlist);
         var scanner = BuildScanner(cfg.Detection, log);
+
+        // --- optional analytics -------------------------------------------------
+        var ruleHolder = new RuleEngineHolder();
+        var ruleSet = LoadRules(cfg.Detection, log);
+        ruleHolder.Set(ruleSet);
+
+        var intelHolder = new IocFeedHolder();
+        var feed = LoadIntel(cfg.Intel, log);
+        intelHolder.Set(feed);
+
+        var tree = new ProcessTree(clock);
+        var beacons = cfg.Detection.EnableBeaconDetection
+            ? new BeaconAnalyzer(clock, cfg.Detection.BeaconMinConnections)
+            : null;
+        var surface = new ApiSurfaceInventory(clock);
+        var hashes = new ImageHashCache();
 
         var options = new EngineOptions
         {
@@ -59,17 +107,154 @@ public sealed class Composition : IDisposable
             QuarantineThreshold = cfg.Detection.QuarantineThreshold,
             CorrelationWindow = TimeSpan.FromSeconds(cfg.Detection.CorrelationWindowSeconds),
             AutoKillOnQuarantine = cfg.Detection.AutoKill,
-            TrustDiscount = cfg.Detection.TrustDiscount
+            TrustDiscount = cfg.Detection.TrustDiscount,
+            EnableScoreDecay = cfg.Detection.EnableScoreDecay,
+            ScoreDecayPoints = cfg.Detection.ScoreDecayPoints,
+            ScoreDecayInterval = TimeSpan.FromSeconds(cfg.Detection.ScoreDecayIntervalSeconds),
+            BeaconScore = cfg.Detection.BeaconScore,
+            DgaScore = cfg.Detection.DgaScore,
+            IntelHitScore = cfg.Intel.HitScore,
+            MaxTrackedProcesses = cfg.Detection.MaxTrackedProcesses
         };
 
-        var response = new ResponseManager(log, verifier);
-        var engine = new DetectionEngine(options, response.IsTrusted);
-        var host = new ShieldHost(cfg.Detection.AutoKill, engine, response, scanner, log);
+        var deps = new EngineDependencies
+        {
+            Clock = clock,
+            Tree = tree,
+            Beacons = beacons,
+            Rules = ruleHolder.Engine,
+            Intel = cfg.Intel.Enabled ? intelHolder.Feed : null,
+            Surface = cfg.Api.EnableSurfaceInventory ? surface : null,
+            ImageHash = cfg.Intel.Enabled ? hashes.Sha256 : null
+        };
 
-        var comp = new Composition(configPath, cfg, log, verifier, sink, scanner, host);
+        // --- response ------------------------------------------------------------
+        QuarantineVault? vault = null;
+        if (cfg.Response.UseEncryptedVault)
+        {
+            try { vault = new QuarantineVault(ResolvePath(cfg.Response.QuarantineVaultPath), clock); }
+            catch (Exception ex) { log.Error("quarantine vault unavailable; falling back to plain moves", ex); }
+        }
+
+        var isolation = new NetworkIsolation(log, clock);
+        var response = new ResponseManager(log, verifier, vault);
+        var engine = new DetectionEngine(options, response.IsTrusted, deps);
+        var playbook = LoadPlaybook(cfg.Response, log);
+
+        var hostOptions = new ShieldHostOptions
+        {
+            AutoKill = cfg.Detection.AutoKill,
+            EnableExtendedMonitors = cfg.Detection.EnableExtendedMonitors,
+            Tree = tree,
+            Surface = cfg.Api.EnableSurfaceInventory ? surface : null,
+            Playbook = playbook,
+            Metrics = new ShieldMetrics(clock)
+        };
+        var host = new ShieldHost(engine, response, scanner, log, hostOptions);
+
+        var apiPolicy = BuildApiPolicy(cfg.Api.Studio);
+
+        var comp = new Composition(configPath, cfg, log, verifier, sink, scanner, host,
+            surface, vault, events, isolation, ruleHolder, intelHolder, apiPolicy)
+        {
+            Rules = ruleSet,
+            Intel = feed
+        };
+
+        host.ExtendedAction = comp.RunExtendedAction;
         comp._configWatcher = ConfigLoader.Watch(configPath, comp.Apply, m => log.Info("config: " + m));
         comp.ConnectMinifilter(cfg);
+        comp.StartControlServer(cfg);
+
+        log.Info($"detection rules: {ruleSet.Rules.Count} loaded" +
+                 (ruleSet.Errors.Count == 0 ? "" : $", {ruleSet.Errors.Count} rejected"));
+        if (feed.Count > 0) log.Info($"indicator feeds: {feed.Count} indicator(s) loaded");
         return comp;
+    }
+
+    // ------------------------------------------------------------------- loading
+
+    private static RuleSet LoadRules(DetectionConfig d, Logger log)
+    {
+        if (!d.EnableRuleEngine) return new RuleSet(Array.Empty<DetectionRule>(), Array.Empty<RuleValidationError>());
+        var dir = SelfTest.Resolve(null, d.RulesPath) ?? ResolvePath(d.RulesPath);
+        if (!Directory.Exists(dir))
+        {
+            log.Info($"rules: '{dir}' not found; running with builtin detections only");
+            return new RuleSet(Array.Empty<DetectionRule>(), Array.Empty<RuleValidationError>());
+        }
+        var set = RuleEngine.LoadDirectory(dir, m => log.Info("rules: " + m));
+        foreach (var e in set.Errors.Where(e => e.IsBlocking).Take(20))
+            log.Info($"rules: rejected [{e.RuleId}] {e.Message}");
+        return set;
+    }
+
+    private static IocFeed LoadIntel(IntelConfig i, Logger log)
+    {
+        if (!i.Enabled) return new IocFeed();
+        var dir = SelfTest.Resolve(null, i.FeedPath) ?? ResolvePath(i.FeedPath);
+        if (!Directory.Exists(dir)) return new IocFeed();
+        return IocFeed.LoadDirectory(dir, m => log.Info("intel: " + m));
+    }
+
+    private static Playbook LoadPlaybook(ResponseConfig r, Logger log)
+    {
+        if (string.IsNullOrWhiteSpace(r.PlaybookPath)) return Playbook.Default();
+        try
+        {
+            var path = ResolvePath(r.PlaybookPath);
+            if (!File.Exists(path))
+            {
+                log.Info($"playbook '{path}' not found; using the default playbook");
+                return Playbook.Default();
+            }
+            var pb = Playbook.FromJson(File.ReadAllText(path), out var errors);
+            foreach (var e in errors) log.Info("playbook: " + e);
+            return pb;
+        }
+        catch (Exception ex)
+        {
+            log.Error("playbook load failed; using the default playbook", ex);
+            return Playbook.Default();
+        }
+    }
+
+    private static ApiSafetyPolicy BuildApiPolicy(ApiStudioConfig s) => new()
+    {
+        AllowedHosts = s.AllowedHosts ?? Array.Empty<string>(),
+        AllowMutatingMethods = s.AllowMutatingMethods,
+        AllowInsecureHttp = s.AllowInsecureHttp,
+        MaxRequestsPerSecond = s.MaxRequestsPerSecond,
+        MaxResponseBytes = s.MaxResponseBytes
+    };
+
+    /// <summary>Resolves a config-relative path against the executable directory.</summary>
+    internal static string ResolvePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return AppContext.BaseDirectory;
+        return Path.IsPathRooted(path) ? path : Path.Combine(AppContext.BaseDirectory, path);
+    }
+
+    private void StartControlServer(ShieldConfig cfg)
+    {
+        var c = cfg.Api.Control;
+        if (!c.Enabled) return;
+        try
+        {
+            var backend = new ControlBackend(this);
+            var server = new ControlServer(
+                new ControlServerOptions
+                {
+                    Prefix = $"http://{c.Address}:{c.Port}/",
+                    Token = c.Token,
+                    Enabled = true,
+                    AllowActions = c.AllowActions
+                },
+                backend, Log);
+            if (server.Start()) _control = server;
+            else server.Dispose();
+        }
+        catch (Exception ex) { Log.Error("control server", ex); }
     }
 
     // Best-effort kernel enforcement. If the ShieldFilter driver isn't installed the
@@ -91,9 +276,20 @@ public sealed class Composition : IDisposable
         catch (Exception ex) { Log.Error("minifilter setup", ex); }
     }
 
-    private static CompositeSink BuildSink(TelemetryConfig t, Logger log, IEventSink? extra)
+    private static CompositeSink BuildSink(TelemetryConfig t, Logger log, IEventSink? extra,
+        RingBufferSink events)
     {
-        var sinks = new List<IEventSink> { new JsonlSink(t.JsonlPath) };
+        // The wire format applies to the file/syslog/webhook sinks so ProcessShield can be
+        // a drop-in producer for an existing SIEM. The audit chain deliberately keeps the
+        // native shape: its HMACs are computed over that canonical form, and switching the
+        // schema would silently invalidate every previously written chain.
+        var formatter = EventFormatters.Resolve(t.Format);
+        bool native = string.Equals(formatter.Name, "native", StringComparison.OrdinalIgnoreCase);
+
+        var sinks = new List<IEventSink>
+        {
+            native ? new JsonlSink(t.JsonlPath) : new FormattingSink(t.JsonlPath, formatter)
+        };
 
         // Open the audit log defensively: if its file is genuinely unreadable (locked,
         // permissions), disable the audit sink LOUDLY and keep the agent running rather
@@ -102,11 +298,18 @@ public sealed class Composition : IDisposable
         catch (Exception ex) { log.Error("audit log unavailable; audit sink disabled", ex); }
 
         if (t.Syslog.Enabled)
-            sinks.Add(new SyslogSink(t.Syslog.Host, t.Syslog.Port, t.Syslog.Protocol, t.Syslog.AppName));
+            sinks.Add(new SyslogSink(t.Syslog.Host, t.Syslog.Port, t.Syslog.Protocol, t.Syslog.AppName,
+                native ? null : formatter.Format));
         if (t.Webhook.Enabled && !string.IsNullOrWhiteSpace(t.Webhook.Url))
-            sinks.Add(new WebhookSink(t.Webhook.Url));
+            sinks.Add(new WebhookSink(t.Webhook.Url, native ? null : formatter.Format,
+                string.Equals(formatter.Name, "cef", StringComparison.OrdinalIgnoreCase)
+                    ? "text/plain" : "application/json"));
+
+        sinks.Add(events);
         if (extra is not null)
             sinks.Add(extra);
+
+        if (!native) log.Info($"telemetry format: {formatter.Name}");
         return new CompositeSink(sinks);
     }
 
@@ -132,7 +335,7 @@ public sealed class Composition : IDisposable
             Log.Info("config: reload skipped; keeping current config");
     }
 
-    /// <summary>Apply the hot-reloadable subset (posture + allowlist).</summary>
+    /// <summary>Apply the hot-reloadable subset (posture + allowlist + rules + intel).</summary>
     private void Apply(ShieldConfig next)
     {
         try
@@ -143,8 +346,29 @@ public sealed class Composition : IDisposable
                 next.Detection.CorrelationWindowSeconds, next.Detection.TrustDiscount,
                 next.Detection.AutoKill);
 
+            // Rules and indicator feeds reload live. The holders are what the engine holds
+            // a reference to, so swapping their contents takes effect on the next signal
+            // without the engine ever seeing a half-built rule set.
+            var rules = LoadRules(next.Detection, Log);
+            if (rules.Rules.Count > 0 || next.Detection.EnableRuleEngine)
+            {
+                _ruleHolder.Set(rules);
+                Rules = rules;
+                Log.Info($"rules reloaded: {rules.Rules.Count} active");
+            }
+
+            var feed = LoadIntel(next.Intel, Log);
+            _intelHolder.Set(feed);
+            Intel = feed;
+
+            ApiPolicy = BuildApiPolicy(next.Api.Studio);
+
             if (!string.Equals(next.Detection.MemoryScanEngine, Config.Detection.MemoryScanEngine, StringComparison.OrdinalIgnoreCase))
                 Log.Info("note: scan-engine change takes effect after restart");
+            if (!string.Equals(next.Telemetry.Format, Config.Telemetry.Format, StringComparison.OrdinalIgnoreCase))
+                Log.Info("note: telemetry format change takes effect after restart");
+            if (next.Api.Control.Enabled != Config.Api.Control.Enabled)
+                Log.Info("note: control-API enable/disable takes effect after restart");
 
             Config = next;
         }
@@ -156,13 +380,112 @@ public sealed class Composition : IDisposable
             ? "audit chain intact (local integrity only; an equal-privilege attacker with the key could re-forge it — off-box sinks are the true anchor)"
             : "AUDIT LOG TAMPERED/BROKEN: " + err;
 
+    /// <summary>Runs playbook actions the host does not implement itself. Response worker thread.</summary>
+    internal void RunExtendedAction(PlaybookAction action, ProfileSnapshot snapshot)
+    {
+        switch (action)
+        {
+            case PlaybookAction.IsolateHost:
+            {
+                var allow = Config.Response.IsolationAllowlist ?? Array.Empty<string>();
+                var r = Isolation.Isolate(allow);
+                Log.Action(r.Ok ? $"host isolated (allowlist: {allow.Length} entr(y/ies))"
+                                : "host isolation failed: " + r.Message);
+                break;
+            }
+            case PlaybookAction.CollectTriage:
+            {
+                var dir = ResolvePath(Config.Response.TriageOutputPath);
+                var result = new TriageCollector().Collect(snapshot.Pid, dir, snapshot);
+                Log.Action(result.Ok
+                    ? $"triage package written: {result.ZipPath} ({result.Bytes} bytes, {result.Skipped.Count} item(s) skipped)"
+                    : "triage collection failed: " + result.Error);
+                break;
+            }
+            case PlaybookAction.NotifyWebhook:
+                // The webhook sink already receives every event; a playbook NotifyWebhook is
+                // only meaningful as an explicit, separate escalation. Emitting through the
+                // logger routes it to every configured sink including that webhook.
+                Log.Action($"escalation: incident {snapshot.IncidentId} pid {snapshot.Pid} " +
+                           $"({snapshot.ProcessName}) score {snapshot.Score}");
+                break;
+        }
+    }
+
     public void Dispose()
     {
         try { _configWatcher?.Dispose(); } catch { }
+        try { _control?.Dispose(); } catch { }
         try { _minifilter?.Dispose(); } catch { }
         try { Host.Dispose(); } catch { }
         try { _sink.Dispose(); } catch { }
+        try { Vault?.Dispose(); } catch { }
         if (_scanner is IDisposable d) { try { d.Dispose(); } catch { } }
+    }
+}
+
+/// <summary>
+/// Indirection so a hot reload can swap the whole rule set atomically while the engine
+/// keeps one stable reference. The engine reads rules on the owner thread; the swap
+/// happens on the config-watcher thread, so the field is volatile and the replacement is
+/// a fully-built object, never mutated in place.
+/// </summary>
+internal sealed class RuleEngineHolder
+{
+    private volatile RuleEngine _engine = new(new RuleSet(Array.Empty<DetectionRule>(), Array.Empty<RuleValidationError>()));
+
+    /// <summary>The stable façade handed to the detection engine.</summary>
+    public RuleEngine Engine => _engine;
+
+    public void Set(RuleSet set) => _engine = new RuleEngine(set);
+}
+
+/// <summary>Same atomic-swap treatment for indicator feeds.</summary>
+internal sealed class IocFeedHolder
+{
+    private volatile IocFeed _feed = new();
+    public IocFeed Feed => _feed;
+    public void Set(IocFeed feed) => _feed = feed;
+}
+
+/// <summary>
+/// Caches image-path to SHA-256 so hash indicators can be matched without re-reading a
+/// binary on every process start. Bounded, and a hash failure is cached as "unknown" so a
+/// permanently unreadable path is not re-attempted on every signal.
+/// </summary>
+internal sealed class ImageHashCache
+{
+    private const int MaxEntries = 4096;
+    private const long MaxFileBytes = 64L * 1024 * 1024;
+    private readonly Dictionary<string, string?> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _gate = new();
+
+    public string? Sha256(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        lock (_gate)
+        {
+            if (_cache.TryGetValue(path, out var cached)) return cached;
+        }
+
+        string? hash = null;
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.Exists && info.Length <= MaxFileBytes)
+            {
+                using var fs = File.OpenRead(path);
+                hash = Convert.ToHexString(SHA256.HashData(fs));
+            }
+        }
+        catch { hash = null; }
+
+        lock (_gate)
+        {
+            if (_cache.Count >= MaxEntries) _cache.Clear();   // simple, bounded, and rare
+            _cache[path] = hash;
+        }
+        return hash;
     }
 }
 

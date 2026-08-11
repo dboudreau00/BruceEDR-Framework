@@ -128,7 +128,8 @@ try
 
     var console = new AnalystConsole(composition.Host, composition.Log,
         reloadConfig: composition.ReloadConfig,
-        verifyAudit: composition.VerifyAudit);
+        verifyAudit: composition.VerifyAudit,
+        composition: composition);
     console.Run();
 
     Shutdown();

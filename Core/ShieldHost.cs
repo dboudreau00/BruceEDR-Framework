@@ -13,7 +13,7 @@ namespace ProcessShield.Core;
 /// minimal embedding (a test, the replay harness) can construct a host with the v1
 /// signature and get exactly the v1 behaviour.
 /// </summary>
-public sealed class HostOptions
+public sealed class ShieldHostOptions
 {
     public bool AutoKill { get; init; }
     /// <summary>Start the registry / DNS / AMSI / process-access ETW sessions.</summary>
@@ -116,7 +116,7 @@ public sealed class ShieldHost : IDisposable
     private AmsiMonitor? _amsi;
     private ProcessAccessMonitor? _procAccess;
 
-    private readonly HostOptions _options;
+    private readonly ShieldHostOptions _options;
     private readonly Playbook _playbook;
 
     private volatile bool _autoKill;
@@ -131,12 +131,19 @@ public sealed class ShieldHost : IDisposable
     /// <summary>Counters and latency percentiles, safe to read from any thread.</summary>
     public ShieldMetrics Metrics { get; }
 
+    /// <summary>
+    /// Handles playbook actions the host does not implement itself (host isolation, triage
+    /// collection, escalation). Settable because the composition root that implements these
+    /// is built around the host and cannot be passed into its constructor.
+    /// </summary>
+    public Action<PlaybookAction, ProfileSnapshot>? ExtendedAction { get; set; }
+
     public ShieldHost(bool autoKill, DetectionEngine engine, ResponseManager response,
         IMemoryScanner scanner, Logger log)
-        : this(engine, response, scanner, log, new HostOptions { AutoKill = autoKill }) { }
+        : this(engine, response, scanner, log, new ShieldHostOptions { AutoKill = autoKill }) { }
 
     public ShieldHost(DetectionEngine engine, ResponseManager response,
-        IMemoryScanner scanner, Logger log, HostOptions options)
+        IMemoryScanner scanner, Logger log, ShieldHostOptions options)
     {
         _options = options;
         _autoKill = options.AutoKill;
@@ -146,6 +153,7 @@ public sealed class ShieldHost : IDisposable
         _log = log;
         _playbook = options.Playbook ?? Playbook.Default();
         Metrics = options.Metrics ?? new ShieldMetrics();
+        ExtendedAction = options.ExtendedAction;
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -548,7 +556,7 @@ public sealed class ShieldHost : IDisposable
         var extra = decision.Actions
             .Where(a => a is PlaybookAction.IsolateHost or PlaybookAction.CollectTriage or PlaybookAction.NotifyWebhook)
             .ToArray();
-        var extendedAction = _options.ExtendedAction;
+        var extendedAction = ExtendedAction;
 
         EnqueueResponse(() =>
         {
