@@ -1,0 +1,41 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+publish/
+dist/
+*.user
+
+# Release staging / artifacts produced by publish-release.ps1
+/artifacts/
+*.zip
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.suo
+*.userprefs
+
+# Runtime data the agent writes next to the exe (never commit secrets/telemetry)
+incidents.jsonl
+audit.log
+audit.log.key
+audit.log.anchor
+audit.log.anchor.tmp
+quarantine/
+gui.log
+
+# OS cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Release staging produced by publish-release.ps1 (large; attach to a GitHub Release instead)
+/artifacts/
+
+# Offline triage packages and API Studio workspaces written next to the exe
+/triage/
+/apistudio/
