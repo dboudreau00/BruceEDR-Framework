@@ -89,15 +89,32 @@ detection walkthrough below works with either front-end.
 
 ## 4. Run the unit tests
 
-- In VS: **Test -> Run All Tests** (opens Test Explorer). All tests should pass.
-  They cover the exfil-chain scoring, the audit hash-chain (incl. tamper
-  detection), config clamping, the firewall-name sanitizer, the routable-IP check,
+- In VS: **Test -> Run All Tests** (opens Test Explorer). All 1,882 tests should pass.
+  They cover the exfil-chain scoring, the JSON rule engine, ATT&CK mapping, beacon and
+  DGA analytics, the process tree (including PID reuse and hostile parent cycles), PE
+  parsing against malformed files, indicator feeds, the encrypted quarantine vault,
+  ECS/OCSF/CEF serialisation, the whole API Studio stack, the audit hash-chain (incl.
+  tamper detection), config clamping, the firewall-name sanitizer, the routable-IP check,
   and the pattern matcher.
 
-> CLI equivalent:
+> CLI equivalent — or just run everything at once:
 > ```
 > dotnet test tests\ProcessShield.Tests\ProcessShield.Tests.csproj -c Release
+> .\tools\verify.ps1        # build + tests + rule validation + scenario replay
 > ```
+
+### 4b. The offline self-test (no admin needed)
+
+This is the fastest way to know the detection content is healthy, and it is the loop to
+use when writing rules:
+
+```
+ProcessShield.exe --selftest
+```
+
+It validates every JSON rule pack (reporting rule count and ATT&CK coverage) and replays
+every scenario in `Replay\scenarios\` through a real detection engine on a simulated
+clock. It starts no monitors and needs no elevation, so it is safe to run anywhere.
 
 ---
 
@@ -256,13 +273,47 @@ Key settings:
 - `detection.warnThreshold` / `quarantineThreshold` - scoring cutoffs.
 - `detection.autoKill` - `false` = suspend only (recommended for beta).
 - `detection.memoryScanEngine` - `"builtin"` or `"yara"`.
+- `detection.rulesPath` - where the JSON detection packs live (default `rules/detection`).
+- `detection.enableScoreDecay` - lets a quiet process cool off so it cannot trip on
+  weeks of accumulated low-value hits. Contained processes never decay.
+- `detection.enableExtendedMonitors` - the DNS / AMSI / registry / process-access ETW
+  sessions. Turn off if one of them misbehaves on your build; the agent keeps running.
 - `allowlist.publishers` / `thumbprints` - signed apps to de-prioritise (e.g. your
   legitimate RMM tools); pin exact SHA-1 thumbprints for strongest trust.
+- `intel.feedPath` - drop hash/domain/IP/CIDR indicator files in here (see
+  `intel/feeds/README.md`).
+- `response.useEncryptedVault` - quarantine files into an AES-256-GCM vault instead of
+  moving them somewhere they are still runnable.
+- `response.isolationAllowlist` - **set this before ever using `isolate`**, or you will
+  cut off your own remote session.
+- `telemetry.format` - `native`, `ecs`, `ocsf` or `cef`. Pick the one your SIEM parses.
 - `telemetry.syslog` / `webhook` - set `enabled` + endpoint to forward to a SIEM.
+- `api.control.enabled` - the localhost REST control plane. Off by default, and
+  read-only unless you also set `allowActions`.
+- `api.studio.allowedHosts` - API Studio sends nothing until a host is listed here.
 
-Editing the file **hot-reloads** the detection posture and allowlist live (the
-console prints `config applied: ...`). Scan-engine and telemetry-endpoint changes
-take effect on restart.
+Editing the file **hot-reloads** the detection posture, allowlist, **detection rules and
+indicator feeds** live (the console prints `config applied: ...` / `rules reloaded: N`).
+Scan-engine, telemetry-format and control-API changes take effect on restart.
+
+### 10b. Writing your own detections
+
+Rules are JSON and need no rebuild. Copy one out of `rules\detection\`, edit it, and type
+`reload` at the `shield>` prompt. The schema, every field and operator, and the
+contribution guide are in `rules\detection\README.md`. Test with a replay scenario rather
+than with live malware — see `Replay\scenarios\README.md`.
+
+### 10c. API Studio
+
+```
+shield> surface              # what this machine has actually been connecting to
+shield> api surface          # turn that into an inspectable collection
+shield> api send 1           # send it and grade the response
+shield> api help             # everything else
+```
+
+It refuses to send anywhere until you allowlist a host in `api.studio.allowedHosts`, and
+refuses POST/PUT/PATCH/DELETE until you set `allowMutatingMethods`. That is deliberate.
 
 ---
 
@@ -296,6 +347,11 @@ take effect on restart.
 | YARA build errors | Only happens with `-p:EnableYara=true`; the default build doesn't reference dnYara. |
 | Nothing detects during the sim | Confirm the agent started ETW (not WMI) and that you ran the sim **after** the agent. |
 | GUI shows a red banner, a warning dialog, or won't start | It logs to `%LOCALAPPDATA%\ProcessShield\gui.log` — open that for the exact error. The banner usually means "not running as Administrator." |
+| `rules: '...' not found; running with builtin detections only` | The `rules/detection` folder didn't reach the output directory. Rebuild, or point `detection.rulesPath` at an absolute path. |
+| The **API surface** tab is empty | It needs the DNS/network ETW monitors, which need elevation, plus some actual traffic. Check `stats` shows `DNS` among the active monitors. |
+| `api send` says *blocked by API safety policy* | By design. Add the host to `api.studio.allowedHosts`, and set `allowMutatingMethods` if you need a non-GET. |
+| A monitor is missing from `stats` | Each extended ETW monitor degrades independently — the startup log says which one failed and why. The agent is still detecting on everything else. |
+| `--selftest` fails after editing a rule | It prints the exact validation error and which scenario expectation went unmet. That is the intended feedback loop. |
 
 ---
 
@@ -305,4 +361,14 @@ This is a **hardened prototype plus real integration layers**, audited by review
 but not yet run through a full security review or tested against live malware.
 Two capabilities are intentionally not shippable here because they're gated behind
 Microsoft programs: **PPL/ELAM tamper protection** and **production driver
-signing**. See `README.md` -> "Known limitations (beta)".
+signing**. See `README.md` -> "Security model & honest limitations".
+
+What *is* verified on every build: the solution compiles with zero warnings, 1,882 unit
+tests pass, all 72 detection rules validate, and all three replay scenarios meet their
+expectations — including the benign one that must produce no verdicts at all.
+
+What is **not** verified: the four extended ETW monitors (registry, DNS, AMSI,
+process-access) have not been soak-tested against a live fleet; host isolation and triage
+collection have been unit-tested at the command-construction level but not exercised
+end-to-end on a production box; and nothing here has been run against real malware.
+Treat the detection content as a starting point to tune, not as a finished ruleset.

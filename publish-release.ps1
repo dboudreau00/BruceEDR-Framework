@@ -64,11 +64,26 @@ New-Item -ItemType Directory -Force -Path (Join-Path $stage "gui") | Out-Null
 Copy-Item (Join-Path $guiOut "ProcessShield.Gui.exe") (Join-Path $stage "gui") -Force
 
 Copy-Item (Join-Path $root "shield.config.json") $stage -Force
+# rules/ carries both the YARA samples and the JSON detection packs the agent loads at
+# startup; Replay/scenarios and intel/feeds are what make --selftest and the intel feature
+# work out of the box in the shipped layout.
 Copy-Item (Join-Path $root "rules") (Join-Path $stage "rules") -Recurse -Force
+New-Item -ItemType Directory -Force -Path (Join-Path $stage "Replay") | Out-Null
+Copy-Item (Join-Path $root "Replay/scenarios") (Join-Path $stage "Replay/scenarios") -Recurse -Force
+New-Item -ItemType Directory -Force -Path (Join-Path $stage "intel") | Out-Null
+Copy-Item (Join-Path $root "intel/feeds") (Join-Path $stage "intel/feeds") -Recurse -Force
+
 foreach ($doc in "README.md","LICENSE","GETTING_STARTED.md") {
     Copy-Item (Join-Path $root $doc) $stage -Force
 }
 Copy-Item (Join-Path $root "docs") (Join-Path $stage "docs") -Recurse -Force
+
+# 4b) Gate the release on the packaged content actually working. This runs the shipped
+#     exe against the shipped rules and scenarios, so a rule pack that got left out of the
+#     zip fails the build rather than the user's first run.
+Write-Host "-- self-test the staged build" -ForegroundColor Cyan
+& (Join-Path $stage "ProcessShield.exe") --selftest
+if ($LASTEXITCODE -ne 0) { throw "self-test failed against the staged release" }
 
 # 5) Zip
 Write-Host "-- zip" -ForegroundColor Cyan
