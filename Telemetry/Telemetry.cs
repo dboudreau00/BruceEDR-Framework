@@ -12,7 +12,7 @@ namespace ProcessShield.Telemetry;
 public sealed record ShieldEvent
 {
     public string Level { get; init; } = "INFO";          // INFO | WARN | QUARANTINE | ACTION
-    public string Category { get; init; } = "system";     // detection | response | system
+    public string Category { get; init; } = "system";     // detection | response | system | api
     public DateTime TimeUtc { get; init; } = DateTime.UtcNow;
     public int Pid { get; init; }
     public string Process { get; init; } = "";
@@ -22,6 +22,27 @@ public sealed record ShieldEvent
     public IReadOnlyList<string> Reasons { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> StagedArchives { get; init; } = Array.Empty<string>();
     public string Message { get; init; } = "";
+
+    // --- v2 fields. All defaulted, so every existing emit site is unchanged and
+    //     older audit chains keep verifying against the same canonical shape. ---
+
+    /// <summary>Stable id grouping every event raised for one incident.</summary>
+    public string IncidentId { get; init; } = "";
+    /// <summary>MITRE ATT&amp;CK technique ids implicated by this event.</summary>
+    public IReadOnlyList<string> Techniques { get; init; } = Array.Empty<string>();
+    /// <summary>Ids of the detection rules that fired.</summary>
+    public IReadOnlyList<string> RuleIds { get; init; } = Array.Empty<string>();
+    public int ParentPid { get; init; }
+    public string CommandLine { get; init; } = "";
+    public string User { get; init; } = "";
+    /// <summary>Ancestry, nearest parent first.</summary>
+    public IReadOnlyList<string> Ancestry { get; init; } = Array.Empty<string>();
+    /// <summary>Distinct <c>ip:port</c> destinations seen for the subject process.</summary>
+    public IReadOnlyList<string> RemoteEndpoints { get; init; } = Array.Empty<string>();
+    /// <summary>Distinct DNS names resolved by the subject process.</summary>
+    public IReadOnlyList<string> Domains { get; init; } = Array.Empty<string>();
+    /// <summary>SHA-256 of the subject image, when it has been computed.</summary>
+    public string Sha256 { get; init; } = "";
 }
 
 public interface IEventSink : IDisposable
