@@ -1450,10 +1450,10 @@ public class ReplayScenarioFileTests
                                       (x.FilePath ?? "").Contains("Local State", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(signals, x => x.Kind == SignalKind.DnsQuery && (x.Domain ?? "").EndsWith(".ddns.net"));
 
-        var archive = Assert.Single(signals.Where(x =>
+        var archive = Assert.Single(signals, x =>
             x.Kind == SignalKind.FileCreate &&
-            IocDatabase.ArchiveExtensions.Contains(Path.GetExtension(x.FilePath ?? "").ToLowerInvariant())));
-        var connect = Assert.Single(signals.Where(x => x.Kind == SignalKind.NetworkConnect));
+            IocDatabase.ArchiveExtensions.Contains(Path.GetExtension(x.FilePath ?? "").ToLowerInvariant()));
+        var connect = Assert.Single(signals, x => x.Kind == SignalKind.NetworkConnect);
 
         // The staging -> exfil gap has to sit inside the default 30 s correlation window,
         // otherwise the scenario is not exercising the rule it claims to.

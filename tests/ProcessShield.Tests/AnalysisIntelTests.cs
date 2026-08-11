@@ -1252,7 +1252,7 @@ public class IntelSecretScannerTests
     private static SecretMatch Single(string text, string expectedRuleId)
     {
         var hits = SecretScanner.Scan(text);
-        var m = Assert.Single(hits.Where(h => h.RuleId == expectedRuleId));
+        var m = Assert.Single(hits, h => h.RuleId == expectedRuleId);
         return m;
     }
 
@@ -1539,7 +1539,7 @@ public class IntelSecretScannerTests
     {
         string text = string.Join("\n", Enumerable.Repeat("key=AKIA" + "IOSFODNN7EXAMPLE", 50));
         var hits = SecretScanner.Scan(text);
-        Assert.Single(hits.Where(h => h.RuleId == "aws-access-key-id"));
+        Assert.Single(hits, h => h.RuleId == "aws-access-key-id");
     }
 
     [Fact]
@@ -1572,7 +1572,7 @@ public class IntelSecretScannerTests
         var hits = SecretScanner.Scan(text);
 
         Assert.Contains(hits, h => h.RuleId == "aws-access-key-id" && h.Offset == 0);
-        Assert.Single(hits.Where(h => h.RuleId == "aws-access-key-id"));
+        Assert.Single(hits, h => h.RuleId == "aws-access-key-id");
     }
 
     [Fact]

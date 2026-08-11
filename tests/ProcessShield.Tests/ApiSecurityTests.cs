@@ -102,7 +102,7 @@ internal static class ApiSecurityFixture
         findings.Select(f => f.Id).ToHashSet(StringComparer.Ordinal);
 
     public static ApiFinding Only(IReadOnlyList<ApiFinding> findings, string id) =>
-        Assert.Single(findings.Where(f => f.Id == id));
+        Assert.Single(findings, f => f.Id == id);
 
     public static ApiFinding Fake(string id, FindingSeverity severity) =>
         new() { Id = id, Title = id, Severity = severity };
@@ -881,7 +881,7 @@ public class ApiSecurityBodyTests
         // Listing every frame would just copy the trace into the report.
         var findings = EndpointAnalyzer.AnalyzeBody(Resp(contentType: "text/plain",
             body: "java.lang.RuntimeException\n\tat java.base/x.y(z.java:9)\nCaused by: ORA-01722 on line 3"));
-        Assert.Single(findings.Where(f => f.Id == "body-stack-trace"));
+        Assert.Single(findings, f => f.Id == "body-stack-trace");
     }
 
     [Theory]

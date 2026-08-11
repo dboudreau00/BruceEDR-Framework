@@ -521,7 +521,7 @@ public class MonitorSupportScriptTests
         string result = MonitorSupport.TruncateScript(big, 4096);
 
         Assert.True(result.Length < 4200, "the bound must actually bound");
-        Assert.True(result.StartsWith(big[..4096], StringComparison.Ordinal));
+        Assert.StartsWith(big[..4096], result, StringComparison.Ordinal);
         Assert.Contains(big.Length + " chars total", result, StringComparison.Ordinal);
     }
 
