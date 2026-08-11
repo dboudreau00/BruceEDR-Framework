@@ -18,6 +18,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\ProcessShield.csproj" />
+    <!-- Deliberately NOT referencing gui/ProcessShield.Gui: pulling a WPF project in here
+         forces UseWPF on the test assembly, which swaps the implicit-using set and breaks
+         every unrelated test that uses System.IO. GuiResourceTests reads the GUI sources
+         as text instead, which needs no reference and no WPF. -->
   </ItemGroup>
 
 </Project>

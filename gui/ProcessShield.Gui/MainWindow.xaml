@@ -17,6 +17,12 @@
         <TabItem Header="Live events" Style="{StaticResource Nav.Item}">
             <v:EventsView/>
         </TabItem>
+        <TabItem Header="API surface" Style="{StaticResource Nav.Item}">
+            <v:SurfaceView/>
+        </TabItem>
+        <TabItem Header="Coverage" Style="{StaticResource Nav.Item}">
+            <v:CoverageView/>
+        </TabItem>
         <TabItem Header="Settings" Style="{StaticResource Nav.Item}">
             <v:SettingsView DataContext="{Binding Settings}"/>
         </TabItem>

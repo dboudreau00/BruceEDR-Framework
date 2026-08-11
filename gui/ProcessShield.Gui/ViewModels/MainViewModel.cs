@@ -2,7 +2,9 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using ProcessShield.Api;
 using ProcessShield.Core;
+using ProcessShield.Detection;
 using ProcessShield.Hosting;
 using ProcessShield.Gui.Services;
 using ProcessShield.Telemetry;
@@ -21,6 +23,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public ObservableCollection<ThreatRow> Threats { get; } = new();
     public ObservableCollection<EventRow> Events { get; } = new();
+    /// <summary>Endpoints this host has actually been observed talking to.</summary>
+    public ObservableCollection<SurfaceRow> Surface { get; } = new();
+    /// <summary>ATT&amp;CK techniques the loaded rules cover, and what has been seen.</summary>
+    public ObservableCollection<TechniqueRow> Techniques { get; } = new();
     public SettingsViewModel Settings { get; }
 
     public MainViewModel(string configPath)
@@ -50,6 +56,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             try { Settings.LoadFrom(_composition.Config); }
             catch (Exception ex) { AppLog.Error("settings load", ex); }
+
+            try
+            {
+                // Rule coverage is fixed until a reload, so compute it once here rather
+                // than rebuilding the ATT&CK matrix on every 1.5 s refresh tick.
+                _ruleCoverage = new RuleEngine(_composition.Rules).TechniqueCoverage();
+                RuleCount = _composition.Rules.Rules.Count;
+                IndicatorCount = _composition.Intel.Count;
+                CoveredTechniqueCount = _ruleCoverage.Count;
+            }
+            catch (Exception ex) { AppLog.Error("rule coverage", ex); }
 
             if (!IsRunning)
                 SetProblem("No monitor could be started. Make sure ProcessShield is running as Administrator.");
@@ -156,8 +173,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             MergeThreats(snaps);
 
+            IReadOnlyList<SurfaceEndpoint> endpoints;
+            try { endpoints = await Task.Run(() => host.SurfaceEndpoints()); }
+            catch (Exception ex) { AppLog.Error("surface", ex); endpoints = Array.Empty<SurfaceEndpoint>(); }
+            MergeSurface(endpoints);
+            MergeTechniques(host);
+
             ContainedCount = snaps.Count(s => s.Contained && !s.Terminated);
             FlaggedCount = snaps.Count;
+            EndpointCount = endpoints.Count;
+            BeaconCount = endpoints.Count(e => e.Beaconing);
             Throughput = host.Stats();
 
             if (!IsRunning)
@@ -199,7 +224,65 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex) { AppLog.Error("merge", ex); }
     }
 
+    private void MergeSurface(IReadOnlyList<SurfaceEndpoint> endpoints)
+    {
+        try
+        {
+            // Beaconing first, then busiest: the row an analyst most needs stays at the top
+            // instead of scrolling away as ordinary traffic accumulates.
+            var ordered = endpoints
+                .OrderByDescending(e => e.Beaconing)
+                .ThenByDescending(e => e.Connections)
+                .Take(300)
+                .ToArray();
+
+            foreach (var e in ordered)
+            {
+                var row = Surface.FirstOrDefault(r => r.Key == e.Key);
+                if (row is null) Surface.Add(new SurfaceRow(e));
+                else row.Update(e);
+            }
+            for (int i = Surface.Count - 1; i >= 0; i--)
+                if (!ordered.Any(e => e.Key == Surface[i].Key))
+                    Surface.RemoveAt(i);
+        }
+        catch (Exception ex) { AppLog.Error("merge surface", ex); }
+    }
+
+    private void MergeTechniques(ShieldHost host)
+    {
+        try
+        {
+            var observed = host.ObservedTechniques();
+            var covered = _ruleCoverage;
+
+            var ids = new SortedSet<string>(covered.Keys, StringComparer.OrdinalIgnoreCase);
+            foreach (var id in observed.Keys) ids.Add(id);
+
+            var rows = ids
+                .Select(id => new TechniqueRow(id,
+                    covered.TryGetValue(id, out var r) ? r : 0,
+                    observed.TryGetValue(id, out var o) ? o : 0))
+                .OrderByDescending(t => t.Observed)
+                .ThenBy(t => Array.IndexOf(AttackCatalog.Tactics, t.Tactic))
+                .ThenBy(t => t.Id, StringComparer.Ordinal)
+                .ToArray();
+
+            // The technique list is small and changes rarely, so a straight rebuild is
+            // simpler than a diff and cheap enough at the 1.5 s refresh cadence.
+            if (rows.Length == Techniques.Count &&
+                rows.Zip(Techniques).All(p => p.First.Id == p.Second.Id && p.First.Observed == p.Second.Observed))
+                return;
+
+            Techniques.Clear();
+            foreach (var t in rows) Techniques.Add(t);
+            CoveredTechniqueCount = covered.Count;
+        }
+        catch (Exception ex) { AppLog.Error("merge techniques", ex); }
+    }
+
     // -------------------------------------------------------------- state
+    private IReadOnlyDictionary<string, int> _ruleCoverage = new Dictionary<string, int>();
     private ThreatRow? _selected;
     public ThreatRow? SelectedThreat
     {
@@ -219,6 +302,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private int _flaggedCount;
     public int FlaggedCount { get => _flaggedCount; set => Set(ref _flaggedCount, value); }
+
+    private int _endpointCount;
+    public int EndpointCount { get => _endpointCount; set => Set(ref _endpointCount, value); }
+
+    private int _beaconCount;
+    public int BeaconCount { get => _beaconCount; set => Set(ref _beaconCount, value); }
+
+    private int _ruleCount;
+    public int RuleCount { get => _ruleCount; set => Set(ref _ruleCount, value); }
+
+    private int _coveredTechniqueCount;
+    public int CoveredTechniqueCount { get => _coveredTechniqueCount; set => Set(ref _coveredTechniqueCount, value); }
+
+    private int _indicatorCount;
+    public int IndicatorCount { get => _indicatorCount; set => Set(ref _indicatorCount, value); }
 
     private string _throughput = "";
     public string Throughput { get => _throughput; set => Set(ref _throughput, value); }
