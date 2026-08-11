@@ -65,6 +65,11 @@
   <ItemGroup>
     <None Update="shield.config.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="rules\**\*.yar" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Declarative detection rule packs and the replay scenarios are runtime content:
+         the agent loads them from disk at startup and the console can replay them. -->
+    <None Update="rules\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Replay\scenarios\**\*.jsonl" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="intel\**\*.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -8,6 +8,9 @@ public sealed class ShieldConfig
     public AllowlistConfig Allowlist { get; set; } = new();
     public TelemetryConfig Telemetry { get; set; } = new();
     public ServiceConfig Service { get; set; } = new();
+    public IntelConfig Intel { get; set; } = new();
+    public ResponseConfig Response { get; set; } = new();
+    public ApiConfig Api { get; set; } = new();
 
     public void ClampAndValidate()
     {
@@ -16,10 +19,22 @@ public sealed class ShieldConfig
         if (Detection.CorrelationWindowSeconds <= 0) Detection.CorrelationWindowSeconds = 30;
         Detection.TrustDiscount = Math.Max(0, Detection.TrustDiscount);
         if (string.IsNullOrWhiteSpace(Detection.MemoryScanEngine)) Detection.MemoryScanEngine = "builtin";
+        if (string.IsNullOrWhiteSpace(Detection.RulesPath)) Detection.RulesPath = "rules/detection";
+        Detection.ScoreDecayPoints = Math.Max(0, Detection.ScoreDecayPoints);
+        Detection.ScoreDecayIntervalSeconds = Math.Max(10, Detection.ScoreDecayIntervalSeconds);
+        Detection.BeaconMinConnections = Math.Clamp(Detection.BeaconMinConnections, 3, 512);
+        Detection.MaxTrackedProcesses = Math.Clamp(Detection.MaxTrackedProcesses, 128, 262144);
 
         Service.HeartbeatIntervalSeconds = Math.Max(1, Service.HeartbeatIntervalSeconds);
         Service.WatchdogStaleSeconds = Math.Max(Service.HeartbeatIntervalSeconds * 3, Service.WatchdogStaleSeconds);
         if (string.IsNullOrWhiteSpace(Service.ServiceName)) Service.ServiceName = "ProcessShield";
+
+        if (string.IsNullOrWhiteSpace(Telemetry.Format)) Telemetry.Format = "native";
+        if (string.IsNullOrWhiteSpace(Response.QuarantineVaultPath)) Response.QuarantineVaultPath = "quarantine";
+
+        Api.Control.Port = Math.Clamp(Api.Control.Port, 1024, 65535);
+        Api.Studio.MaxRequestsPerSecond = Math.Clamp(Api.Studio.MaxRequestsPerSecond, 0.1, 100.0);
+        Api.Studio.MaxResponseBytes = Math.Clamp(Api.Studio.MaxResponseBytes, 4096L, 256L * 1024 * 1024);
     }
 }
 
@@ -33,6 +48,95 @@ public sealed class DetectionConfig
     public string MemoryScanEngine { get; set; } = "builtin";   // "builtin" | "yara"
     public string YaraRulesPath { get; set; } = "rules";
     public bool KernelBlocking { get; set; } = false;           // enforce via minifilter if installed
+
+    // --- v2 -----------------------------------------------------------------
+
+    /// <summary>Directory of declarative JSON detection rules, hot-reloaded with the config.</summary>
+    public string RulesPath { get; set; } = "rules/detection";
+    /// <summary>Load the JSON rule packs at all. Off means builtin C# rules only.</summary>
+    public bool EnableRuleEngine { get; set; } = true;
+    /// <summary>
+    /// Points shed per decay interval from a process that has gone quiet. Without decay a
+    /// long-lived process accumulates score forever and eventually trips on noise alone.
+    /// 0 disables decay (the pre-v2 behaviour).
+    /// </summary>
+    public int ScoreDecayPoints { get; set; } = 5;
+    public int ScoreDecayIntervalSeconds { get; set; } = 300;
+    /// <summary>Contained processes never decay; only un-contained ones cool off.</summary>
+    public bool EnableScoreDecay { get; set; } = true;
+
+    public bool EnableBeaconDetection { get; set; } = true;
+    public int BeaconMinConnections { get; set; } = 6;
+    /// <summary>Score added once when a process is judged to be beaconing.</summary>
+    public int BeaconScore { get; set; } = 35;
+
+    public bool EnableDomainAnalysis { get; set; } = true;
+    /// <summary>Score added for a domain that scores as likely DGA.</summary>
+    public int DgaScore { get; set; } = 25;
+
+    /// <summary>Enable the registry / DNS / AMSI / process-access ETW monitors.</summary>
+    public bool EnableExtendedMonitors { get; set; } = true;
+
+    /// <summary>Hard cap on tracked process profiles, so telemetry floods cannot exhaust memory.</summary>
+    public int MaxTrackedProcesses { get; set; } = 16384;
+}
+
+public sealed class IntelConfig
+{
+    /// <summary>Directory of operator-supplied indicator feeds (*.txt / *.ioc / *.csv).</summary>
+    public string FeedPath { get; set; } = "intel";
+    public bool Enabled { get; set; } = true;
+    /// <summary>Score added when an image hash, domain or address matches a loaded feed.</summary>
+    public int HitScore { get; set; } = 60;
+}
+
+public sealed class ResponseConfig
+{
+    /// <summary>Encrypt quarantined files at rest so a payload cannot simply be re-run.</summary>
+    public bool UseEncryptedVault { get; set; } = true;
+    public string QuarantineVaultPath { get; set; } = "quarantine";
+    /// <summary>Path to a JSON playbook. Empty uses the built-in default playbook.</summary>
+    public string PlaybookPath { get; set; } = "";
+    /// <summary>Collect a forensic triage zip when a process is contained.</summary>
+    public bool CollectTriageOnContain { get; set; } = false;
+    public string TriageOutputPath { get; set; } = "triage";
+    /// <summary>Addresses that stay reachable when the host is isolated (management/RDP/AD).</summary>
+    public string[] IsolationAllowlist { get; set; } = Array.Empty<string>();
+}
+
+/// <summary>Configuration for both halves of the API feature: the control plane and API Studio.</summary>
+public sealed class ApiConfig
+{
+    public ControlApiConfig Control { get; set; } = new();
+    public ApiStudioConfig Studio { get; set; } = new();
+    /// <summary>Build the observed endpoint inventory from network + DNS telemetry.</summary>
+    public bool EnableSurfaceInventory { get; set; } = true;
+}
+
+public sealed class ControlApiConfig
+{
+    /// <summary>Off by default. The control plane is an attack surface; opt in deliberately.</summary>
+    public bool Enabled { get; set; } = false;
+    /// <summary>Loopback only. A non-loopback address is refused at startup.</summary>
+    public string Address { get; set; } = "127.0.0.1";
+    public int Port { get; set; } = 8787;
+    /// <summary>Bearer token. Empty means "generate a random one and log it once at startup".</summary>
+    public string Token { get; set; } = "";
+    /// <summary>Allow resume/suspend/kill over HTTP. Separate switch: read-only is the safe default.</summary>
+    public bool AllowActions { get; set; } = false;
+}
+
+public sealed class ApiStudioConfig
+{
+    /// <summary>Hosts API Studio may send to. Nothing is reachable until this is populated.</summary>
+    public string[] AllowedHosts { get; set; } = { "localhost", "127.0.0.1" };
+    /// <summary>Permit POST/PUT/PATCH/DELETE. Read-only probing is the default.</summary>
+    public bool AllowMutatingMethods { get; set; } = false;
+    public bool AllowInsecureHttp { get; set; } = false;
+    public double MaxRequestsPerSecond { get; set; } = 5.0;
+    public long MaxResponseBytes { get; set; } = 8L * 1024 * 1024;
+    /// <summary>Where saved collections and environments live.</summary>
+    public string WorkspacePath { get; set; } = "apistudio";
 }
 
 public sealed class AllowlistConfig
@@ -50,6 +154,16 @@ public sealed class TelemetryConfig
     public string AuditPath { get; set; } = "audit.log";
     public SyslogConfig Syslog { get; set; } = new();
     public WebhookConfig Webhook { get; set; } = new();
+
+    /// <summary>
+    /// Wire format for the JSONL/syslog/webhook sinks: <c>native</c>, <c>ecs</c>
+    /// (Elastic Common Schema 8.x), <c>ocsf</c> (OCSF 1.1 Detection Finding) or <c>cef</c>.
+    /// The audit chain always uses the native shape so its hashes stay comparable.
+    /// </summary>
+    public string Format { get; set; } = "native";
+
+    /// <summary>Serve Prometheus metrics from the control API's /metrics route.</summary>
+    public bool EnableMetrics { get; set; } = true;
 }
 
 public sealed class SyslogConfig

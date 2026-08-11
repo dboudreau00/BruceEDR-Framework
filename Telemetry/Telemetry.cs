@@ -79,6 +79,56 @@ internal static class Json
     public static string Event(ShieldEvent e) => JsonSerializer.Serialize(e, Compact);
 }
 
+/// <summary>
+/// Keeps the most recent events in memory so the control API and the GUI can show a feed
+/// without re-reading (and re-parsing) the JSONL file. Bounded and lock-guarded: this is
+/// written from every emitting thread and read from HTTP handler threads.
+/// </summary>
+public sealed class RingBufferSink : IEventSink
+{
+    private readonly object _gate = new();
+    private readonly ShieldEvent[] _buffer;
+    private int _next;
+    private int _count;
+
+    public RingBufferSink(int capacity = 512)
+        => _buffer = new ShieldEvent[Math.Max(16, capacity)];
+
+    public int Count { get { lock (_gate) return _count; } }
+
+    public void Emit(ShieldEvent e)
+    {
+        lock (_gate)
+        {
+            _buffer[_next] = e;
+            _next = (_next + 1) % _buffer.Length;
+            if (_count < _buffer.Length) _count++;
+        }
+    }
+
+    /// <summary>The most recent events, newest first, capped at <paramref name="limit"/>.</summary>
+    public IReadOnlyList<ShieldEvent> Recent(int limit)
+    {
+        lock (_gate)
+        {
+            int take = Math.Clamp(limit, 0, _count);
+            var list = new List<ShieldEvent>(take);
+            for (int i = 0; i < take; i++)
+            {
+                int idx = (_next - 1 - i + _buffer.Length * 2) % _buffer.Length;
+                var e = _buffer[idx];
+                if (e is not null) list.Add(e);
+            }
+            return list;
+        }
+    }
+
+    public string RecentJson(int limit)
+        => JsonSerializer.Serialize(Recent(limit), Json.Compact);
+
+    public void Dispose() { }
+}
+
 /// <summary>Appends each event as one JSON line.</summary>
 public sealed class JsonlSink : IEventSink
 {
@@ -147,14 +197,21 @@ public sealed class SyslogSink : AsyncSinkBase
     private readonly int _port;
     private readonly bool _tcp;
     private readonly string _appName;
+    private readonly Func<ShieldEvent, string> _render;
     private TcpClient? _tcpClient;
 
-    public SyslogSink(string host, int port, string protocol, string appName) : base("Syslog")
+    /// <param name="render">
+    /// Optional payload renderer, so the same sink can ship ECS/OCSF/CEF instead of the
+    /// native shape. Null keeps the historical compact-JSON payload.
+    /// </param>
+    public SyslogSink(string host, int port, string protocol, string appName,
+        Func<ShieldEvent, string>? render = null) : base("Syslog")
     {
         _host = host;
         _port = port;
         _tcp = string.Equals(protocol, "tcp", StringComparison.OrdinalIgnoreCase);
         _appName = string.IsNullOrWhiteSpace(appName) ? "ProcessShield" : appName;
+        _render = render ?? Json.Event;
     }
 
     protected override void Send(ShieldEvent e)
@@ -169,7 +226,7 @@ public sealed class SyslogSink : AsyncSinkBase
         int pri = (1 * 8) + severity;  // facility 1 (user)
         string ts = e.TimeUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
         string host = Environment.MachineName;
-        string msg = $"<{pri}>1 {ts} {host} {_appName} {e.Pid} {e.Category} - {Json.Event(e)}";
+        string msg = $"<{pri}>1 {ts} {host} {_appName} {e.Pid} {e.Category} - {_render(e)}";
         byte[] bytes = Encoding.UTF8.GetBytes(msg);
 
         if (_tcp) SendTcp(bytes);
@@ -208,12 +265,20 @@ public sealed class WebhookSink : AsyncSinkBase
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
     private readonly string _url;
+    private readonly Func<ShieldEvent, string> _render;
+    private readonly string _contentType;
 
-    public WebhookSink(string url) : base("Webhook") => _url = url;
+    public WebhookSink(string url, Func<ShieldEvent, string>? render = null,
+        string contentType = "application/json") : base("Webhook")
+    {
+        _url = url;
+        _render = render ?? Json.Event;
+        _contentType = contentType;
+    }
 
     protected override void Send(ShieldEvent e)
     {
-        using var content = new StringContent(Json.Event(e), Encoding.UTF8, "application/json");
+        using var content = new StringContent(_render(e), Encoding.UTF8, _contentType);
         using var resp = Http.PostAsync(_url, content).GetAwaiter().GetResult();
         resp.EnsureSuccessStatusCode();
     }

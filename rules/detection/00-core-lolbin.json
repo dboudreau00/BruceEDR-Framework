@@ -1,0 +1,477 @@
+{
+  "name": "Core LOLBin and script-host abuse",
+  "description": "Execution-stage detections: signed Microsoft binaries used as a proxy for attacker code, script hosts launched from documents, and obfuscated script bodies surfaced by AMSI. These are the highest-yield, lowest-cost detections in the pack and are loaded first.",
+  "rules": [
+    {
+      "id": "lolbin-office-parent",
+      "title": "LOLBin launched by an Office application",
+      "description": "A Microsoft Office process spawned a living-off-the-land binary. Word, Excel and Outlook have no routine need for a shell or script host, so this parent/child pair is the classic first stage of a malicious macro or an exploited document. Pivot on the child command line and on what the document was.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1204.002", "T1059"],
+      "references": [
+        "https://attack.mitre.org/techniques/T1204/002/",
+        "https://attack.mitre.org/techniques/T1059/"
+      ],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            {
+              "field": "processName",
+              "op": "in",
+              "values": ["powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "certutil.exe", "bitsadmin.exe", "installutil.exe", "msbuild.exe", "curl.exe", "wmic.exe", "schtasks.exe", "forfiles.exe", "hh.exe"]
+            },
+            {
+              "field": "parentName",
+              "op": "in",
+              "values": ["winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "msaccess.exe", "mspub.exe", "onenote.exe", "visio.exe", "acrord32.exe", "acrobat.exe"]
+            }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Line-of-business Office add-ins and legacy VBA macros do legitimately shell out to cscript.exe or powershell.exe. Where that is the case, allowlist the specific parent plus command-line shape rather than disabling the rule outright.",
+        "Office click-to-run repair and update flows briefly spawn cmd.exe under an Office parent."
+      ]
+    },
+
+    {
+      "id": "lolbin-browser-parent",
+      "title": "LOLBin launched by a browser or PDF reader",
+      "description": "A browser or document reader spawned a script host or shell. This is what a drive-by download or a malicious PDF looks like once the user has clicked through. Confirm against the browser's download history before escalating.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 40,
+      "techniques": ["T1204.002", "T1059"],
+      "references": ["https://attack.mitre.org/techniques/T1204/002/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            {
+              "field": "processName",
+              "op": "in",
+              "values": ["powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe", "regsvr32.exe", "certutil.exe", "bitsadmin.exe", "installutil.exe", "msbuild.exe"]
+            },
+            {
+              "field": "parentName",
+              "op": "in",
+              "values": ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "iexplore.exe"]
+            }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Browsers launch cmd.exe and PowerShell for user-initiated 'open with' actions and for registered protocol handlers; some enterprises register such handlers deliberately.",
+        "Browser updaters occasionally run under the browser process tree."
+      ]
+    },
+
+    {
+      "id": "powershell-encoded-command",
+      "title": "PowerShell invoked with a base64 -EncodedCommand payload",
+      "description": "PowerShell was started with an encoded command block. Encoding is a legitimate way to avoid shell-quoting problems, which is exactly why attackers use it: the payload does not appear in the command line an operator reads. Decode the base64 before judging it.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 40,
+      "techniques": ["T1059.001", "T1027.010", "T1140"],
+      "references": [
+        "https://attack.mitre.org/techniques/T1059/001/",
+        "https://attack.mitre.org/techniques/T1027/010/"
+      ],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)\\s-e[ncodema]*\\s+[A-Za-z0-9+/=]{16,}" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "SCCM, Intune, Chocolatey and several endpoint-management agents routinely invoke PowerShell with -EncodedCommand. Baseline your management tooling first; the encoded payload itself, not the flag, is what decides.",
+        "The prefix-matching pattern also accepts abbreviations such as -e and -enc, which some administrators use by hand."
+      ]
+    },
+
+    {
+      "id": "powershell-stealth-flags",
+      "title": "PowerShell started with stealth or policy-bypass flags",
+      "description": "A hidden window or an execution-policy bypass on its own is weak signal, deliberately scored low. It matters when it stacks with a suspicious parent, a download cradle or a later credential-store read, which is what the scoring engine is for.",
+      "author": "ProcessShield",
+      "severity": "low",
+      "score": 15,
+      "techniques": ["T1059.001"],
+      "references": ["https://attack.mitre.org/techniques/T1059/001/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)-w(?:indowstyle)?\\s+hidden" }
+          ]
+        },
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)-e(?:p|x|xec|xecutionpolicy)?\\s+(?:bypass|unrestricted)" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Installers, login scripts and scheduled maintenance jobs hide the console window as a matter of course.",
+        "ExecutionPolicy Bypass is the default in most provisioning and CI scripts because the machine policy blocks unsigned scripts. On its own this is close to meaningless, which is why the score is 15."
+      ]
+    },
+
+    {
+      "id": "powershell-download-cradle",
+      "title": "PowerShell download-and-execute cradle",
+      "description": "The command line both fetches remote content and hands it to an execution primitive. That combination is the canonical stage-one loader; either half alone is common and benign. Recover the URL and check it against your intel before acting.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 55,
+      "techniques": ["T1059.001", "T1105", "T1027.010"],
+      "references": [
+        "https://attack.mitre.org/techniques/T1105/",
+        "https://attack.mitre.org/techniques/T1059/001/"
+      ],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart", "ScriptContent"],
+      "detection": [
+        {
+          "all": [
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:net\\.webclient|downloadstring|downloadfile|downloaddata|invoke-webrequest|\\biwr\\b|invoke-restmethod|\\birm\\b|start-bitstransfer)" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:invoke-expression|\\biex\\b|\\.invoke\\(|start-process|add-type)" }
+          ]
+        },
+        {
+          "all": [
+            { "field": "scriptText", "op": "regex", "value": "(?i)(?:net\\.webclient|downloadstring|downloadfile|downloaddata|invoke-webrequest|invoke-restmethod)" },
+            { "field": "scriptText", "op": "regex", "value": "(?i)(?:invoke-expression|\\biex\\b|\\.invoke\\()" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Several well-known one-line bootstrap installers (Chocolatey, Scoop, and a number of vendor agents) are literally download-and-IEX cradles. Allowlist the exact URL rather than switching the rule off.",
+        "Internal deployment scripts that pull from an intranet file server look identical to this from the command line alone."
+      ]
+    },
+
+    {
+      "id": "certutil-remote-download",
+      "title": "certutil used to download a remote file",
+      "description": "certutil.exe is a signed Microsoft PKI tool with a URL cache that doubles as a file downloader, which is why it is a long-standing ingress-tool-transfer favourite. The downloaded path is usually more interesting than the URL.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 55,
+      "techniques": ["T1105", "T1218", "T1140"],
+      "references": ["https://attack.mitre.org/techniques/T1105/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "equals", "value": "certutil.exe" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)-(?:urlcache|verifyctl)\\b" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:https?|ftp)://" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "PKI administrators legitimately run certutil -urlcache to fetch and inspect CRLs and CA certificates, and some enrolment scripts do the same on a schedule."
+      ]
+    },
+
+    {
+      "id": "certutil-base64-decode",
+      "title": "certutil used to decode an encoded payload",
+      "description": "certutil -decode turns a base64 blob on disk into a binary without touching a compiler or a downloader. It is a standard defence-evasion step between a dropped text file and an executed payload; correlate with the file that was written just before.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 40,
+      "techniques": ["T1140", "T1027", "T1218"],
+      "references": ["https://attack.mitre.org/techniques/T1140/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "equals", "value": "certutil.exe" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)-(?:decode|decodehex|encode)\\b" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Converting certificates between PEM and DER with certutil -decode is ordinary PKI work and will fire this rule."
+      ]
+    },
+
+    {
+      "id": "bitsadmin-transfer",
+      "title": "bitsadmin used to transfer a file",
+      "description": "bitsadmin schedules the download in the BITS service, so the network connection is not attributable to the calling process and survives logoff. Windows Update uses the BITS service directly, not bitsadmin.exe, so the binary itself is a reasonable signal.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1197", "T1105"],
+      "references": ["https://attack.mitre.org/techniques/T1197/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "equals", "value": "bitsadmin.exe" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)/(?:transfer|addfile|create|setnotifycmdline)\\b" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Legacy software-deployment and patching scripts still shell out to bitsadmin, particularly on older estates."
+      ]
+    },
+
+    {
+      "id": "mshta-remote-payload",
+      "title": "mshta executing a remote or inline script payload",
+      "description": "mshta.exe runs HTML applications with full trust and will happily execute a URL or an inline vbscript:/javascript: string. It has essentially no legitimate use on a modern endpoint, which makes this one of the cleaner LOLBin detections.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 55,
+      "techniques": ["T1218.005", "T1059.007", "T1059.005"],
+      "references": ["https://attack.mitre.org/techniques/T1218/005/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "equals", "value": "mshta.exe" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:https?://|javascript:|vbscript:|about:)" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "A small number of ageing line-of-business applications still deploy .hta launchers from an intranet URL; those will need an allowlist entry on the specific host."
+      ]
+    },
+
+    {
+      "id": "regsvr32-remote-scriptlet",
+      "title": "regsvr32 registering a remote scriptlet (Squiblydoo)",
+      "description": "regsvr32 /i: with a URL, or any use of scrobj.dll, executes attacker-supplied script through a signed Microsoft binary and historically bypassed application allowlisting. Almost nothing legitimate on an endpoint does this.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 60,
+      "techniques": ["T1218.010", "T1059.005"],
+      "references": ["https://attack.mitre.org/techniques/T1218/010/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "equals", "value": "regsvr32.exe" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:scrobj\\.dll|/i:\\s*(?:https?|ftp):)" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Legitimate COM scriptlet registration exists and is occasionally seen on developer machines, but is vanishingly rare on a normal endpoint."
+      ]
+    },
+
+    {
+      "id": "rundll32-suspicious-invocation",
+      "title": "rundll32 invoked with a script URI, a URL or an ordinal export",
+      "description": "rundll32 is the standard proxy for running a DLL export. The javascript: and ordinal-export forms are strongly associated with loaders because they keep the payload out of a named export an analyst would notice.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 50,
+      "techniques": ["T1218.011", "T1059.007"],
+      "references": ["https://attack.mitre.org/techniques/T1218/011/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "equals", "value": "rundll32.exe" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:javascript:|vbscript:|mshtml\\s*,|\\.dll\\s*,\\s*#\\d+)" }
+          ]
+        },
+        {
+          "all": [
+            { "field": "processName", "op": "equals", "value": "rundll32.exe" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)https?://" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Installers and control-panel applets do call rundll32 with ordinal exports such as advpack.dll,#12 or shell32.dll,#61, which trips the ordinal branch of this rule.",
+        "Printer and hardware-vendor setup packages are the most common benign source of ordinal invocations."
+      ]
+    },
+
+    {
+      "id": "rundll32-no-export-argument",
+      "title": "rundll32 started without a DLL,Export argument",
+      "description": "A genuine rundll32 invocation always names a module and an entry point, so it always contains a comma. An argument-less rundll32 is the default sacrificial process for several post-exploitation frameworks, which spawn it purely as an injection target.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1218.011", "T1055"],
+      "references": ["https://attack.mitre.org/techniques/T1055/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "equals", "value": "rundll32.exe" },
+            { "field": "commandLine", "op": "exists" },
+            { "field": "commandLine", "op": "notContains", "value": "," }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Some telemetry sources report a truncated or not-yet-populated command line for a very short-lived process. The 'commandLine exists' guard removes the empty case but cannot detect truncation, so a truncated line that lost its arguments will still fire here."
+      ]
+    },
+
+    {
+      "id": "msbuild-from-user-writable-path",
+      "title": "MSBuild building a project from a user-writable directory",
+      "description": "MSBuild compiles and executes C# from an inline task in a project file, giving attacker code the reputation of a signed Microsoft developer tool. A project file living in Temp, Downloads or ProgramData is not a build, it is a payload.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 50,
+      "techniques": ["T1127.001", "T1059"],
+      "references": ["https://attack.mitre.org/techniques/T1127/001/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["msbuild.exe", "dotnet.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)\\\\(?:temp|appdata|downloads|programdata|users\\\\public)\\\\" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Real builds, NuGet restore and dotnet tool operations use temp and AppData paths constantly. On a developer workstation this rule is noisy; scope it to non-engineering machines or lower the score there."
+      ]
+    },
+
+    {
+      "id": "wmic-process-call-create",
+      "title": "wmic used to create a process",
+      "description": "wmic process call create runs a command through the WMI provider host, so the new process is parented to WmiPrvSE.exe rather than to the caller. That parent-breaking is the point, and it is why this shows up in both lateral movement and local execution.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 40,
+      "techniques": ["T1047", "T1059.003"],
+      "references": ["https://attack.mitre.org/techniques/T1047/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["wmic.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)process\\s+call\\s+create" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Legacy administration, inventory and software-distribution scripts use wmic process call create for remote execution and will fire this rule on every run."
+      ]
+    },
+
+    {
+      "id": "amsi-obfuscation-markers",
+      "title": "Script body carries obfuscation markers",
+      "description": "AMSI hands the scanner the script AFTER the host has de-tokenised it, so these markers survive most layers of packing. None of them proves malice on its own; several of them together in one body almost always means the author was hiding something.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 35,
+      "techniques": ["T1027.010", "T1059.001", "T1140"],
+      "references": ["https://attack.mitre.org/techniques/T1027/010/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["ScriptContent"],
+      "detection": [
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)frombase64string\\s*\\(" }] },
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)-join\\s*\\(?\\s*\\[char\\]" }] },
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)(?:\\[char\\]\\s*\\d{2,3}\\s*\\+\\s*){3,}" }] },
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)(?:\\$\\{[^}\\r\\n]{1,12}\\}){3,}" }] },
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)-f\\s*(?:'[^'\\r\\n]{0,20}',\\s*){3,}" }] }
+      ],
+      "falsePositives": [
+        "Legitimate scripts sometimes decode a base64 configuration blob, and a few installers build strings from [char] codes to survive locale problems.",
+        "PowerShell format-operator use (-f) with several arguments is ordinary in reporting scripts; that clause is the weakest of the five."
+      ]
+    },
+
+    {
+      "id": "amsi-bypass-attempt",
+      "title": "Script references AMSI internals",
+      "description": "A script body that names amsiInitFailed, AmsiScanBuffer or the AmsiUtils type is trying to disable the very interface that just handed us the script. Treat as high confidence: there is no benign reason for ordinary automation to touch these symbols.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 70,
+      "techniques": ["T1562.001", "T1059.001"],
+      "references": ["https://attack.mitre.org/techniques/T1562/001/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["ScriptContent"],
+      "detection": [
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)amsi(?:initfailed|utils|scanbuffer|context|session|opensession)" }] },
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)\\[ref\\]\\.assembly\\.gettype\\(" }] }
+      ],
+      "falsePositives": [
+        "Security researchers, detection-engineering test suites and authorised red-team exercises run AMSI-bypass code deliberately. Those are true positives for the rule and false positives for the incident queue; scope by host, not by disabling the rule."
+      ]
+    },
+
+    {
+      "id": "amsi-inmemory-execution-apis",
+      "title": "Script combines memory-allocation APIs with a dynamic P/Invoke",
+      "description": "Declaring a P/Invoke signature in the same script body that calls VirtualAlloc or WriteProcessMemory is shellcode loading. The two halves are required together precisely because either alone appears in legitimate administration code.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 65,
+      "techniques": ["T1620", "T1055", "T1106"],
+      "references": ["https://attack.mitre.org/techniques/T1620/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["ScriptContent"],
+      "detection": [
+        {
+          "all": [
+            { "field": "scriptText", "op": "regex", "value": "(?i)(?:virtualalloc|virtualprotect|createremotethread|writeprocessmemory|ntallocatevirtualmemory|queueuserapc)" },
+            { "field": "scriptText", "op": "regex", "value": "(?i)(?:add-type|dllimport|getdelegateforfunctionpointer|reflection\\.emit|getprocaddress)" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "A handful of legitimate hardware-vendor and administration scripts P/Invoke into kernel32; this is rare, but it does happen on engineering workstations and on some backup agents."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,382 @@
+{
+  "name": "Collection, staging and exfiltration",
+  "description": "Detections for the last stage: gathering data, compressing it somewhere writable, and pushing it out. Individually these are the weakest rules in the pack, because archiving a file and uploading a file are ordinary work. They earn their score by stacking on top of a credential-access or LOLBin hit in the same process, which is what the correlating engine in DetectionEngine is for.",
+  "rules": [
+    {
+      "id": "archive-staged-in-temp",
+      "title": "Archive created in a staging directory",
+      "description": "Collected data is almost always compressed before it leaves, and it is compressed somewhere the current user can write without prompting. On its own this is background noise; immediately after a credential-store read it is the middle of an exfiltration chain.",
+      "author": "ProcessShield",
+      "severity": "medium",
+      "score": 30,
+      "techniques": ["T1074.001", "T1074", "T1560"],
+      "references": ["https://attack.mitre.org/techniques/T1074/001/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["FileCreate"],
+      "detection": [
+        {
+          "all": [
+            { "field": "fileExtension", "op": "in", "values": [".zip", ".7z", ".rar", ".tar", ".gz", ".cab", ".arj", ".lzh", ".xz", ".zst"] },
+            { "field": "filePath", "op": "regex", "value": "(?i)\\\\(?:temp|appdata\\\\local\\\\temp|programdata|users\\\\public|windows\\\\temp|perflogs)\\\\" }
+          ],
+          "none": [
+            { "field": "processName", "op": "in", "values": ["msiexec.exe", "trustedinstaller.exe", "tiworker.exe", "setup.exe", "wusa.exe"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Installers, updaters and browsers unpack and produce archives in temp directories constantly. Any build system does the same. This rule is designed to contribute to a score, not to alert alone."
+      ]
+    },
+
+    {
+      "id": "password-protected-archive-created",
+      "title": "Archive utility invoked with a password switch",
+      "description": "A password on the archive stops content inspection at the proxy and at the DLP gateway. Legitimate users do password-protect archives, but doing it from a script, into a temp directory, is a different thing from a person zipping a document.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1560.001", "T1560", "T1074.001"],
+      "references": ["https://attack.mitre.org/techniques/T1560/001/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["7z.exe", "7za.exe", "7zg.exe", "rar.exe", "winrar.exe", "zip.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)\\s-(?:p|hp)\\S" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Backup scripts legitimately encrypt their output, and some vendors ship password-protected support bundles.",
+        "The pattern requires the password to be on the command line; an interactive prompt or a response file will not be seen at all."
+      ]
+    },
+
+    {
+      "id": "archive-utility-over-user-data",
+      "title": "Archive utility pointed at a user data directory",
+      "description": "Compressing Documents, Desktop or a browser profile directory wholesale is collection, not housekeeping. The interesting part is the source path, not the tool.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 40,
+      "techniques": ["T1560.001", "T1119", "T1005"],
+      "references": ["https://attack.mitre.org/techniques/T1560/001/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["7z.exe", "7za.exe", "rar.exe", "winrar.exe", "tar.exe", "makecab.exe", "zip.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)\\\\(?:documents|desktop|downloads|pictures|user data|\\.ssh|onedrive)\\b" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Users and backup scripts archive their own Documents and Desktop folders legitimately, and developers tar source trees under their profile."
+      ]
+    },
+
+    {
+      "id": "powershell-compress-collected-data",
+      "title": "PowerShell compressing data in-process",
+      "description": "Compress-Archive and the .NET ZipFile class avoid dropping an archiving utility on disk, so a detection that only watches 7z.exe and rar.exe misses them entirely. This rule covers the scripted path.",
+      "author": "ProcessShield",
+      "severity": "medium",
+      "score": 30,
+      "techniques": ["T1560.001", "T1560", "T1074.001"],
+      "references": ["https://attack.mitre.org/techniques/T1560/001/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart", "ScriptContent"],
+      "detection": [
+        { "all": [{ "field": "commandLine", "op": "regex", "value": "(?i)(?:compress-archive|\\[io\\.compression\\.zipfile\\]|createfromdirectory)" }] },
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)(?:compress-archive|\\[io\\.compression\\.zipfile\\]|createfromdirectory)" }] }
+      ],
+      "falsePositives": [
+        "Log-collection, reporting and deployment scripts use Compress-Archive routinely; it is the idiomatic way to zip something in PowerShell."
+      ]
+    },
+
+    {
+      "id": "anonymous-file-drop-service",
+      "title": "Contact with an anonymous file-upload service",
+      "description": "Anonymous upload services need no account, return a share link immediately and are reachable over ordinary HTTPS, which makes them the path of least resistance for pushing a staged archive off the endpoint.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 50,
+      "techniques": ["T1567.002", "T1567", "T1048"],
+      "references": ["https://attack.mitre.org/techniques/T1567/002/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["DnsQuery", "ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "domain", "op": "regex", "value": "(?i)(?:^|\\.)(?:file\\.io|anonfiles\\.com|gofile\\.io|transfer\\.sh|temp\\.sh|bashupload\\.com|oshi\\.at|catbox\\.moe|uguu\\.se|litterbox\\.catbox\\.moe|filebin\\.net|send\\.vis\\.ee|tmpfiles\\.org|0x0\\.st)$" }
+          ]
+        },
+        {
+          "all": [
+            { "field": "commandLine", "op": "regex", "value": "(?i)https?://(?:[a-z0-9-]+\\.)?(?:file\\.io|anonfiles\\.com|gofile\\.io|transfer\\.sh|temp\\.sh|bashupload\\.com|catbox\\.moe|filebin\\.net|tmpfiles\\.org|0x0\\.st)/" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Users share large files through these services when email attachment limits get in the way, and support engineers use transfer.sh for log bundles.",
+        "The list is a snapshot: these services appear and disappear monthly, so a miss proves nothing."
+      ]
+    },
+
+    {
+      "id": "cloud-storage-upload-from-script",
+      "title": "Script host uploading to consumer cloud storage",
+      "description": "Consumer cloud storage is allowed almost everywhere and carries a reputable TLS certificate, so exfiltration through it survives both domain blocking and casual inspection. A script host, rather than the vendor's own sync client, is what makes this suspicious.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1567.002", "T1567"],
+      "references": ["https://attack.mitre.org/techniques/T1567/002/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["DnsQuery"],
+      "detection": [
+        {
+          "all": [
+            { "field": "domain", "op": "regex", "value": "(?i)(?:^|\\.)(?:api\\.mega\\.co\\.nz|mega\\.nz|api\\.pcloud\\.com|content\\.dropboxapi\\.com|api-content\\.dropbox\\.com|graph\\.microsoft\\.com|www\\.googleapis\\.com)$" },
+            { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe", "cmd.exe", "curl.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "certutil.exe", "bitsadmin.exe"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Automation and reporting scripts legitimately call graph.microsoft.com and googleapis.com; in a Microsoft 365 estate that endpoint in particular is used by a great deal of sanctioned tooling. Consider removing it and keeping only the consumer-storage hosts."
+      ]
+    },
+
+    {
+      "id": "rclone-style-bulk-transfer",
+      "title": "Bulk sync utility copying to a remote target",
+      "description": "rclone is the standard tool in ransomware double-extortion for moving hundreds of gigabytes to cloud storage in one command. It is also a completely legitimate backup tool, so the presence of a remote target in the command line is what carries the signal.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 60,
+      "techniques": ["T1567.002", "T1048", "T1030"],
+      "references": ["https://attack.mitre.org/techniques/T1567/002/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "commandLine", "op": "regex", "value": "(?i)\\brclone\\b" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)\\b(?:copy|sync|move|copyto|moveto)\\b" }
+          ]
+        },
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["megacmd.exe", "megaclient.exe", "megasync.exe", "winscp.com", "winscp.exe", "pscp.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:put|-upload|/upload|synchronize)" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "rclone and WinSCP are ordinary administrator tools; scheduled backups to cloud storage look identical to exfiltration at the command-line layer. Whether the destination is a sanctioned bucket is the deciding factor and this rule cannot see it."
+      ]
+    },
+
+    {
+      "id": "http-post-file-upload-from-lolbin",
+      "title": "Command line performing an HTTP upload of a file",
+      "description": "A multipart form post or a binary body from curl or PowerShell, referencing a file on disk, is an upload. Combined with an archive created moments earlier in the same process, it closes the collect-stage-exfiltrate chain.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 50,
+      "techniques": ["T1567", "T1041", "T1048"],
+      "references": ["https://attack.mitre.org/techniques/T1567/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart", "ScriptContent"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "equals", "value": "curl.exe" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:\\s-F\\s|--form|--upload-file|\\s-T\\s|--data-binary\\s*@)" }
+          ]
+        },
+        {
+          "all": [
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:invoke-restmethod|invoke-webrequest|uploadfile)" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:-method\\s+post|-infile|\\.uploadfile\\()" }
+          ]
+        },
+        {
+          "all": [
+            { "field": "scriptText", "op": "regex", "value": "(?i)(?:invoke-restmethod|invoke-webrequest|webclient)" },
+            { "field": "scriptText", "op": "regex", "value": "(?i)(?:-infile|\\.uploadfile\\(|-method\\s+post)" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "CI pipelines, crash-report uploaders and vendor telemetry agents all POST files. On a build server this rule is not usable as written."
+      ]
+    },
+
+    {
+      "id": "exfil-over-ftp-from-script-host",
+      "title": "Script host connecting to an FTP port",
+      "description": "FTP is unauthenticated-by-default in practice, unencrypted, and rarely inspected as carefully as HTTP. A script host opening a control connection to port 21 is either a decade-old integration or someone moving data out.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1048.003", "T1048"],
+      "references": ["https://attack.mitre.org/techniques/T1048/003/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["NetworkConnect"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe", "cmd.exe", "ftp.exe", "wscript.exe", "cscript.exe", "certutil.exe", "bitsadmin.exe", "curl.exe"] },
+            { "field": "remotePort", "op": "in", "values": ["21", "990"] }
+          ],
+          "none": [
+            { "field": "remoteAddress", "op": "cidrIn", "values": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fc00::/7", "::1/128"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Legacy line-of-business integrations still push files to external FTP servers on a schedule; those are usually a short, stable list worth allowlisting by address."
+      ]
+    },
+
+    {
+      "id": "exfil-over-smtp-from-script-host",
+      "title": "Script host connecting directly to an SMTP port",
+      "description": "Mailing data out from a script bypasses the mail client, the DLP hook attached to it and often the outbound proxy. Excluding the real mail clients leaves the cases worth reading.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1048", "T1041"],
+      "references": ["https://attack.mitre.org/techniques/T1048/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["NetworkConnect"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "curl.exe"] },
+            { "field": "remotePort", "op": "in", "values": ["25", "465", "587", "2525"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Send-MailMessage in a monitoring or backup script is an extremely common way to report job status, and it will fire this rule on every run. Baseline those scripts before enabling in a production estate."
+      ]
+    },
+
+    {
+      "id": "dns-hex-chunk-exfiltration",
+      "title": "DNS query whose leading label is a long hex chunk",
+      "description": "Encoding data as hex in the leftmost label is the simplest DNS exfiltration scheme there is, and it is visible because a legitimate hostname is essentially never 32 or more hex characters with nothing else in it.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1048", "T1071.004", "T1030"],
+      "references": ["https://attack.mitre.org/techniques/T1048/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["DnsQuery"],
+      "detection": [
+        {
+          "all": [
+            { "field": "domain", "op": "regex", "value": "^[a-f0-9]{32,63}\\.[a-z0-9-]{1,63}\\." }
+          ],
+          "none": [
+            { "field": "domain", "op": "regex", "value": "(?i)(?:^|\\.)(?:akamai(?:edge|hd)?\\.net|cloudfront\\.net|azureedge\\.net|edgekey\\.net|1e100\\.net|windowsupdate\\.com|sophosxl\\.net|avts\\.mcafee\\.com|spamhaus\\.org)$" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Several antivirus and anti-spam products encode reputation lookups as hex labels; the exclusion list names the ones this pack knows about and will need extending for your stack."
+      ]
+    },
+
+    {
+      "id": "webdav-unc-egress",
+      "title": "WebDAV UNC path used in a command line",
+      "description": "The \\\\host@SSL\\path form makes Windows mount a remote WebDAV share as if it were a file server, so a plain copy command becomes an upload over HTTPS to an arbitrary internet host. Firewall rules that watch SMB do not see it.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 50,
+      "techniques": ["T1048", "T1105", "T1570"],
+      "references": ["https://attack.mitre.org/techniques/T1048/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "commandLine", "op": "regex", "value": "(?i)\\\\\\\\[a-z0-9.-]+@(?:ssl|[0-9]{2,5})\\\\" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Some organisations legitimately map SharePoint or a WebDAV document store this way, particularly on older estates that predate the sync client."
+      ]
+    },
+
+    {
+      "id": "screen-and-clipboard-capture",
+      "title": "Script capturing the screen or the clipboard",
+      "description": "CopyFromScreen and Get-Clipboard are the two cheapest collection primitives in PowerShell: no P/Invoke, no dropped tool, and both are frequently the first thing a stealer script does after establishing itself.",
+      "author": "ProcessShield",
+      "severity": "medium",
+      "score": 35,
+      "techniques": ["T1113", "T1115", "T1119"],
+      "references": ["https://attack.mitre.org/techniques/T1113/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["ScriptContent", "ProcessStart"],
+      "detection": [
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)(?:copyfromscreen|get-clipboard|\\[windows\\.forms\\.clipboard\\]|system\\.windows\\.forms\\.clipboard)" }] },
+        { "all": [{ "field": "commandLine", "op": "regex", "value": "(?i)(?:copyfromscreen|get-clipboard)" }] }
+      ],
+      "falsePositives": [
+        "Screenshot utilities, clipboard managers and helpdesk diagnostic scripts use these APIs for their stated purpose."
+      ]
+    },
+
+    {
+      "id": "bulk-document-copy-to-staging",
+      "title": "Office document or PDF written into a staging directory",
+      "description": "Documents appearing one after another in Temp, ProgramData or Users\\Public is what automated collection looks like before the archive step. A single file is meaningless; the engine's per-process scoring is what turns a stream of them into a signal.",
+      "author": "ProcessShield",
+      "severity": "low",
+      "score": 15,
+      "techniques": ["T1119", "T1074.001", "T1005"],
+      "references": ["https://attack.mitre.org/techniques/T1119/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["FileCreate"],
+      "detection": [
+        {
+          "all": [
+            { "field": "fileExtension", "op": "in", "values": [".docx", ".doc", ".xlsx", ".xls", ".pptx", ".pdf", ".rtf", ".csv", ".kdbx", ".ovpn", ".rdp"] },
+            { "field": "filePath", "op": "regex", "value": "(?i)\\\\(?:appdata\\\\local\\\\temp|programdata|users\\\\public|windows\\\\temp|perflogs)\\\\" }
+          ],
+          "none": [
+            { "field": "processName", "op": "in", "values": ["winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "acrord32.exe", "acrobat.exe", "chrome.exe", "msedge.exe", "firefox.exe", "spoolsv.exe", "msiexec.exe"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Office autosave, print spooling and PDF printing all write documents to temp paths; the exclusion list covers the obvious producers but not every viewer or converter installed on a machine.",
+        "Email clients other than Outlook write attachments to temp when the user opens them."
+      ]
+    }
+  ]
+}

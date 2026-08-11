@@ -1,0 +1,366 @@
+{
+  "name": "Persistence and autostart",
+  "description": "Detections for surviving a reboot: Run keys, services, scheduled tasks, IFEO debuggers, COM hijacks and logon hooks. Persistence is inherently noisy because legitimate software persists too, so most rules here are scored moderately and lean on the parent process or the writing binary for their real signal.",
+  "rules": [
+    {
+      "id": "run-key-write",
+      "title": "Autostart Run key written",
+      "description": "A value was written under a CurrentVersion\\Run, RunOnce or RunServices key. This is the single most common persistence mechanism, used by malware and by half the software on a normal machine, so the score is deliberately modest and the value data is what matters.",
+      "author": "ProcessShield",
+      "severity": "medium",
+      "score": 25,
+      "techniques": ["T1547.001", "T1547", "T1112"],
+      "references": ["https://attack.mitre.org/techniques/T1547/001/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["RegistryWrite"],
+      "detection": [
+        {
+          "all": [
+            { "field": "registryKey", "op": "regex", "value": "(?i)\\\\currentversion\\\\run(?:once|services|servicesonce)?(?:ex)?(?:\\\\|$)" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Installers, updaters, sync clients and OEM utilities write Run keys as a matter of course. On a freshly imaged machine this rule fires dozens of times before the user logs in for the first time."
+      ]
+    },
+
+    {
+      "id": "run-key-write-from-lolbin",
+      "title": "Autostart Run key written by a script host or shell",
+      "description": "The same Run-key write, but performed by PowerShell, cmd, a script host or reg.exe rather than by an installer. Legitimate software persists from its own signed binary; a shell doing it is the shape of a script establishing a foothold.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 50,
+      "techniques": ["T1547.001", "T1059", "T1112"],
+      "references": ["https://attack.mitre.org/techniques/T1547/001/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["RegistryWrite"],
+      "detection": [
+        {
+          "all": [
+            { "field": "registryKey", "op": "regex", "value": "(?i)\\\\currentversion\\\\run(?:once|services|servicesonce)?(?:ex)?(?:\\\\|$)" },
+            { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe", "cmd.exe", "reg.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "wmic.exe"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Provisioning, imaging and configuration-management scripts legitimately write Run keys through reg.exe or PowerShell. Baseline your build process before treating this as an incident."
+      ]
+    },
+
+    {
+      "id": "startup-folder-drop",
+      "title": "File written to a Startup folder",
+      "description": "Anything in a Startup folder runs at logon with no registry write and no elevated rights. A script or executable dropped there by a non-installer process is a foothold; a .lnk is the usual form because it hides the real target path from a casual look.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1547.001", "T1547"],
+      "references": ["https://attack.mitre.org/techniques/T1547/001/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["FileCreate"],
+      "detection": [
+        {
+          "all": [
+            { "field": "filePath", "op": "regex", "value": "(?i)\\\\start menu\\\\programs\\\\startup\\\\" },
+            { "field": "fileExtension", "op": "notIn", "values": [".ini", ".tmp", ".db"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Application installers place shortcuts in the Startup folder deliberately, and Group Policy preferences deploy them at scale.",
+        "Some sync clients (OneDrive, Dropbox) rewrite their own Startup shortcut on update."
+      ]
+    },
+
+    {
+      "id": "service-imagepath-write",
+      "title": "Service ImagePath or ServiceDll written",
+      "description": "Writing ImagePath under a Services key either installs a new service or repoints an existing one at attacker code. Repointing an existing, already-trusted service is the quieter variant and the one worth chasing: check whether the service already existed.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 50,
+      "techniques": ["T1543.003", "T1543", "T1112"],
+      "references": ["https://attack.mitre.org/techniques/T1543/003/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["RegistryWrite"],
+      "detection": [
+        {
+          "all": [
+            { "field": "registryKey", "op": "regex", "value": "(?i)\\\\system\\\\currentcontrolset\\\\services\\\\" },
+            { "field": "registryValue", "op": "in", "values": ["ImagePath", "ServiceDll", "ServiceManifest"] }
+          ],
+          "none": [
+            { "field": "processName", "op": "in", "values": ["services.exe", "msiexec.exe", "trustedinstaller.exe", "tiworker.exe"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Every driver and service installation writes ImagePath. Windows Update, MSI installers and TrustedInstaller are excluded, but third-party installers that write the key directly are not."
+      ]
+    },
+
+    {
+      "id": "service-create-from-command-line",
+      "title": "Service created from the command line",
+      "description": "sc create, New-Service and their remote forms install a service that runs as SYSTEM at boot. This is both a persistence and a privilege-escalation primitive, and the remote form (sc \\\\host create) is a well-worn lateral-movement technique.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1543.003", "T1543", "T1021"],
+      "references": ["https://attack.mitre.org/techniques/T1543/003/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["sc.exe", "powershell.exe", "pwsh.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:\\bsc(?:\\.exe)?\\b[^\\r\\n]{0,80}\\bcreate\\b|\\bnew-service\\b)" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Software installers, monitoring-agent deployments and configuration-management runs create services from scripts routinely."
+      ]
+    },
+
+    {
+      "id": "ifeo-debugger-write",
+      "title": "Image File Execution Options debugger set",
+      "description": "A Debugger value under IFEO makes Windows launch your binary instead of the named program, every time anyone runs it. Pointed at a common target such as sethc.exe or an antivirus binary, it is persistence, defence evasion and a logon-screen backdoor in one registry write.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 65,
+      "techniques": ["T1546.012", "T1546", "T1112"],
+      "references": ["https://attack.mitre.org/techniques/T1546/012/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["RegistryWrite"],
+      "detection": [
+        {
+          "all": [
+            { "field": "registryKey", "op": "regex", "value": "(?i)\\\\image file execution options\\\\" },
+            { "field": "registryValue", "op": "in", "values": ["Debugger", "GlobalFlag", "MonitorProcess", "ReportingMode", "VerifierDlls"] }
+          ]
+        },
+        {
+          "all": [
+            { "field": "registryKey", "op": "regex", "value": "(?i)\\\\silentprocessexit\\\\" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Developers and support engineers set IFEO Debugger and GlobalFlag deliberately with gflags.exe when debugging start-up problems, and Application Verifier writes VerifierDlls.",
+        "A few application-compatibility shims are deployed the same way."
+      ]
+    },
+
+    {
+      "id": "scheduled-task-create-from-lolbin",
+      "title": "Scheduled task created by a script host or shell",
+      "description": "A scheduled task is persistence that survives reboots and can run as SYSTEM or at logon. Created by an installer it is unremarkable; created by PowerShell, cmd or a script host, usually right after a download, it is a foothold. Read the /TR argument.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 50,
+      "techniques": ["T1053.005", "T1053"],
+      "references": ["https://attack.mitre.org/techniques/T1053/005/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "equals", "value": "schtasks.exe" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)/create\\b" },
+            { "field": "parentName", "op": "in", "values": ["powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "winword.exe", "excel.exe", "outlook.exe"] }
+          ]
+        },
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)register-scheduledtask|new-scheduledtask" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Installers that use a batch or PowerShell wrapper to register their updater task look exactly like this, as do configuration-management runs (DSC, Ansible, Chef) that manage tasks declaratively."
+      ]
+    },
+
+    {
+      "id": "scheduled-task-xml-drop",
+      "title": "Task definition written directly into the Tasks directory",
+      "description": "Writing the XML into System32\\Tasks (and the matching registry entry) registers a task without going through schtasks.exe or the Task Scheduler API, which is specifically done to avoid the command-line telemetry the previous rule depends on.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 55,
+      "techniques": ["T1053.005", "T1053", "T1562"],
+      "references": ["https://attack.mitre.org/techniques/T1053/005/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["FileCreate"],
+      "detection": [
+        {
+          "all": [
+            { "field": "filePath", "op": "regex", "value": "(?i)\\\\windows\\\\system32\\\\tasks\\\\" }
+          ],
+          "none": [
+            { "field": "processName", "op": "in", "values": ["svchost.exe", "taskhostw.exe", "taskeng.exe", "schtasks.exe", "mmc.exe", "trustedinstaller.exe", "tiworker.exe", "msiexec.exe"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Some management agents and imaging tools write task XML directly rather than calling the API; those need a name exclusion.",
+        "Backup software reading the Tasks directory can appear here if the monitor reports opens rather than writes."
+      ]
+    },
+
+    {
+      "id": "winlogon-hook-write",
+      "title": "Winlogon Shell, Userinit or Taskman value written",
+      "description": "Winlogon launches whatever Shell and Userinit name, before the desktop exists. Appending a second binary after the comma is the classic trick because explorer.exe still starts and the user notices nothing.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 60,
+      "techniques": ["T1547", "T1547.001", "T1112"],
+      "references": ["https://attack.mitre.org/techniques/T1547/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["RegistryWrite"],
+      "detection": [
+        {
+          "all": [
+            { "field": "registryKey", "op": "regex", "value": "(?i)\\\\windows nt\\\\currentversion\\\\winlogon" },
+            { "field": "registryValue", "op": "in", "values": ["Shell", "Userinit", "Taskman", "AppSetup", "GinaDLL"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Kiosk, VDI and thin-client configurations set Shell deliberately to a custom application, and some Citrix or RDS images set Userinit."
+      ]
+    },
+
+    {
+      "id": "appinit-dll-write",
+      "title": "AppInit_DLLs or AppCertDLLs value written",
+      "description": "AppInit_DLLs loads a DLL into essentially every user-mode process that links user32.dll. It is disabled on systems with Secure Boot, which is worth checking before escalating, but on estates without it this is a whole-machine injection primitive.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 60,
+      "techniques": ["T1546", "T1055.001", "T1112"],
+      "references": ["https://attack.mitre.org/techniques/T1546/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["RegistryWrite"],
+      "detection": [
+        {
+          "all": [
+            { "field": "registryValue", "op": "in", "values": ["AppInit_DLLs", "LoadAppInit_DLLs", "AppCertDLLs", "RequireSignedAppInit_DLLs"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Legacy accessibility software, IME add-ins and a few older security products still install through AppInit_DLLs.",
+        "Hardening scripts that set LoadAppInit_DLLs to 0 will also fire this rule; the value data distinguishes them."
+      ]
+    },
+
+    {
+      "id": "com-hijack-user-hive",
+      "title": "Per-user COM server registration overriding a CLSID",
+      "description": "HKCU\\Software\\Classes\\CLSID takes precedence over HKLM for the logged-on user, so writing InprocServer32 there hijacks a COM object system components already load, with no administrative rights at all. Look up the CLSID before dismissing it.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 50,
+      "techniques": ["T1546.015", "T1546", "T1112"],
+      "references": ["https://attack.mitre.org/techniques/T1546/015/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["RegistryWrite"],
+      "detection": [
+        {
+          "all": [
+            { "field": "registryKey", "op": "regex", "value": "(?i)^hk(?:cu|ey_current_user)\\\\software\\\\classes\\\\clsid\\\\\\{[0-9a-f-]{36}\\}\\\\(?:inproc(?:server|handler)32|localserver32)" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Per-user application installs (Office add-ins, some Electron apps and per-user Chrome) legitimately register COM servers in the user hive.",
+        "The rule requires the key path to start with HKCU as the monitor spells it; a monitor that reports the native \\REGISTRY\\USER\\<SID> form will not match, and the pattern needs adjusting for that telemetry source."
+      ]
+    },
+
+    {
+      "id": "wmi-event-subscription-persistence",
+      "title": "Permanent WMI event subscription created",
+      "description": "An __EventFilter bound to a CommandLineEventConsumer runs code on a trigger such as boot or logon, with no file on disk outside the WMI repository and no registry autostart. It is the quietest common persistence mechanism on Windows.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 65,
+      "techniques": ["T1546", "T1047"],
+      "references": ["https://attack.mitre.org/techniques/T1546/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart", "ScriptContent"],
+      "detection": [
+        { "all": [{ "field": "commandLine", "op": "regex", "value": "(?i)(?:__eventfilter|commandlineeventconsumer|activescripteventconsumer|__filtertoconsumerbinding)" }] },
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)(?:__eventfilter|commandlineeventconsumer|activescripteventconsumer|__filtertoconsumerbinding)" }] }
+      ],
+      "falsePositives": [
+        "Monitoring and inventory products (SCCM in particular) create permanent WMI subscriptions legitimately, and administrators occasionally use them for scheduled maintenance."
+      ]
+    },
+
+    {
+      "id": "bits-job-notify-command",
+      "title": "BITS job configured with a notification command",
+      "description": "SetNotifyCmdLine makes the BITS service run a command when a transfer finishes. The job outlives the process that created it and the execution is attributed to the service host, so it is used as both persistence and a parent-breaking execution trick.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 55,
+      "techniques": ["T1197", "T1105"],
+      "references": ["https://attack.mitre.org/techniques/T1197/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "commandLine", "op": "regex", "value": "(?i)setnotifycmdline|-setnotifyflags" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "A small number of legacy deployment tools chain a post-transfer command through BITS on purpose."
+      ]
+    },
+
+    {
+      "id": "defender-exclusion-added",
+      "title": "Antivirus exclusion path added",
+      "description": "Adding an exclusion before dropping the payload is standard practice, and it is persistence in the sense that matters: it keeps the foothold alive. Excluding a whole drive or a user-writable directory is not something a legitimate installer needs to do.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 65,
+      "techniques": ["T1562.001", "T1562"],
+      "references": ["https://attack.mitre.org/techniques/T1562/001/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart", "RegistryWrite"],
+      "detection": [
+        { "all": [{ "field": "commandLine", "op": "regex", "value": "(?i)add-mppreference[^\\r\\n]{0,120}exclusion" }] },
+        { "all": [{ "field": "commandLine", "op": "regex", "value": "(?i)set-mppreference[^\\r\\n]{0,120}(?:disablerealtimemonitoring|disablescriptscanning|disableioavprotection)\\s+\\$?true" }] },
+        { "all": [{ "field": "registryKey", "op": "regex", "value": "(?i)\\\\microsoft\\\\windows defender\\\\exclusions\\\\" }] }
+      ],
+      "falsePositives": [
+        "Line-of-business applications with poor antivirus interaction are routinely excluded by IT, and some vendor installers add their own exclusion during setup. Verify who ran it, not just that it happened."
+      ]
+    }
+  ]
+}

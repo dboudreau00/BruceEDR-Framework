@@ -29,6 +29,14 @@ if (HasFlag(args, "--help") || HasFlag(args, "-h"))
     return 0;
 }
 
+// Offline verification: validate the shipped rule packs and replay every detection
+// scenario. Needs no elevation and starts no monitor, so it is safe in CI and is the
+// inner loop for anyone authoring a rule.
+if (HasFlag(args, "--selftest"))
+    return ProcessShield.Hosting.SelfTest.Run(
+        OptionValue(args, "--rules"),
+        OptionValue(args, "--scenarios"));
+
 if (HasFlag(args, "--install"))
 {
     if (!RequireElevation()) { WaitForKeyIfOwnConsole(); return 1; }
@@ -142,11 +150,15 @@ static bool HasFlag(string[] args, string flag)
     => args.Any(a => string.Equals(a, flag, StringComparison.OrdinalIgnoreCase));
 
 static string ResolveConfigPath(string[] args)
+    => OptionValue(args, "--config") ?? Path.Combine(AppContext.BaseDirectory, "shield.config.json");
+
+/// <summary>Value that follows <paramref name="name"/>, or null when the flag is absent.</summary>
+static string? OptionValue(string[] args, string name)
 {
     for (int i = 0; i < args.Length - 1; i++)
-        if (string.Equals(args[i], "--config", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
             return args[i + 1];
-    return Path.Combine(AppContext.BaseDirectory, "shield.config.json");
+    return null;
 }
 
 static bool IsElevated()
@@ -231,12 +243,15 @@ static void PrintUsage()
     Console.WriteLine(
         "ProcessShield - user-mode behavioral shield\n" +
         "Usage:\n" +
-        "  ProcessShield.exe                 run interactively with the analyst console\n" +
-        "  ProcessShield.exe --install       install + start the Windows Service (+ watchdog task)\n" +
-        "  ProcessShield.exe --uninstall     stop + remove the service and watchdog task\n" +
-        "  ProcessShield.exe --watchdog      run the heartbeat watchdog (used by the scheduled task)\n" +
-        "  ProcessShield.exe --config <path> use a specific shield.config.json\n" +
-        "  (started by the SCM)              runs as a Windows Service automatically\n");
+        "  ProcessShield.exe                    run interactively with the analyst console\n" +
+        "  ProcessShield.exe --install          install + start the Windows Service (+ watchdog task)\n" +
+        "  ProcessShield.exe --uninstall        stop + remove the service and watchdog task\n" +
+        "  ProcessShield.exe --watchdog         run the heartbeat watchdog (used by the scheduled task)\n" +
+        "  ProcessShield.exe --selftest         validate rule packs + replay detection scenarios (no admin)\n" +
+        "      --rules <dir>                    override the detection rule directory\n" +
+        "      --scenarios <dir>                override the replay scenario directory\n" +
+        "  ProcessShield.exe --config <path>    use a specific shield.config.json\n" +
+        "  (started by the SCM)                 runs as a Windows Service automatically\n");
 }
 
 static class NativeConsole

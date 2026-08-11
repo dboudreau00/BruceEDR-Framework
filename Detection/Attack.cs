@@ -113,6 +113,10 @@ public static class AttackCatalog
         T("T1134", "Access Token Manipulation", "Defense Evasion");
         T("T1036", "Masquerading", "Defense Evasion");
         T("T1036.005", "Masquerading: Match Legitimate Name or Location", "Defense Evasion");
+        T("T1564", "Hide Artifacts", "Defense Evasion");
+        T("T1564.003", "Hide Artifacts: Hidden Window", "Defense Evasion");
+        T("T1553", "Subvert Trust Controls", "Defense Evasion");
+        T("T1553.002", "Subvert Trust Controls: Code Signing", "Defense Evasion");
 
         // Credential Access
         T("T1003", "OS Credential Dumping", "Credential Access");

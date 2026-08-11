@@ -1,10 +1,33 @@
 using System.Collections.Concurrent;
 using System.Text;
+using ProcessShield.Api;
 using ProcessShield.Detection;
 using ProcessShield.Monitoring;
 using ProcessShield.Response;
+using ProcessShield.Telemetry;
 
 namespace ProcessShield.Core;
+
+/// <summary>
+/// Everything the host needs beyond the four core collaborators. All optional, so a
+/// minimal embedding (a test, the replay harness) can construct a host with the v1
+/// signature and get exactly the v1 behaviour.
+/// </summary>
+public sealed class HostOptions
+{
+    public bool AutoKill { get; init; }
+    /// <summary>Start the registry / DNS / AMSI / process-access ETW sessions.</summary>
+    public bool EnableExtendedMonitors { get; init; } = true;
+    /// <summary>Shared with the engine; the host feeds it and reads lineage for alerts.</summary>
+    public ProcessTree? Tree { get; init; }
+    /// <summary>Shared with the engine; queried by the console, the GUI and the control API.</summary>
+    public ApiSurfaceInventory? Surface { get; init; }
+    /// <summary>Decides which response actions a verdict triggers. Null uses the built-in default.</summary>
+    public Playbook? Playbook { get; init; }
+    public ShieldMetrics? Metrics { get; init; }
+    /// <summary>Invoked on the response worker for playbook actions the host does not implement itself.</summary>
+    public Action<PlaybookAction, ProfileSnapshot>? ExtendedAction { get; init; }
+}
 
 /// <summary>
 /// Single-owner (actor) orchestrator. Exactly ONE thread reads and mutates
@@ -60,6 +83,16 @@ public sealed class ShieldHost : IDisposable
         public required IReadOnlyList<string> Hits { get; init; }
     }
 
+    // Arbitrary read-only work that must run on the owner thread because it touches
+    // engine-owned state (the profile store, the surface inventory, the process tree).
+    // Keeping it a command is what lets the console, the GUI and the HTTP control plane
+    // all read that state without a single lock.
+    private sealed class QueryCommand : Command
+    {
+        public required Func<object?> Work { get; init; }
+        public required TaskCompletionSource<object?> Result { get; init; }
+    }
+
     private readonly DetectionEngine _engine;
     private readonly ResponseManager _response;
     private readonly IMemoryScanner _scanner;
@@ -78,6 +111,13 @@ public sealed class ShieldHost : IDisposable
     private EtwMonitor? _etw;
     private WmiProcessMonitor? _wmi;
     private FileActivityMonitor? _files;
+    private RegistryMonitor? _registry;
+    private DnsMonitor? _dns;
+    private AmsiMonitor? _amsi;
+    private ProcessAccessMonitor? _procAccess;
+
+    private readonly HostOptions _options;
+    private readonly Playbook _playbook;
 
     private volatile bool _autoKill;
     private long _signalsProcessed;
@@ -88,14 +128,24 @@ public sealed class ShieldHost : IDisposable
 
     public string ActiveMonitors { get; private set; } = "none";
 
+    /// <summary>Counters and latency percentiles, safe to read from any thread.</summary>
+    public ShieldMetrics Metrics { get; }
+
     public ShieldHost(bool autoKill, DetectionEngine engine, ResponseManager response,
         IMemoryScanner scanner, Logger log)
+        : this(engine, response, scanner, log, new HostOptions { AutoKill = autoKill }) { }
+
+    public ShieldHost(DetectionEngine engine, ResponseManager response,
+        IMemoryScanner scanner, Logger log, HostOptions options)
     {
-        _autoKill = autoKill;
+        _options = options;
+        _autoKill = options.AutoKill;
         _engine = engine;
         _response = response;
         _scanner = scanner;
         _log = log;
+        _playbook = options.Playbook ?? Playbook.Default();
+        Metrics = options.Metrics ?? new ShieldMetrics();
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -144,8 +194,38 @@ public sealed class ShieldHost : IDisposable
             SafeDispose(ref _files);
         }
 
+        // Extended monitors are each independently optional. They need their own ETW
+        // sessions (a kernel session cannot host user-mode providers) and any of them can
+        // be unavailable on a given build or SKU, so each failure is logged and skipped
+        // rather than degrading the agent as a whole.
+        if (_options.EnableExtendedMonitors)
+        {
+            TryStartMonitor(active, "Registry",
+                () => { _registry = new RegistryMonitor(EnqueueSignal, _log); _registry.Start(); },
+                () => SafeDispose(ref _registry));
+            TryStartMonitor(active, "DNS",
+                () => { _dns = new DnsMonitor(EnqueueSignal, _log); _dns.Start(); },
+                () => SafeDispose(ref _dns));
+            TryStartMonitor(active, "AMSI",
+                () => { _amsi = new AmsiMonitor(EnqueueSignal, _log); _amsi.Start(); },
+                () => SafeDispose(ref _amsi));
+            TryStartMonitor(active, "ProcessAccess",
+                () => { _procAccess = new ProcessAccessMonitor(EnqueueSignal, _log); _procAccess.Start(); },
+                () => SafeDispose(ref _procAccess));
+        }
+
         ActiveMonitors = active.Count > 0 ? string.Join(", ", active) : "none";
         return active.Count > 0;
+    }
+
+    private void TryStartMonitor(List<string> active, string name, Action start, Action cleanup)
+    {
+        try { start(); active.Add(name); }
+        catch (Exception ex)
+        {
+            _log.Error($"{name} monitor unavailable (continuing without it)", ex);
+            try { cleanup(); } catch { }
+        }
     }
 
     public void Stop()
@@ -155,6 +235,10 @@ public sealed class ShieldHost : IDisposable
         SafeDispose(ref _etw);
         SafeDispose(ref _wmi);
         SafeDispose(ref _files);
+        SafeDispose(ref _registry);
+        SafeDispose(ref _dns);
+        SafeDispose(ref _amsi);
+        SafeDispose(ref _procAccess);
 
         try { _signalQueue.CompleteAdding(); } catch { }
         try { _controlQueue.CompleteAdding(); } catch { }
@@ -184,7 +268,10 @@ public sealed class ShieldHost : IDisposable
         try
         {
             if (!_signalQueue.TryAdd(new SignalCommand { Signal = s }))
+            {
                 Interlocked.Increment(ref _signalsDropped);
+                Metrics.IncDropped();
+            }
         }
         catch (InvalidOperationException) { /* shutting down */ }
     }
@@ -218,13 +305,60 @@ public sealed class ShieldHost : IDisposable
         });
     }
 
-    public string Stats() =>
-        $"processed={Interlocked.Read(ref _signalsProcessed)} " +
-        $"dropped={Interlocked.Read(ref _signalsDropped)} " +
-        $"queued={_signalQueue.Count} " +
-        $"responsesRun={Interlocked.Read(ref _responsesRun)} " +
-        $"responseErrors={Interlocked.Read(ref _responseErrors)} " +
-        $"autoKill={_autoKill} monitors=[{ActiveMonitors}]";
+    public string Stats()
+    {
+        var m = Metrics.Snapshot();
+        return $"processed={Interlocked.Read(ref _signalsProcessed)} " +
+               $"dropped={Interlocked.Read(ref _signalsDropped)} " +
+               $"queued={_signalQueue.Count} " +
+               $"responsesRun={Interlocked.Read(ref _responsesRun)} " +
+               $"responseErrors={Interlocked.Read(ref _responseErrors)} " +
+               $"warns={m.Warns} quarantines={m.Quarantines} " +
+               $"p95={m.LatencyP95Ms:F2}ms " +
+               $"autoKill={_autoKill} monitors=[{ActiveMonitors}]";
+    }
+
+    // ------------------------------------------------- owner-thread read queries
+
+    /// <summary>
+    /// Runs <paramref name="work"/> on the owner thread and returns its result. This is the
+    /// only safe way for another thread to read engine-owned state; everything the console,
+    /// the GUI and the control API expose goes through here.
+    /// </summary>
+    private T Query<T>(Func<T> work, T fallback)
+    {
+        var tcs = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!TryPost(new QueryCommand { Work = () => work(), Result = tcs })) return fallback;
+        var boxed = Wait<object?>(tcs.Task, null);
+        return boxed is T typed ? typed : fallback;
+    }
+
+    /// <summary>The observed network/API surface, newest activity first.</summary>
+    public IReadOnlyList<SurfaceEndpoint> SurfaceEndpoints(int pid = 0)
+    {
+        var surface = _options.Surface;
+        if (surface is null) return Array.Empty<SurfaceEndpoint>();
+        return Query<IReadOnlyList<SurfaceEndpoint>>(
+            () => pid > 0 ? surface.ForPid(pid) : surface.All(),
+            Array.Empty<SurfaceEndpoint>());
+    }
+
+    /// <summary>Distinct ATT&amp;CK techniques observed, mapped to the number of processes citing each.</summary>
+    public IReadOnlyDictionary<string, int> ObservedTechniques()
+        => Query<IReadOnlyDictionary<string, int>>(
+            () => _engine.ObservedTechniques(),
+            new Dictionary<string, int>());
+
+    /// <summary>Rendered process ancestry for an alert, e.g. "winword.exe (900) -&gt; powershell.exe (4242)".</summary>
+    public string Lineage(int pid)
+    {
+        var tree = _options.Tree;
+        if (tree is null) return "";
+        return Query(() => tree.Lineage(pid), "");
+    }
+
+    /// <summary>Number of process profiles the engine is currently tracking.</summary>
+    public int TrackedProcesses() => Query(() => _engine.TrackedProcesses, 0);
 
     private ActionResult PostAction(ActionKind kind, int pid)
     {
@@ -282,13 +416,23 @@ public sealed class ShieldHost : IDisposable
         switch (cmd)
         {
             case SignalCommand sc:
+            {
                 Interlocked.Increment(ref _signalsProcessed);
+                Metrics.IncSignals();
+                long startTicks = System.Diagnostics.Stopwatch.GetTimestamp();
                 foreach (var verdict in _engine.Ingest(sc.Signal))
                     OnVerdict(verdict);
+                Metrics.ObserveDetectionLatency(System.Diagnostics.Stopwatch.GetElapsedTime(startTicks));
                 // Offload the (up to ~2s) memory scan to the response worker so it never
                 // stalls the detection loop; hits fold back in via MemScanResultCommand.
                 if (sc.Signal.Pid > 0 && _engine.TryClaimMemoryScan(sc.Signal.Pid))
                     ScheduleMemoryScan(sc.Signal.Pid);
+                break;
+            }
+
+            case QueryCommand qc:
+                try { qc.Result.TrySetResult(qc.Work()); }
+                catch (Exception ex) { _log.Error("owner query", ex); qc.Result.TrySetResult(null); }
                 break;
 
             case ListCommand lc:
@@ -358,6 +502,7 @@ public sealed class ShieldHost : IDisposable
             case ListCommand lc: lc.Result.TrySetResult(Array.Empty<ProfileSnapshot>()); break;
             case ActionCommand ac: ac.Result.TrySetResult(ActionResult.Fail("engine error")); break;
             case KillDoneCommand kd: kd.Result.TrySetResult(ActionResult.Fail("engine error")); break;
+            case QueryCommand qc: qc.Result.TrySetResult(null); break;
         }
     }
 
@@ -365,22 +510,56 @@ public sealed class ShieldHost : IDisposable
     {
         if (verdict.Verdict == Verdict.Warn)
         {
+            Metrics.IncDetections("WARN");
             _log.Warn(verdict);
             return;
         }
 
+        Metrics.IncDetections("QUARANTINE");
         _log.Quarantine(verdict);
 
-        var suspend = ResponseManager.SuspendProcess(verdict.Snapshot.Pid);
-        _engine.SetSuspendedByAnalyst(verdict.Snapshot.Pid, suspend.Ok);
-        _log.Action(suspend.Ok
-            ? $"pid {verdict.Snapshot.Pid} suspended"
-            : $"pid {verdict.Snapshot.Pid} suspend failed: {suspend.Message}");
-
         var snap = verdict.Snapshot;
-        bool alreadySuspended = suspend.Ok;
-        bool autoKill = _autoKill;
-        EnqueueResponse(() => _response.Contain(snap, alreadySuspended, autoKill));
+        var decision = _playbook.Decide(snap);
+        if (decision.Actions.Count == 0)
+        {
+            _log.Action($"pid {snap.Pid}: playbook '{decision.MatchedRule}' selected no containment action");
+            return;
+        }
+        _log.Action($"pid {snap.Pid}: playbook '{decision.MatchedRule}' -> " +
+                    string.Join(", ", decision.Actions));
+
+        // Suspend runs inline on the owner thread, exactly as it did in v1: freezing the
+        // target first is what makes every later step safe against PID reuse. Everything
+        // slower is handed to the response worker.
+        bool alreadySuspended = false;
+        if (decision.Actions.Contains(PlaybookAction.Suspend))
+        {
+            var suspend = ResponseManager.SuspendProcess(snap.Pid);
+            alreadySuspended = suspend.Ok;
+            _engine.SetSuspendedByAnalyst(snap.Pid, suspend.Ok);
+            _log.Action(suspend.Ok
+                ? $"pid {snap.Pid} suspended"
+                : $"pid {snap.Pid} suspend failed: {suspend.Message}");
+        }
+
+        bool firewall = decision.Actions.Contains(PlaybookAction.FirewallBlock);
+        bool quarantineFiles = decision.Actions.Contains(PlaybookAction.QuarantineFiles);
+        bool kill = _autoKill || decision.Actions.Contains(PlaybookAction.Kill);
+        var extra = decision.Actions
+            .Where(a => a is PlaybookAction.IsolateHost or PlaybookAction.CollectTriage or PlaybookAction.NotifyWebhook)
+            .ToArray();
+        var extendedAction = _options.ExtendedAction;
+
+        EnqueueResponse(() =>
+        {
+            _response.Contain(snap, alreadySuspended, kill, firewall, quarantineFiles);
+            if (extendedAction is null) return;
+            foreach (var a in extra)
+            {
+                try { extendedAction(a, snap); }
+                catch (Exception ex) { _log.Error($"playbook action {a}", ex); }
+            }
+        });
     }
 
     private ActionResult ExecuteAction(ActionKind kind, int pid)
@@ -454,8 +633,13 @@ public sealed class ShieldHost : IDisposable
         {
             foreach (var work in _responseQueue.GetConsumingEnumerable())
             {
-                try { work(); Interlocked.Increment(ref _responsesRun); }
-                catch (Exception ex) { Interlocked.Increment(ref _responseErrors); _log.Error("response task", ex); }
+                try { work(); Interlocked.Increment(ref _responsesRun); Metrics.IncResponses(true); }
+                catch (Exception ex)
+                {
+                    Interlocked.Increment(ref _responseErrors);
+                    Metrics.IncResponses(false);
+                    _log.Error("response task", ex);
+                }
             }
         }
         catch (Exception ex) { _log.Error("response loop terminated", ex); }

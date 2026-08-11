@@ -17,11 +17,13 @@ public sealed class ResponseManager
     private readonly Logger _log;
     private readonly AuthenticodeVerifier _verifier;
     private readonly string _quarantineDir;
+    private readonly QuarantineVault? _vault;
 
-    public ResponseManager(Logger log, AuthenticodeVerifier verifier)
+    public ResponseManager(Logger log, AuthenticodeVerifier verifier, QuarantineVault? vault = null)
     {
         _log = log;
         _verifier = verifier;
+        _vault = vault;
         _quarantineDir = Path.Combine(AppContext.BaseDirectory, "quarantine");
         try { Directory.CreateDirectory(_quarantineDir); }
         catch (Exception ex) { _log.Error("create quarantine dir", ex); }
@@ -30,19 +32,23 @@ public sealed class ResponseManager
     public bool IsTrusted(int pid) => _verifier.IsTrusted(pid);
 
     /// <summary>Slow containment steps. The initial suspend already ran on the owner thread.</summary>
-    public void Contain(ProfileSnapshot snap, bool alreadySuspended, bool autoKill)
+    public void Contain(ProfileSnapshot snap, bool alreadySuspended, bool autoKill,
+        bool firewall = true, bool quarantineFiles = true)
     {
         // If the target was NOT frozen by the initial suspend, its PID may already have
         // been recycled by an unrelated process by the time this runs on the response
         // worker. Never resolve or kill by live PID in that case -- act only on the
         // trusted snapshot image path -- or we could firewall/kill an innocent process.
-        string? imagePath = alreadySuspended
-            ? ResolveImagePath(snap.Pid) ?? NullIfMissing(snap.ImagePath)
-            : NullIfMissing(snap.ImagePath);
-        if (imagePath is not null) AddOutboundFirewallBlock(imagePath, snap.Pid);
-        else _log.Action($"pid {snap.Pid}: no resolvable image path; skipped firewall block");
+        if (firewall)
+        {
+            string? imagePath = alreadySuspended
+                ? ResolveImagePath(snap.Pid) ?? NullIfMissing(snap.ImagePath)
+                : NullIfMissing(snap.ImagePath);
+            if (imagePath is not null) AddOutboundFirewallBlock(imagePath, snap.Pid);
+            else _log.Action($"pid {snap.Pid}: no resolvable image path; skipped firewall block");
+        }
 
-        QuarantineArchives(snap);
+        if (quarantineFiles) QuarantineArchives(snap);
 
         if (autoKill && alreadySuspended)
         {
@@ -137,6 +143,22 @@ public sealed class ResponseManager
             try
             {
                 if (!File.Exists(archive)) continue;
+
+                // Preferred path: move the bytes into the encrypted vault, where the payload
+                // is no longer a runnable file and cannot be re-detected by another scanner
+                // as a live threat. Falls back to the historical plain move only if no vault
+                // was configured.
+                if (_vault is not null)
+                {
+                    var entry = _vault.Store(archive, $"staged by pid {snap.Pid}", snap.Pid, snap.ProcessName);
+                    if (entry is not null)
+                    {
+                        _log.Action($"vaulted archive {Path.GetFileName(archive)} as {entry.Id}");
+                        continue;
+                    }
+                    _log.Action($"vault store failed for {Path.GetFileName(archive)}; falling back to a plain move");
+                }
+
                 string dest = Path.Combine(_quarantineDir,
                     $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Path.GetFileName(archive)}");
                 File.Move(archive, dest, overwrite: false);

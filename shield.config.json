@@ -7,7 +7,24 @@
     "trustDiscount": 30,
     "memoryScanEngine": "builtin",
     "yaraRulesPath": "rules",
-    "kernelBlocking": false
+    "kernelBlocking": false,
+
+    "rulesPath": "rules/detection",
+    "enableRuleEngine": true,
+
+    "enableScoreDecay": true,
+    "scoreDecayPoints": 5,
+    "scoreDecayIntervalSeconds": 300,
+
+    "enableBeaconDetection": true,
+    "beaconMinConnections": 6,
+    "beaconScore": 35,
+
+    "enableDomainAnalysis": true,
+    "dgaScore": 25,
+
+    "enableExtendedMonitors": true,
+    "maxTrackedProcesses": 16384
   },
   "allowlist": {
     "publishers": [ "Microsoft Windows", "Microsoft Corporation" ],
@@ -16,9 +33,42 @@
     "requireValidChain": true,
     "checkRevocation": false
   },
+  "intel": {
+    "enabled": true,
+    "feedPath": "intel",
+    "hitScore": 60
+  },
+  "response": {
+    "useEncryptedVault": true,
+    "quarantineVaultPath": "quarantine",
+    "playbookPath": "",
+    "collectTriageOnContain": false,
+    "triageOutputPath": "triage",
+    "isolationAllowlist": []
+  },
+  "api": {
+    "enableSurfaceInventory": true,
+    "control": {
+      "enabled": false,
+      "address": "127.0.0.1",
+      "port": 8787,
+      "token": "",
+      "allowActions": false
+    },
+    "studio": {
+      "allowedHosts": [ "localhost", "127.0.0.1" ],
+      "allowMutatingMethods": false,
+      "allowInsecureHttp": false,
+      "maxRequestsPerSecond": 5.0,
+      "maxResponseBytes": 8388608,
+      "workspacePath": "apistudio"
+    }
+  },
   "telemetry": {
     "jsonlPath": "incidents.jsonl",
     "auditPath": "audit.log",
+    "format": "native",
+    "enableMetrics": true,
     "syslog": { "enabled": false, "host": "127.0.0.1", "port": 514, "protocol": "udp", "appName": "ProcessShield" },
     "webhook": { "enabled": false, "url": "" }
   },

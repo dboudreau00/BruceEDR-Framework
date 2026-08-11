@@ -1,0 +1,342 @@
+{
+  "name": "Command and control",
+  "description": "Detections for the channel back to the operator: dynamic-DNS and tunnelling providers, non-standard ports from signed system binaries, default named pipes, paste and webhook services, and remote-access tooling. Network indicators age fast, so treat the domain and port lists here as a starting baseline rather than as intelligence.",
+  "rules": [
+    {
+      "id": "dns-dynamic-dns-provider",
+      "title": "DNS query for a dynamic-DNS or tunnelling provider",
+      "description": "Free dynamic-DNS and reverse-tunnel providers let an operator point a stable name at a machine with no fixed address and no domain purchase, which is why commodity RATs default to them. Very few corporate applications resolve these names.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 40,
+      "techniques": ["T1568", "T1071.004", "T1090"],
+      "references": ["https://attack.mitre.org/techniques/T1568/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["DnsQuery"],
+      "detection": [
+        {
+          "all": [
+            { "field": "domain", "op": "regex", "value": "(?i)(?:^|\\.)(?:duckdns\\.org|no-ip\\.(?:com|org|biz)|noip\\.me|ddns\\.net|hopto\\.org|zapto\\.org|serveo\\.net|dynu\\.(?:com|net)|freedns\\.afraid\\.org|myftp\\.(?:biz|org)|servebeer\\.com|redirectme\\.net|sytes\\.net|3utilities\\.com|bounceme\\.net)$" }
+          ]
+        },
+        {
+          "all": [
+            { "field": "domain", "op": "regex", "value": "(?i)(?:^|\\.)(?:ngrok\\.io|ngrok-free\\.app|trycloudflare\\.com|loca\\.lt|localtunnel\\.me|portmap\\.io|pagekite\\.me|tunnelto\\.dev|localhost\\.run)$" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Hobbyists, home-lab users and some legitimate remote-support setups genuinely use DuckDNS and No-IP. ngrok and Cloudflare quick tunnels are everyday tools for developers demoing a local service.",
+        "The domain list ages; a provider that rebrands or a new entrant will simply be missed, so absence of a hit means nothing."
+      ]
+    },
+
+    {
+      "id": "dns-long-random-label",
+      "title": "DNS query with an unusually long single label",
+      "description": "DNS tunnelling encodes data into the leftmost label, producing names far longer and far more random than anything a human registered. This is a shape heuristic, not an identification: score it low and use it as corroboration.",
+      "author": "ProcessShield",
+      "severity": "medium",
+      "score": 25,
+      "techniques": ["T1071.004", "T1572", "T1048"],
+      "references": ["https://attack.mitre.org/techniques/T1071/004/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["DnsQuery"],
+      "detection": [
+        {
+          "all": [
+            { "field": "domain", "op": "regex", "value": "^[a-z0-9]{40,63}\\." }
+          ],
+          "none": [
+            { "field": "domain", "op": "regex", "value": "(?i)(?:^|\\.)(?:akamai(?:edge|hd|technologies)?\\.net|cloudfront\\.net|azureedge\\.net|windowsupdate\\.com|dropbox(?:usercontent)?\\.com|googleusercontent\\.com|1e100\\.net|fbcdn\\.net|llnwd\\.net|edgekey\\.net|trafficmanager\\.net)$" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Content-delivery networks, antivirus reputation lookups and cloud storage chunk servers all generate long hashed labels. The exclusion list covers the largest offenders and nothing else, so expect to extend it for your environment."
+      ]
+    },
+
+    {
+      "id": "dns-consonant-run-dga",
+      "title": "DNS query for a name with an implausible consonant run",
+      "description": "Domain-generation algorithms produce pronounceable-looking but statistically wrong names; a run of six or more consonants is one of the cheapest usable signals. This is the weakest rule in the pack by design and exists to nudge a score, not to raise an alert on its own.",
+      "author": "ProcessShield",
+      "severity": "low",
+      "score": 15,
+      "techniques": ["T1568.002", "T1568"],
+      "references": ["https://attack.mitre.org/techniques/T1568/002/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["DnsQuery"],
+      "detection": [
+        {
+          "all": [
+            { "field": "domain", "op": "regex", "value": "^[a-z0-9-]{0,20}[bcdfghjklmnpqrstvwxz]{6,}[a-z0-9-]{0,20}\\.[a-z]{2,12}$" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Abbreviations, product codes and transliterated non-English names trip this constantly (any name built from initials will). It is a scoring nudge, not evidence.",
+        "It also cannot see a DGA that produces pronounceable output, which the better families do."
+      ]
+    },
+
+    {
+      "id": "lolbin-nonstandard-port",
+      "title": "System binary connecting to a non-standard port",
+      "description": "A signed Microsoft binary talking outbound is normal on 80, 443 and 53. On an arbitrary high port it is either a tunnel or a direct C2 channel. Ports used by common internal services are excluded so this stays usable inside a corporate network.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 40,
+      "techniques": ["T1571", "T1095", "T1071"],
+      "references": ["https://attack.mitre.org/techniques/T1571/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["NetworkConnect"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "certutil.exe", "bitsadmin.exe", "installutil.exe", "msbuild.exe", "wmic.exe"] },
+            { "field": "remotePort", "op": "notIn", "values": ["80", "443", "53", "8080", "8443", "123", "88", "389", "445", "636", "3268", "5985", "5986"] }
+          ],
+          "none": [
+            { "field": "remoteAddress", "op": "cidrIn", "values": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "PowerShell talking to an internal database, message broker or REST API on a custom port is ordinary in shops that automate with it. The RFC1918 exclusion removes most of that, but a cloud-hosted internal service on a public address will still fire."
+      ]
+    },
+
+    {
+      "id": "c2-framework-default-port",
+      "title": "Outbound connection to a port associated with C2 defaults",
+      "description": "Post-exploitation frameworks ship with default listener ports that operators frequently never change. Matching on the port alone is crude, but an unchanged default is exactly the kind of mistake worth catching cheaply.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 40,
+      "techniques": ["T1571", "T1095"],
+      "references": ["https://attack.mitre.org/techniques/T1571/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["NetworkConnect"],
+      "detection": [
+        {
+          "all": [
+            { "field": "remotePort", "op": "in", "values": ["4444", "4445", "1337", "31337", "50050", "9001", "6666", "8081", "5552", "7777"] }
+          ],
+          "none": [
+            { "field": "remoteAddress", "op": "cidrIn", "values": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "::1/128", "fc00::/7"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "8081 and 9001 are common for development servers, proxies and Tor directory ports; 7777 is used by several games. Any competent operator changes the default, so a miss here means nothing.",
+        "Developers running local tooling against a public staging host will fire this."
+      ]
+    },
+
+    {
+      "id": "tor-onion-resolution",
+      "title": "Attempt to resolve a .onion address",
+      "description": "A .onion name has no meaning to normal DNS, so a query for one means something is trying to reach a hidden service, usually through a local Tor proxy or a tor2web gateway. Ransomware payment portals and several RAT families use them.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1090", "T1071.004", "T1573"],
+      "references": ["https://attack.mitre.org/techniques/T1090/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["DnsQuery"],
+      "detection": [
+        { "all": [{ "field": "domain", "op": "regex", "value": "(?i)\\.onion(?:\\.|$)" }] },
+        { "all": [{ "field": "domain", "op": "regex", "value": "(?i)(?:^|\\.)(?:tor2web\\.org|onion\\.(?:to|ws|pet|ly)|onion\\.link)$" }] }
+      ],
+      "falsePositives": [
+        "Users running Tor Browser or privacy tooling deliberately, and researchers browsing hidden services. Tor Browser normally resolves internally rather than via the system resolver, so a system-level query is the more interesting case."
+      ]
+    },
+
+    {
+      "id": "paste-service-contact",
+      "title": "Contact with a paste or anonymous file-drop service",
+      "description": "Paste sites are used as dead-drop resolvers: stage one fetches a short text blob holding the real C2 address, so the malware itself never contains an indicator worth blocking. The retrieval looks like ordinary web traffic.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 40,
+      "techniques": ["T1102", "T1105", "T1104"],
+      "references": ["https://attack.mitre.org/techniques/T1102/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["DnsQuery", "ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "domain", "op": "regex", "value": "(?i)(?:^|\\.)(?:pastebin\\.com|paste\\.ee|hastebin\\.com|ghostbin\\.com|controlc\\.com|rentry\\.co|dpaste\\.(?:com|org)|termbin\\.com|0x0\\.st|ix\\.io|paste\\.rs|justpaste\\.it)$" }
+          ]
+        },
+        {
+          "all": [
+            { "field": "commandLine", "op": "regex", "value": "(?i)https?://(?:[a-z0-9-]+\\.)?(?:pastebin\\.com|paste\\.ee|hastebin\\.com|ghostbin\\.com|controlc\\.com|rentry\\.co|0x0\\.st|termbin\\.com)/" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Developers and support staff share logs and snippets through paste sites all day. The signal is a LOLBin or script fetching from one, not a browser visiting one."
+      ]
+    },
+
+    {
+      "id": "webhook-messaging-c2",
+      "title": "Script or command line targeting a chat webhook API",
+      "description": "Telegram bot and Discord webhook endpoints give an operator a free, TLS-protected, reputable-domain C2 and exfiltration channel with no infrastructure of their own. The bot token or webhook id in the URL is a usable pivot.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 50,
+      "techniques": ["T1102", "T1567", "T1071.001"],
+      "references": ["https://attack.mitre.org/techniques/T1102/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["ProcessStart", "ScriptContent", "DnsQuery"],
+      "detection": [
+        { "all": [{ "field": "commandLine", "op": "regex", "value": "(?i)(?:api\\.telegram\\.org/bot|discord(?:app)?\\.com/api/webhooks|hooks\\.slack\\.com/services)" }] },
+        { "all": [{ "field": "scriptText", "op": "regex", "value": "(?i)(?:api\\.telegram\\.org/bot|discord(?:app)?\\.com/api/webhooks|hooks\\.slack\\.com/services)" }] },
+        {
+          "all": [{ "field": "domain", "op": "regex", "value": "(?i)^api\\.telegram\\.org$" }],
+          "none": [{ "field": "processName", "op": "in", "values": ["telegram.exe", "chrome.exe", "msedge.exe", "firefox.exe"] }]
+        }
+      ],
+      "falsePositives": [
+        "Build pipelines, monitoring scripts and home-automation projects post to Discord and Slack webhooks constantly; this is one of the most common legitimate uses of a script-driven HTTP POST."
+      ]
+    },
+
+    {
+      "id": "named-pipe-c2-default",
+      "title": "Named pipe matching a post-exploitation framework default",
+      "description": "Several frameworks name their SMB and post-exploitation pipes from a small default set. This catches operators who did not change the malleable profile.\n\nLIMITATION: pipe names are one string in a configuration file. Anyone who changes them defeats this rule completely, so treat a hit as a lucky break and never treat a miss as clean.",
+      "author": "ProcessShield",
+      "severity": "critical",
+      "score": 60,
+      "techniques": ["T1090", "T1071", "T1021"],
+      "references": ["https://attack.mitre.org/techniques/T1090/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["NamedPipe"],
+      "detection": [
+        { "all": [{ "field": "pipeName", "op": "regex", "value": "(?i)^msagent_[0-9a-f]{2}$" }] },
+        { "all": [{ "field": "pipeName", "op": "regex", "value": "(?i)^(?:postex|postex_ssh)_[0-9a-f]{4}$" }] },
+        { "all": [{ "field": "pipeName", "op": "regex", "value": "(?i)^status_[0-9a-f]{2,4}$" }] },
+        { "all": [{ "field": "pipeName", "op": "regex", "value": "(?i)^msse-[0-9a-f]{3}-server$" }] },
+        { "all": [{ "field": "pipeName", "op": "regex", "value": "(?i)^(?:mojo|wkssvc)_[0-9a-f]{16,}$" }] }
+      ],
+      "falsePositives": [
+        "Chromium uses mojo.* pipe names heavily; the pattern here requires a long hex suffix in an attempt to separate the framework variant, but a Chromium build that changes its naming could collide.",
+        "Any environment where an operator customises pipe names produces no hits at all, which is the more important limitation."
+      ]
+    },
+
+    {
+      "id": "named-pipe-remote-exec-service",
+      "title": "Named pipe used by a remote-execution service",
+      "description": "PsExec and its clones create a well-known service pipe on the target when they run. Seeing one means someone executed code on this machine from elsewhere; whether that was your administrator or not is the question.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1021", "T1570", "T1543.003"],
+      "references": ["https://attack.mitre.org/techniques/T1021/"],
+      "enabled": true,
+      "oncePerProcess": false,
+      "kinds": ["NamedPipe"],
+      "detection": [
+        {
+          "all": [
+            { "field": "pipeName", "op": "regex", "value": "(?i)^(?:psexesvc|paexec|remcom_communication|csexecsvc|winexesvc)" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "PsExec is a legitimate Sysinternals tool and many administrators and software-deployment systems use it daily. This rule tells you remote execution happened, not that it was unauthorised."
+      ]
+    },
+
+    {
+      "id": "remote-access-tool-launched",
+      "title": "Third-party remote-access tool started",
+      "description": "Commercial remote-access software is signed, reputable and does exactly what a RAT does. Attackers install it precisely because it is allowlisted. The question is never whether the tool is malicious but whether it belongs on this machine.",
+      "author": "ProcessShield",
+      "severity": "medium",
+      "score": 30,
+      "techniques": ["T1219", "T1105"],
+      "references": ["https://attack.mitre.org/techniques/T1219/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["anydesk.exe", "teamviewer.exe", "rustdesk.exe", "screenconnect.clientservice.exe", "connectwisecontrol.client.exe", "atera_agent.exe", "splashtop.exe", "sragent.exe", "ngrok.exe", "logmein.exe", "gotoassist.exe", "supremo.exe", "ammyy.exe", "dwagent.exe"] }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Managed service providers and internal helpdesks use exactly these tools. This rule is only meaningful once you have decided which single remote-access product your organisation sanctions and excluded it; left unconfigured it is noise."
+      ]
+    },
+
+    {
+      "id": "url-with-bare-ip-literal",
+      "title": "Command line fetching a URL with a bare IP address",
+      "description": "Malware often skips DNS entirely and hardcodes an address, both to avoid domain-reputation checks and because the operator never registered a name. A URL with an IP literal in a script host's command line is worth a look.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 40,
+      "techniques": ["T1071.001", "T1105"],
+      "references": ["https://attack.mitre.org/techniques/T1071/001/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe", "cmd.exe", "curl.exe", "wget.exe", "certutil.exe", "bitsadmin.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "wscript.exe", "cscript.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)https?://(?:\\d{1,3}\\.){3}\\d{1,3}" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Internal tooling, health checks and container workflows frequently address services by IP. The rule does not distinguish a private address from a public one, because the command-line string is all it has."
+      ]
+    },
+
+    {
+      "id": "download-utility-to-user-writable-path",
+      "title": "curl or wget writing into a user-writable directory",
+      "description": "curl.exe ships with Windows now, so downloading no longer requires PowerShell. Writing the result into Temp, AppData or ProgramData is the ingress half of a two-step loader; the execution usually follows within seconds.",
+      "author": "ProcessShield",
+      "severity": "high",
+      "score": 45,
+      "techniques": ["T1105", "T1218"],
+      "references": ["https://attack.mitre.org/techniques/T1105/"],
+      "enabled": true,
+      "oncePerProcess": true,
+      "kinds": ["ProcessStart"],
+      "detection": [
+        {
+          "all": [
+            { "field": "processName", "op": "in", "values": ["curl.exe", "wget.exe"] },
+            { "field": "commandLine", "op": "regex", "value": "(?i)(?:-o|--output|-oo?|--remote-name)\\b" },
+            { "field": "commandLine", "op": "regex", "value": "(?i)\\\\(?:temp|appdata|programdata|users\\\\public|windows\\\\tasks)\\\\" }
+          ]
+        }
+      ],
+      "falsePositives": [
+        "Developer tooling, container builds and vendor installers download into temp directories routinely. On an engineering workstation this rule needs a lower score."
+      ]
+    }
+  ]
+}
