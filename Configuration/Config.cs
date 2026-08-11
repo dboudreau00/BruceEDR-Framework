@@ -83,8 +83,12 @@ public sealed class DetectionConfig
 
 public sealed class IntelConfig
 {
-    /// <summary>Directory of operator-supplied indicator feeds (*.txt / *.ioc / *.csv).</summary>
-    public string FeedPath { get; set; } = "intel";
+    /// <summary>
+    /// Directory of operator-supplied indicator feeds (*.txt / *.ioc / *.csv). Kept
+    /// separate from the Intel/ source folder so an operator dropping files here can
+    /// never collide with shipped code.
+    /// </summary>
+    public string FeedPath { get; set; } = "intel/feeds";
     public bool Enabled { get; set; } = true;
     /// <summary>Score added when an image hash, domain or address matches a loaded feed.</summary>
     public int HitScore { get; set; } = 60;

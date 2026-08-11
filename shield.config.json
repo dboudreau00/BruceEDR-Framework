@@ -35,7 +35,7 @@
   },
   "intel": {
     "enabled": true,
-    "feedPath": "intel",
+    "feedPath": "intel/feeds",
     "hitScore": 60
   },
   "response": {

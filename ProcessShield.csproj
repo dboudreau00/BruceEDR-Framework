@@ -69,7 +69,7 @@
          the agent loads them from disk at startup and the console can replay them. -->
     <None Update="rules\**\*.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Replay\scenarios\**\*.jsonl" CopyToOutputDirectory="PreserveNewest" />
-    <None Update="intel\**\*.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="intel\feeds\**\*.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

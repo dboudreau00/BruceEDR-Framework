@@ -579,10 +579,34 @@ public sealed class DetectionEngine
                   : Verdict.Allow;
 
         if (v == Verdict.Allow) return null;
-        if (v == Verdict.Quarantine && p.Contained) return null;
+
+        if (v == Verdict.Quarantine && p.Contained)
+        {
+            // Containment is a one-shot decision -- re-running suspend/firewall/quarantine
+            // on every subsequent signal would be wrong and noisy. But an attack keeps
+            // producing evidence after it is frozen, and v1 threw all of it away: nothing
+            // observed after the first Quarantine ever reached the audit log, the SIEM or
+            // the analyst. That is how an incident ends up recorded as "encoded PowerShell"
+            // when it was actually credential theft followed by staging and exfil.
+            //
+            // So: emit an ENRICHMENT event, but only when a genuinely new ATT&CK technique
+            // appears. The technique set is finite and monotonic, so this is bounded -- it
+            // cannot degenerate into per-signal spam. It is raised as Warn because
+            // ShieldHost treats Warn as log-only, which is exactly the semantics wanted:
+            // update the incident, do not contain again.
+            if (p.Techniques.Count <= p.ReportedTechniques) return null;
+            p.ReportedTechniques = p.Techniques.Count;
+            return new DetectionResult
+            {
+                Verdict = Verdict.Warn,
+                Trigger = trigger + " (incident update)",
+                Snapshot = ToSnapshot(p)
+            };
+        }
 
         if (p.IncidentId.Length == 0) p.IncidentId = NewIncidentId(p, nowUtc);
         if (v == Verdict.Quarantine) p.Contained = true;
+        p.ReportedTechniques = p.Techniques.Count;
         return new DetectionResult { Verdict = v, Trigger = trigger, Snapshot = ToSnapshot(p) };
     }
 

@@ -192,6 +192,12 @@ public sealed class ThreatProfile
 
     /// <summary>Stable incident id, assigned the first time this process is flagged.</summary>
     public string IncidentId { get; set; } = "";
+    /// <summary>
+    /// How many distinct techniques had been reported the last time a verdict was emitted.
+    /// Containment fires once, but evidence keeps arriving afterwards; comparing against
+    /// this is what lets the engine publish an incident update instead of going silent.
+    /// </summary>
+    public int ReportedTechniques { get; set; }
     /// <summary>Last time decay was applied, so decay is charged once per interval.</summary>
     public DateTime LastDecayUtc { get; set; }
 
