@@ -61,8 +61,13 @@ Step "build" {
 
 if (-not $SkipTests) {
     Step "tests" {
+        # Deliberately NOT --no-build. The solution build above targets Release|x64 and
+        # writes bin/x64/...; `dotnet test` on the project resolves the default platform and
+        # reads bin/Release/... With --no-build those are different binaries, so this step
+        # would silently run a stale DLL and report green for code that is not on disk.
+        # That trap has already produced one false pass in this repo.
         dotnet test "$root/tests/ProcessShield.Tests/ProcessShield.Tests.csproj" `
-            -c $Configuration --no-build --nologo
+            -c $Configuration --nologo
         if ($LASTEXITCODE -ne 0) { throw "dotnet test exited $LASTEXITCODE" }
     }
 }

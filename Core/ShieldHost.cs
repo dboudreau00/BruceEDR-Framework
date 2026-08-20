@@ -26,6 +26,16 @@ public sealed class ShieldHostOptions
     /// <summary>Decides which response actions a verdict triggers. Null uses the built-in default.</summary>
     public Playbook? Playbook { get; init; }
     public ShieldMetrics? Metrics { get; init; }
+    /// <summary>
+    /// Start the telemetry sources. False starts the owner and response threads but no
+    /// monitors, so the pipeline can be driven by directly submitted signals.
+    ///
+    /// This exists because every monitor needs an ETW session and Administrator rights, and
+    /// without a seam the entire host -- queue prioritisation, verdict dispatch, playbook
+    /// ordering, containment-failure handling -- had no tests at all.
+    /// </summary>
+    public bool StartMonitors { get; init; } = true;
+
     /// <summary>Invoked on the response worker for playbook actions the host does not implement itself.</summary>
     public Action<PlaybookAction, ProfileSnapshot>? ExtendedAction { get; init; }
 }
@@ -198,6 +208,16 @@ public sealed class ShieldHost : IDisposable
         _responseThread.Start();
 
         var active = new List<string>();
+
+        if (!_options.StartMonitors)
+        {
+            // Threads are up and the pipeline is live; there is simply no telemetry source.
+            // Report success, because "no monitor could start" is a fatal condition the
+            // console acts on and this is a deliberate configuration, not a failure.
+            ActiveMonitors = "none (signals submitted directly)";
+            return true;
+        }
+
         try
         {
             _etw = new EtwMonitor(EnqueueSignal, _log);
@@ -307,6 +327,18 @@ public sealed class ShieldHost : IDisposable
     }
 
     // --------------------------------------------------------------- producers
+
+    /// <summary>
+    /// Feeds one signal into the pipeline exactly as a monitor would. Used by tests and by
+    /// callers that supply their own telemetry instead of an ETW session.
+    /// </summary>
+    internal void Submit(Signal s) => EnqueueSignal(s);
+
+    /// <summary>Signals accepted since start, for tests that need to wait for drain.</summary>
+    internal long SignalsProcessed => Interlocked.Read(ref _signalsProcessed);
+
+    /// <summary>Containment tasks completed, for tests that need to wait for the worker.</summary>
+    internal long ResponsesRun => Interlocked.Read(ref _responsesRun);
 
     private void EnqueueSignal(Signal s)
     {

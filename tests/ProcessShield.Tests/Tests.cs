@@ -180,20 +180,203 @@ public class PatternMatcherTests
         Assert.Contains("wallet.dat", m.FindAll(buf));
     }
 
+    /// <summary>
+    /// Checks only that FindInto matches a needle in a window the caller assembled -- the
+    /// shape MemoryScanner hands it. It does NOT prove the scanner's overlap works: the two
+    /// halves are concatenated back into one contiguous buffer here, so nothing spans a real
+    /// chunk boundary. MemoryScannerOverlapTests below is what pins the overlap behaviour.
+    /// </summary>
     [Fact]
-    public void Matches_Across_Chunk_Boundary_With_Overlap()
+    public void Matches_Needle_In_A_Caller_Assembled_Window()
     {
         var m = new PatternMatcher(new[] { "cookies.sqlite" });
-        // Simulate the scanner's tail+chunk overlap window.
         var full = Encoding.ASCII.GetBytes("aaaacookies.sqlitebbbb");
-        var tail = full[..7];           // "aaaacoo"
-        var chunk = full[7..];          // "kies.sqlitebbbb"
-        var window = new byte[tail.Length + chunk.Length];
-        Buffer.BlockCopy(tail, 0, window, 0, tail.Length);
-        Buffer.BlockCopy(chunk, 0, window, tail.Length, chunk.Length);
         var hits = new HashSet<string>();
-        m.FindInto(window, window.Length, hits);
+        m.FindInto(full, full.Length, hits);
         Assert.Contains("cookies.sqlite", hits);
+    }
+
+    /// <summary>
+    /// UTF-16 matching is case-insensitive too, because lowercasing runs over raw bytes and
+    /// the high byte of an ASCII-range UTF-16 code unit is zero. Also pins that hits are
+    /// reported under the LOWERCASED label: DetectionEngine keys scoring off these strings,
+    /// so the spelling used in config must not leak through.
+    /// </summary>
+    [Fact]
+    public void Utf16_Match_Is_Case_Insensitive_And_Reports_The_Lowercased_Label()
+    {
+        var m = new PatternMatcher(new[] { "Wallet.DAT" });
+        var buf = Encoding.Unicode.GetBytes("path=C:\\x\\WALLET.dat;");
+        Assert.Equal(new[] { "wallet.dat" }, m.FindAll(buf));
+    }
+
+    /// <summary>An empty IOC set matches nothing; MemoryScanner.Scan short-circuits on it.</summary>
+    [Fact]
+    public void Empty_Ioc_Set_Matches_Nothing()
+    {
+        var m = new PatternMatcher(Array.Empty<string>());
+        Assert.Equal(0, m.LabelCount);
+        Assert.Empty(m.FindAll(Encoding.ASCII.GetBytes("login data wallet.dat")));
+    }
+
+    /// <summary>
+    /// Degenerate buffers must return empty rather than throw: a zero-length region and a
+    /// buffer shorter than the needle both occur constantly during a live scan.
+    /// </summary>
+    [Fact]
+    public void Empty_Buffer_And_Oversized_Needle_Are_Safe()
+    {
+        var m = new PatternMatcher(new[] { "a-rather-long-indicator-string" });
+        Assert.Empty(m.FindAll(Array.Empty<byte>()));
+        Assert.Empty(m.FindAll(Encoding.ASCII.GetBytes("short")));
+
+        var hits = new HashSet<string>();
+        m.FindInto(Array.Empty<byte>(), 0, hits);
+        Assert.Empty(hits);
+    }
+
+    /// <summary>
+    /// A label is reported once no matter how often it occurs, and stays reported once across
+    /// successive chunks, because the caller carries the hit set. The scanner relies on this
+    /// to decide it can stop early once every label has been seen.
+    /// </summary>
+    [Fact]
+    public void Repeated_Needle_Is_Reported_Once()
+    {
+        var m = new PatternMatcher(new[] { "seed phrase" });
+        var buf = Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("seed phrase ", 5)));
+        Assert.Single(m.FindAll(buf));
+
+        var hits = new HashSet<string>();
+        m.FindInto(buf, buf.Length, hits);
+        m.FindInto(buf, buf.Length, hits);
+        Assert.Single(hits);
+    }
+
+    /// <summary>
+    /// Only buffer[0..length) is scanned. MemoryScanner passes a window length that can be
+    /// shorter than the array it allocated, so honouring it is load-bearing: over-scanning
+    /// would match stale bytes left in an under-filled read buffer.
+    /// </summary>
+    [Fact]
+    public void Only_The_First_Length_Bytes_Are_Scanned()
+    {
+        var m = new PatternMatcher(new[] { "cookies.sqlite" });
+        var buf = Encoding.ASCII.GetBytes("aaaacookies.sqlite");
+
+        var hits = new HashSet<string>();
+        m.FindInto(buf, 4, hits);
+        Assert.Empty(hits);
+
+        m.FindInto(buf, buf.Length, hits);
+        Assert.Single(hits);
+    }
+}
+
+/// <summary>
+/// Pins the chunk/tail overlap contract the builtin memory scanner depends on.
+/// MemoryScanner.ScanRegion is private and reads a live process through ReadProcessMemory,
+/// so it cannot be driven from a test. These tests instead MIRROR its windowing byte for
+/// byte -- tail = the last Overlap bytes of the raw chunk, window = tail + next chunk -- and
+/// drive the real PatternMatcher through it. So they do verify that hits genuinely accumulate
+/// across successive overlapping windows, and they pin exactly how much straddle the overlap
+/// buys; they do NOT execute MemoryScanner's own code, so a change to ScanRegion's windowing
+/// must be mirrored here by hand.
+/// </summary>
+public class MemoryScannerOverlapTests
+{
+    /// <summary>Must stay equal to MemoryScanner.Overlap, which is private and not readable here.</summary>
+    private const int ScannerOverlapBytes = 64;
+
+    /// <summary>Replays MemoryScanner.ScanRegion's tail-carrying loop over in-memory chunks.</summary>
+    private static HashSet<string> ScanChunks(PatternMatcher m, params byte[][] chunks)
+    {
+        var hits = new HashSet<string>();
+        byte[] tail = Array.Empty<byte>();
+
+        foreach (var chunk in chunks)
+        {
+            byte[] window;
+            if (tail.Length > 0)
+            {
+                window = new byte[tail.Length + chunk.Length];
+                Buffer.BlockCopy(tail, 0, window, 0, tail.Length);
+                Buffer.BlockCopy(chunk, 0, window, tail.Length, chunk.Length);
+            }
+            else
+            {
+                window = chunk;
+            }
+
+            m.FindInto(window, window.Length, hits);
+
+            int keep = Math.Min(ScannerOverlapBytes, chunk.Length);
+            tail = chunk[(chunk.Length - keep)..chunk.Length];
+        }
+
+        return hits;
+    }
+
+    [Fact]
+    public void Needle_Straddling_The_Seam_Is_Found_Via_The_Overlap()
+    {
+        var m = new PatternMatcher(new[] { "cookies.sqlite" });
+
+        // 10 of the needle's 14 bytes end chunk one, the remaining 4 start chunk two.
+        // 10 <= 64, so the carried tail still holds the whole prefix.
+        var chunkA = Encoding.ASCII.GetBytes(new string('a', 200) + "cookies.sq");
+        var chunkB = Encoding.ASCII.GetBytes("lite" + new string('b', 200));
+
+        // Neither chunk contains the needle alone, so a hit can only come from the overlap.
+        Assert.Empty(m.FindAll(chunkA));
+        Assert.Empty(m.FindAll(chunkB));
+
+        Assert.Contains("cookies.sqlite", ScanChunks(m, chunkA, chunkB));
+    }
+
+    /// <summary>
+    /// Pins the exact edge: a needle with precisely Overlap bytes on the far side of the seam
+    /// is still found. If the tail is ever carried off by one this fails rather than silently
+    /// shrinking the scanner's reach.
+    /// </summary>
+    [Fact]
+    public void Needle_With_Exactly_Overlap_Bytes_Before_The_Seam_Is_Found()
+    {
+        string needle = new string('z', ScannerOverlapBytes) + "-marker";
+        var m = new PatternMatcher(new[] { needle });
+
+        var chunkA = Encoding.ASCII.GetBytes(new string('a', 100) + new string('z', ScannerOverlapBytes));
+        var chunkB = Encoding.ASCII.GetBytes("-marker" + new string('b', 100));
+
+        Assert.Empty(m.FindAll(chunkA));
+        Assert.Empty(m.FindAll(chunkB));
+
+        Assert.Contains(needle, ScanChunks(m, chunkA, chunkB));
+    }
+
+    /// <summary>
+    /// States the accepted limitation instead of pretending it does not exist: the tail carries
+    /// only the last Overlap (64) bytes of the previous chunk, so a needle with MORE than 64 of
+    /// its bytes on the far side of a chunk boundary is invisible to the builtin scanner. Real
+    /// IOC strings are far shorter than 64 bytes, so this is not reachable by accident -- but it
+    /// is a genuine evasion primitive for an attacker who controls where a long marker lands in
+    /// memory, and the builtin scanner is documented as one evadable signal among many.
+    /// </summary>
+    [Fact]
+    public void Needle_Longer_Than_The_Overlap_Can_Be_Missed_At_A_Seam()
+    {
+        string needle = new string('z', ScannerOverlapBytes + 6) + "-marker";
+        var m = new PatternMatcher(new[] { needle });
+
+        var chunkA = Encoding.ASCII.GetBytes(new string('a', 100) + new string('z', ScannerOverlapBytes + 6));
+        var chunkB = Encoding.ASCII.GetBytes("-marker" + new string('b', 100));
+
+        Assert.Empty(m.FindAll(chunkA));
+        Assert.Empty(m.FindAll(chunkB));
+
+        // The tail keeps only 64 of the 70 leading 'z' bytes, so the seam window never holds
+        // the whole needle and the hit is lost.
+        Assert.DoesNotContain(needle, ScanChunks(m, chunkA, chunkB));
     }
 }
 
@@ -315,8 +498,13 @@ public class AuditLogTests
         finally { Cleanup(path); }
     }
 
+    /// <summary>
+    /// Without the key sidecar the chain cannot be checked at all, and Verify must say so
+    /// rather than blaming a record: an operator has to be able to tell "the key is gone"
+    /// apart from "the log was edited", because the two demand different responses.
+    /// </summary>
     [Fact]
-    public void Reforge_Without_Key_Fails()
+    public void Missing_Key_Makes_Verification_Fail_And_Names_The_Key()
     {
         string path = NewPath();
         try
@@ -324,16 +512,50 @@ public class AuditLogTests
             var sink = new AuditLogSink(path);
             sink.Emit(new ShieldEvent { Level = "QUARANTINE", Pid = 1, Score = 80 });
             sink.Dispose();
+            Assert.True(AuditLogSink.Verify(path, out _));
 
-            // An attacker who cannot read the key edits a record; without the key they
-            // cannot produce a valid HMAC, so verification fails.
-            var lines = File.ReadAllLines(path);
-            lines[0] = lines[0].Replace("\"Score\":80", "\"Score\":0");
-            File.WriteAllLines(path, lines);
+            File.Delete(path + ".key");   // the one secret that makes the chain checkable
 
-            Assert.False(AuditLogSink.Verify(path, out _));
+            Assert.False(AuditLogSink.Verify(path, out var err));
+            Assert.Contains("key", err, StringComparison.OrdinalIgnoreCase);
         }
         finally { Cleanup(path); }
+    }
+
+    /// <summary>
+    /// The real "attacker without the key" question. Intact_Chain_Verifies_And_Tampering_Is_Detected
+    /// only edits a record and leaves an obviously stale MAC behind, which any checksum would
+    /// catch. Here the attacker instead rewrites the log with a chain that is internally
+    /// perfect -- correct seq numbering, correct PrevHash links, a MAC on every record -- but
+    /// minted under a key they generated themselves because they could not read ours. Rejecting
+    /// it is what proves the chain is keyed rather than merely self-consistent.
+    /// </summary>
+    [Fact]
+    public void Chain_Forged_Under_A_Foreign_Key_Is_Rejected()
+    {
+        string path = NewPath();
+        string forged = NewPath();
+        try
+        {
+            var real = new AuditLogSink(path);
+            real.Emit(new ShieldEvent { Level = "QUARANTINE", Category = "detection", Pid = 1, Process = "evil.exe", Score = 80 });
+            real.Dispose();
+            Assert.True(AuditLogSink.Verify(path, out _));
+
+            // The attacker builds a self-consistent chain telling a harmless story, signed
+            // with their own key. It verifies perfectly -- against that key.
+            var attacker = new AuditLogSink(forged);
+            attacker.Emit(new ShieldEvent { Level = "INFO", Category = "detection", Pid = 1, Process = "evil.exe", Score = 0 });
+            attacker.Dispose();
+            Assert.True(AuditLogSink.Verify(forged, out _));
+
+            // ...then drops it over the real log, leaving our key and anchor untouched.
+            File.Copy(forged, path, overwrite: true);
+
+            Assert.False(AuditLogSink.Verify(path, out var err));
+            Assert.Contains("tampered", err, StringComparison.OrdinalIgnoreCase);
+        }
+        finally { Cleanup(path); Cleanup(forged); }
     }
 }
 

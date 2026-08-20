@@ -319,7 +319,9 @@ public sealed class Composition : IDisposable
     }
 
     // Best-effort kernel enforcement. If the ShieldFilter driver isn't installed the
-    // connect fails quietly and user-mode detection continues on its own.
+    // connect fails quietly and user-mode detection continues on its own. The client is
+    // retained for the process lifetime so ApplyKernelBlocking can re-send the block
+    // toggle on a config reload; the sensitive-path list below is sent only here.
     private void ConnectMinifilter(ShieldConfig cfg)
     {
         try
@@ -332,7 +334,13 @@ public sealed class Composition : IDisposable
                 client.AddSensitivePath(fragment);
             client.SetBlocking(cfg.Detection.KernelBlocking);
             _minifilter = client;
-            Log.Info($"kernel enforcement {(cfg.Detection.KernelBlocking ? "ENABLED" : "in monitor mode")}");
+            // "monitor mode" overstated the non-blocking case: the client only pushes policy
+            // and never reads from the port, so with blocking off the driver reports nothing
+            // to user mode at all -- it is not monitoring anything we can see.
+            Log.Info(cfg.Detection.KernelBlocking
+                ? "kernel enforcement ENABLED (driver denies sensitive-path opens; denials are " +
+                  "logged by the driver only, not surfaced here)"
+                : "minifilter connected, enforcement OFF (policy pushed; no kernel telemetry consumed)");
         }
         catch (Exception ex) { Log.Error("minifilter setup", ex); }
     }
@@ -434,6 +442,12 @@ public sealed class Composition : IDisposable
 
             ApiPolicy = BuildApiPolicy(next.Api.Studio);
 
+            // The block toggle is the one minifilter setting that reloads live: the client is
+            // held in _minifilter for the process lifetime, so the new value is a single
+            // message to the driver. The sensitive-path policy around it is still startup-only.
+            if (next.Detection.KernelBlocking != Config.Detection.KernelBlocking)
+                ApplyKernelBlocking(next.Detection.KernelBlocking);
+
             // Everything else is consumed once, while the composition is built: sinks, the
             // control server, the scanner, the vault, the playbook, monitor selection and the
             // immutable half of EngineOptions. Warning about only a few of those taught
@@ -449,12 +463,40 @@ public sealed class Composition : IDisposable
     }
 
     /// <summary>
+    /// Pushes a changed detection.kernelBlocking value to the already-connected minifilter.
+    /// Only the toggle travels: the sensitive-path list was sent once at connect time and is
+    /// not re-sent here, so a reload cannot change WHICH paths the driver guards.
+    /// If the driver was never connected the log says the setting was not applied, rather
+    /// than implying kernel enforcement changed when no driver exists to enforce it.
+    /// WARNING, unchanged by this: kernelBlocking:true makes the skeleton driver deny EVERY
+    /// open of a sensitive path, from any process, trusted or not -- it is not
+    /// process-selective. Enabling it on a reload has that effect immediately.
+    /// </summary>
+    private void ApplyKernelBlocking(bool enabled)
+    {
+        var mf = _minifilter;
+        if (mf is null || !mf.Connected)
+        {
+            Log.Info($"detection.kernelBlocking={(enabled ? "true" : "false")} not applied: minifilter not connected");
+            return;
+        }
+        try
+        {
+            mf.SetBlocking(enabled);
+            Log.Info(enabled
+                ? "kernel enforcement ENABLED live: the driver now denies ALL opens of sensitive paths, from any process"
+                : "kernel enforcement switched live to monitor mode");
+        }
+        catch (Exception ex) { Log.Error("kernel blocking reload", ex); }
+    }
+
+    /// <summary>
     /// Names every setting that changed between two configs but is only read while the
     /// composition is built, so <see cref="Apply"/> can say plainly what a reload did not do.
     /// The list is maintained by hand against <see cref="Build"/>; anything genuinely
     /// hot-reloaded (thresholds, autoKill, allowlist, rules, indicator feeds, API Studio
-    /// safety policy, telemetry.enableMetrics, the isolation allowlist and triage output
-    /// path) is deliberately absent.
+    /// safety policy, detection.kernelBlocking, telemetry.enableMetrics, the isolation
+    /// allowlist and triage output path) is deliberately absent.
     /// </summary>
     private static List<string> RestartRequiredChanges(ShieldConfig old, ShieldConfig next)
     {
@@ -470,7 +512,8 @@ public sealed class Composition : IDisposable
         var od = old.Detection; var nd = next.Detection;
         Text("detection.memoryScanEngine", od.MemoryScanEngine, nd.MemoryScanEngine);
         Text("detection.yaraRulesPath", od.YaraRulesPath, nd.YaraRulesPath);
-        Flag("detection.kernelBlocking", od.KernelBlocking, nd.KernelBlocking);
+        // detection.kernelBlocking is deliberately NOT listed: Apply pushes it to the
+        // connected minifilter, so it does take effect on reload.
         Flag("detection.enableExtendedMonitors", od.EnableExtendedMonitors, nd.EnableExtendedMonitors);
         Flag("detection.enableBeaconDetection", od.EnableBeaconDetection, nd.EnableBeaconDetection);
         Number("detection.beaconMinConnections", od.BeaconMinConnections, nd.BeaconMinConnections);
@@ -831,6 +874,11 @@ public static class ServiceControl
 
     public static int Start(string serviceName) => Sc("start", serviceName);
 
+    // SERVICE_STATUS.dwCurrentState values. These numbers are part of the Win32 ABI and are
+    // printed verbatim by sc.exe on every locale, unlike the words next to them.
+    private const int StateStopped = 1;
+    private const int StateRunning = 4;
+
     /// <summary>
     /// Real restart for the watchdog: a bare `sc start` is a no-op (error 1056) when the
     /// service process is alive-but-hung, which is exactly the case a heartbeat watchdog
@@ -842,10 +890,10 @@ public static class ServiceControl
         if (IsRunning(serviceName))
         {
             Sc("stop", serviceName);
-            if (!WaitForState(serviceName, "STOPPED", TimeSpan.FromSeconds(20)))
+            if (!WaitForState(serviceName, StateStopped, TimeSpan.FromSeconds(20)))
             {
                 ForceKill(serviceName);                       // hung: won't honor SERVICE_CONTROL_STOP
-                WaitForState(serviceName, "STOPPED", TimeSpan.FromSeconds(10));
+                WaitForState(serviceName, StateStopped, TimeSpan.FromSeconds(10));
             }
         }
         int rc = Sc("start", serviceName);
@@ -854,27 +902,93 @@ public static class ServiceControl
         return rc == 1056 ? 0 : rc;
     }
 
-    private static bool IsRunning(string serviceName)
-        => QueryState(serviceName)?.Contains("RUNNING", StringComparison.OrdinalIgnoreCase) == true;
+    private static bool IsRunning(string serviceName) => QueryState(serviceName) == StateRunning;
 
-    private static bool WaitForState(string serviceName, string target, TimeSpan timeout)
+    private static bool WaitForState(string serviceName, int target, TimeSpan timeout)
     {
         var sw = Stopwatch.StartNew();
         while (sw.Elapsed < timeout)
         {
-            var st = QueryState(serviceName);
-            if (st is not null && st.Contains(target, StringComparison.OrdinalIgnoreCase)) return true;
+            if (QueryState(serviceName) == target) return true;
             Thread.Sleep(500);
         }
-        return QueryState(serviceName)?.Contains(target, StringComparison.OrdinalIgnoreCase) == true;
+        return QueryState(serviceName) == target;
     }
 
-    private static string? QueryState(string serviceName)
+    private static int? QueryState(string serviceName)
     {
         var (rc, outp) = Capture("sc", "query", serviceName);
         if (rc != 0 || string.IsNullOrEmpty(outp)) return null;
-        foreach (var line in outp.Split('\n'))
-            if (line.Contains("STATE", StringComparison.OrdinalIgnoreCase)) return line;
+        return ParseServiceState(outp);
+    }
+
+    /// <summary>
+    /// Extracts the numeric SERVICE_STATUS state from `sc query` output, because sc.exe
+    /// translates both its labels and its state words on a localized Windows (German prints
+    /// "STATUS : 4  WIRD AUSGEFUEHRT"). Matching the English strings made the watchdog see
+    /// every service as not-running, so Restart skipped the stop and issued a bare `sc start`
+    /// that is a no-op for the alive-but-hung service it exists to recover: recovery never
+    /// happened on any non-English install. The number is locale-invariant.
+    /// Returns null when no state line can be identified. Internal purely so it can be unit
+    /// tested without spawning sc.exe.
+    /// </summary>
+    /// <remarks>
+    /// State codes: 1 STOPPED, 2 START_PENDING, 3 STOP_PENDING, 4 RUNNING,
+    /// 5 CONTINUE_PENDING, 6 PAUSE_PENDING, 7 PAUSED.
+    /// Identification is structural: sc prints numeric fields as "LABEL : &lt;n&gt;  &lt;WORD&gt;".
+    /// Only TYPE and STATE have that shape (exit codes are followed by a parenthesised hex
+    /// value, CHECKPOINT/WAIT_HINT print bare "0x0", queryex's PID has no trailing word), and
+    /// sc always prints TYPE before STATE, so the last in-range match is the state. TYPE
+    /// values for services are 10/20/110/120 and fall outside 1-7; a driver's TYPE of 1 or 2
+    /// is in range but is overwritten by the STATE line that follows it. Limitation: this
+    /// assumes the field order and "&lt;n&gt;  &lt;WORD&gt;" layout that every known Windows build of
+    /// sc.exe uses; if nothing matches, the English label and state words are tried as a
+    /// fallback and null is returned only when that fails too.
+    /// </remarks>
+    internal static int? ParseServiceState(string scQueryOutput)
+    {
+        if (string.IsNullOrEmpty(scQueryOutput)) return null;
+
+        int? structural = null;
+        string? labelledStateValue = null;
+
+        foreach (var raw in scQueryOutput.Split('\n'))
+        {
+            string line = raw.Trim();
+            int colon = line.IndexOf(':');
+            if (colon < 0) continue;
+
+            string label = line[..colon];
+            string value = line[(colon + 1)..].Trim();
+
+            int digits = 0;
+            while (digits < value.Length && value[digits] is >= '0' and <= '9') digits++;
+            if (digits > 0 && digits < value.Length && char.IsWhiteSpace(value[digits]))
+            {
+                string rest = value[digits..].TrimStart();
+                // '(' means an exit-code line ("0  (0x0)"), not a state.
+                if (rest.Length > 0 && rest[0] != '('
+                    && int.TryParse(value[..digits], out int code) && code is >= 1 and <= 7)
+                {
+                    structural = code;
+                }
+            }
+
+            if (label.Contains("STATE", StringComparison.OrdinalIgnoreCase)) labelledStateValue = value;
+        }
+
+        if (structural is not null) return structural;
+        if (labelledStateValue is null) return null;
+
+        // English fallback: a differently-formatted state line whose label we still recognise.
+        string upper = labelledStateValue.ToUpperInvariant();
+        if (upper.Contains("CONTINUE_PENDING")) return 5;
+        if (upper.Contains("PAUSE_PENDING")) return 6;
+        if (upper.Contains("START_PENDING")) return 2;
+        if (upper.Contains("STOP_PENDING")) return 3;
+        if (upper.Contains("RUNNING")) return StateRunning;
+        if (upper.Contains("STOPPED")) return StateStopped;
+        if (upper.Contains("PAUSED")) return 7;
         return null;
     }
 

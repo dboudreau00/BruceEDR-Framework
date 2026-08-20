@@ -6,10 +6,28 @@ namespace ProcessShield.Driver;
 
 /// <summary>
 /// User-mode client for the ShieldFilter minifilter. Connects to the driver's
-/// communication port, pushes policy (sensitive path fragments + a block toggle),
-/// and receives block-event notifications. If the driver is not installed the
-/// connect fails gracefully and kernel enforcement is simply unavailable — the
-/// user-mode detection path continues to work on its own.
+/// communication port and pushes policy (sensitive path fragments + a block toggle).
+/// If the driver is not installed the connect fails gracefully and kernel
+/// enforcement is simply unavailable — the user-mode detection path continues to
+/// work on its own.
+///
+/// This client is push-only. It sends policy to the driver and never reads back:
+/// there is no FilterGetMessage pump and no callback, so nothing in ProcessShield
+/// consumes block notifications. The practical consequence is that a kernel denial
+/// is visible only in the driver's own logging — it does not reach ProcessShield's
+/// event stream, the detection engine, or the audit chain, and no incident is
+/// raised for it. Treat kernel blocking as silent-from-user-mode enforcement, not
+/// as a telemetry source.
+///
+/// The receive path is deliberately not implemented. It needs a FilterGetMessage
+/// pump with an overlapped-IO design (a dedicated reader thread or an IO completion
+/// port, plus clean cancellation on Dispose) and a matching driver-side
+/// FltSendMessage contract with its own reply header. The driver in this repository
+/// defines no such notification message, and nobody here can load and test a signed
+/// minifilter, so writing an untested pump against a message layout that does not
+/// exist yet would add real complexity and a plausible hang or leak on shutdown
+/// while buying nothing. A future contributor adding it must define the notification
+/// struct in ShieldFilter.h first and keep this file in step with it.
 ///
 /// The message layout here MUST match ShieldFilter.h in the driver project.
 /// </summary>
@@ -48,7 +66,9 @@ public sealed class MinifilterClient : IDisposable
                 _port = IntPtr.Zero;
                 return false;
             }
-            _log.Info("minifilter connected; kernel enforcement available");
+            // Deliberately does not say "monitoring": the port is write-only from here,
+            // so a connected driver reports nothing back to user mode.
+            _log.Info("minifilter connected; policy channel open (push-only, no driver notifications consumed)");
             return true;
         }
         catch (DllNotFoundException)
@@ -63,6 +83,13 @@ public sealed class MinifilterClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Pushes the block toggle to the driver. With blocking off the driver enforces
+    /// nothing, and because this client never reads from the port it also surfaces
+    /// nothing: the connection is open but user mode learns nothing about file access
+    /// to sensitive paths. With blocking on, denials happen in the kernel and are
+    /// recorded only by the driver's own logging.
+    /// </summary>
     public void SetBlocking(bool enabled) =>
         Send(new ShieldMessage { Command = (uint)ShieldCommand.SetBlocking, Flag = enabled ? 1u : 0u, Path = "" });
 

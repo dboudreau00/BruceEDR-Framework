@@ -12,6 +12,16 @@ namespace ProcessShield.Tests;
 // Nothing here touches the network, starts a process or needs administrator rights.
 // File IO is confined to a unique directory under Path.GetTempPath() and removed in a
 // finally block.
+//
+// THREE engines appear below, and which one a test uses is the difference between a real
+// guarantee and a decorative one:
+//   ReplayScriptedEngine      - a stub that scores nothing and returns whatever a test
+//                               script says. For harness plumbing only.
+//   ReplayMiniRuleEngine      - a small clock-driven scorer, fed hand-built in-code traces,
+//                               used to prove the harness advances the clock. Grades
+//                               nothing that ships.
+//   RealDetectionReplayEngine - the actual ProcessShield.Detection.DetectionEngine. Every
+//                               claim about a SHIPPED scenario goes through this one.
 // ---------------------------------------------------------------------------
 
 /// <summary>
@@ -48,17 +58,22 @@ internal sealed class ReplayScriptedEngine : IReplayEngine
 }
 
 /// <summary>
-/// A deliberately small re-implementation of the shipped heuristics (unusual parent,
+/// A deliberately small re-implementation of a few shipped heuristics (unusual parent,
 /// command-line IOCs, credential stores, archive staging, exfil window, RAT modules).
 ///
-/// It exists so the scenario files can be checked for plausibility without wiring up
-/// DetectionEngine, ShieldHost or the response pipeline. It is NOT a copy of the engine
-/// and must never be treated as one: if it and DetectionEngine ever disagree, the engine
-/// is right. Its only job is to answer "does this trace look like an attack, and does the
-/// benign trace look benign?".
+/// SCOPE, and it is narrow: this is a HARNESS FIXTURE, not a detection oracle. It exists
+/// only to give <see cref="TraceReplay"/> an engine whose scoring genuinely depends on the
+/// replay clock, so a bug in clock advancement shows up as a missed correlation window.
+/// It is fed hand-built, in-code scenarios and nothing else.
 ///
-/// It reads time from the injected clock rather than from the signal, so a bug in
-/// TraceReplay's clock advancement shows up here as a missed correlation window.
+/// It must NEVER be used to grade the shipped scenario files. It was, and that is how a
+/// critical false positive shipped with a green suite: "the benign trace scores nothing"
+/// was proved about THIS class while the real
+/// <see cref="ProcessShield.Detection.DetectionEngine"/> was quarantining the user's
+/// browser. A test that grades the product against a second implementation of the product
+/// proves only that the two were written by the same person on the same day. Scenario
+/// quality is asserted against the real engine, via
+/// <see cref="RealDetectionReplayEngine"/>, in <see cref="ReplayScenarioFileTests"/>.
 /// </summary>
 internal sealed class ReplayMiniRuleEngine : IReplayEngine
 {
@@ -168,6 +183,89 @@ internal sealed class ReplayMiniRuleEngine : IReplayEngine
         Score = score,
         Reasons = new[] { $"{s.Kind} on {s.ProcessName}" }
     };
+}
+
+/// <summary>
+/// The REAL <see cref="DetectionEngine"/>, adapted to the replay harness. Every claim this
+/// file makes about a shipped scenario -- "this chain is caught", "this ordinary morning is
+/// not" -- is graded through here, so the assertions are about the code that actually runs
+/// on an endpoint rather than about a test-local lookalike.
+///
+/// Wired to match the production replay adapters in <c>Hosting/SelfTest.cs</c> and
+/// <c>ConsoleUi/AnalystConsole.cs</c>: same thresholds, same correlation window, same
+/// collaborators. Two deliberate omissions:
+/// <list type="bullet">
+///   <item><description>No <c>Rules</c>. Only the builtin C# rules are exercised, so a
+///   scenario that no longer fires is a regression in the engine itself and cannot be
+///   masked (or caused) by an edit to the shipped JSON rule pack.</description></item>
+///   <item><description><c>isTrusted</c> is always false. Replay has no real processes to
+///   Authenticode-verify, and a trust check that reached out to the filesystem would make
+///   these tests depend on the machine they run on.</description></item>
+/// </list>
+/// </summary>
+internal sealed class RealDetectionReplayEngine : IReplayEngine
+{
+    /// <summary>Production defaults, restated here so a scenario's score expectations mean something.</summary>
+    public const int WarnThreshold = 40;
+    public const int QuarantineThreshold = 70;
+
+    private readonly DetectionEngine _engine;
+    private readonly Dictionary<int, int> _highWater = new();
+
+    public RealDetectionReplayEngine(ManualClock clock)
+        => _engine = new DetectionEngine(
+            new EngineOptions
+            {
+                WarnThreshold = WarnThreshold,
+                QuarantineThreshold = QuarantineThreshold,
+                CorrelationWindow = TimeSpan.FromSeconds(30),
+                TrustDiscount = 30
+            },
+            _ => false,
+            new EngineDependencies
+            {
+                Clock = clock,
+                Tree = new ProcessTree(clock),
+                Beacons = new BeaconAnalyzer(clock)
+            });
+
+    public IReadOnlyList<ReplayVerdict> Feed(Signal signal)
+    {
+        // Mirror the engine's PID-reuse reset. Without it the high-water table below would
+        // carry a dead process's score onto whatever Windows next gives that PID to, which
+        // would fail a benign scenario for something that never happened.
+        if (signal.Kind == SignalKind.ProcessStart && signal.Pid > 0) _highWater.Remove(signal.Pid);
+
+        var produced = _engine.Ingest(signal);
+
+        // Sampled after EVERY signal rather than once at the end. The engine prunes
+        // profiles that have been quiet for ten minutes, so an end-of-run read would
+        // silently lose the score of any process that went quiet early -- and a benign
+        // scenario whose evidence has been discarded passes for the wrong reason, which is
+        // the exact failure mode this file exists to stop. Score decay is off here, so the
+        // high-water value equals the current score for every process instance anyway.
+        foreach (var kv in _engine.AllScores())
+            if (!_highWater.TryGetValue(kv.Key, out int seen) || kv.Value > seen)
+                _highWater[kv.Key] = kv.Value;
+
+        if (produced.Count == 0) return Array.Empty<ReplayVerdict>();
+
+        var list = new List<ReplayVerdict>(produced.Count);
+        foreach (var v in produced)
+            list.Add(new ReplayVerdict
+            {
+                AtUtc = signal.TimestampUtc,
+                Pid = v.Snapshot.Pid,
+                Verdict = v.Verdict.ToString(),
+                Trigger = v.Trigger,
+                Score = v.Snapshot.Score,
+                Techniques = v.Snapshot.Techniques,
+                Reasons = v.Snapshot.Reasons
+            });
+        return list;
+    }
+
+    public IReadOnlyDictionary<int, int> Scores() => _highWater;
 }
 
 public class ReplayTraceFormatTests
@@ -1308,17 +1406,80 @@ public class ReplayHarnessTests
         Assert.Equal(a.Success, b.Success);
         Assert.Equal(a.Verdicts[0].AtUtc, b.Verdicts[0].AtUtc);
     }
+
+    /// <summary>
+    /// The one test <see cref="ReplayMiniRuleEngine"/> exists for, and the only thing it is
+    /// allowed to be used for: proving that the clock TraceReplay advances is the clock an
+    /// engine's correlation windows are measured on. The mini engine reads time from the
+    /// injected clock rather than from the signal, so if the harness stopped advancing it
+    /// the two runs below would become indistinguishable.
+    ///
+    /// The scenario is built in code on purpose. The shipped scenario files are graded
+    /// against the real DetectionEngine in <see cref="ReplayScenarioFileTests"/>; nothing
+    /// about product detection quality may be concluded from this test.
+    /// </summary>
+    [Fact]
+    public void The_Advancing_Clock_Is_What_Closes_An_Engines_Correlation_Window()
+    {
+        static TraceScenario StageThenExfil(TimeSpan exfilAt) => new()
+        {
+            Name = "stage-then-exfil",
+            StartUtc = new DateTime(2026, 5, 1, 10, 0, 0, DateTimeKind.Utc),
+            Events = new[]
+            {
+                new TraceStep(TimeSpan.Zero, new Signal
+                {
+                    Kind = SignalKind.ProcessStart, Pid = 77, ProcessName = "collector.exe"
+                }),
+                new TraceStep(TimeSpan.FromSeconds(1), new Signal
+                {
+                    Kind = SignalKind.FileCreate, Pid = 77, ProcessName = "collector.exe",
+                    FilePath = @"C:\Windows\Temp\loot.zip"
+                }),
+                new TraceStep(exfilAt, new Signal
+                {
+                    Kind = SignalKind.NetworkConnect, Pid = 77, ProcessName = "collector.exe",
+                    RemoteAddress = "203.0.113.10", RemotePort = 443
+                })
+            }
+        };
+
+        var inside = new TraceReplay(c => new ReplayMiniRuleEngine(c))
+            .Run(StageThenExfil(TimeSpan.FromSeconds(6)));
+        var outside = new TraceReplay(c => new ReplayMiniRuleEngine(c))
+            .Run(StageThenExfil(TimeSpan.FromSeconds(90)));
+
+        Assert.Contains(inside.Verdicts,
+            v => v.Pid == 77 && v.Verdict.Equals("Quarantine", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(outside.Verdicts);
+    }
 }
 
+/// <summary>
+/// The shipped scenario corpus: are the trace files well formed, do they still tell the
+/// story they claim to, and -- the part that matters -- does the REAL detection engine
+/// reach the verdicts they assert?
+///
+/// RULE FOR THIS CLASS: anything that grades detection QUALITY goes through
+/// <see cref="RealDetectionReplayEngine"/>. The scripted stub may be used to check harness
+/// plumbing (every step arrives, in order), and file-shape assertions may read the IOC
+/// tables directly so they survive a scoring retune, but no claim of the form "this is
+/// caught" or "this is not a false positive" may rest on a test-local scorer. It did once,
+/// and the suite stayed green through a critical browser false positive because of it.
+/// </summary>
 public class ReplayScenarioFileTests
 {
     /// <summary>
     /// Scenario files are source data, not build output, so they are located by walking up
-    /// from the test binary. When they cannot be found (a packaged or partial checkout)
-    /// the test returns rather than failing: a missing data directory is not a defect in
-    /// the code under test.
+    /// from the test binary.
+    ///
+    /// Not finding them is a FAILURE, not a skip. This used to return null and every test
+    /// below used to return early on it, which meant a run that located nothing reported a
+    /// full row of green -- a detection regression suite that passes hardest when it has
+    /// no scenarios to check. If the walk ever stops working, the loud version is the one
+    /// that gets fixed.
     /// </summary>
-    private static string? ScenarioDir()
+    private static string ScenarioDir()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         for (int i = 0; i < 12 && dir is not null; i++, dir = dir.Parent)
@@ -1326,18 +1487,27 @@ public class ReplayScenarioFileTests
             string candidate = Path.Combine(dir.FullName, "Replay", "scenarios");
             if (Directory.Exists(candidate)) return candidate;
         }
-        return null;
+
+        throw new DirectoryNotFoundException(
+            "Replay/scenarios was not found within 12 directories above " + AppContext.BaseDirectory +
+            ". The shipped detection scenarios are the regression corpus; a run that cannot " +
+            "find them must fail rather than silently assert nothing.");
     }
 
-    private static TraceScenario? Load(string file, out IReadOnlyList<string> warnings)
+    private static TraceScenario Load(string file, out IReadOnlyList<string> warnings)
     {
-        warnings = Array.Empty<string>();
-        string? dir = ScenarioDir();
-        if (dir is null) return null;
+        string dir = ScenarioDir();
         string path = Path.Combine(dir, file);
-        if (!File.Exists(path)) return null;
+        Assert.True(File.Exists(path), $"shipped scenario '{file}' is missing from {dir}");
         return TraceFormat.Load(path, out warnings);
     }
+
+    /// <summary>
+    /// Replays a scenario through the real engine. Everything about scenario QUALITY is
+    /// graded from the result of this call; the mini engine grades nothing.
+    /// </summary>
+    private static ReplayResult RealReplay(TraceScenario scenario)
+        => new TraceReplay(clock => new RealDetectionReplayEngine(clock)).Run(scenario);
 
     public static TheoryData<string> ShippedScenarios() => new()
     {
@@ -1351,7 +1521,6 @@ public class ReplayScenarioFileTests
     public void Shipped_Scenario_Parses_Without_A_Single_Warning(string file)
     {
         var s = Load(file, out var warnings);
-        if (s is null) return;
         Assert.True(warnings.Count == 0, file + ": " + string.Join(" | ", warnings));
         Assert.NotEmpty(s.Events);
     }
@@ -1361,7 +1530,6 @@ public class ReplayScenarioFileTests
     public void Shipped_Scenario_Has_Usable_Metadata(string file)
     {
         var s = Load(file, out _);
-        if (s is null) return;
         Assert.False(string.IsNullOrWhiteSpace(s.Name));
         Assert.False(string.IsNullOrWhiteSpace(s.Description));
         Assert.NotEmpty(s.Expect);
@@ -1373,7 +1541,6 @@ public class ReplayScenarioFileTests
     public void Shipped_Scenario_Asserts_Only_Checkable_Expectations(string file)
     {
         var s = Load(file, out _);
-        if (s is null) return;
         foreach (var e in s.Expect)
             Assert.True(Expectation.IsWellFormed(e, out string err), $"{file}: '{e}' -- {err}");
     }
@@ -1383,7 +1550,6 @@ public class ReplayScenarioFileTests
     public void Shipped_Scenario_Has_Monotonic_Offsets_And_Consistent_Timestamps(string file)
     {
         var s = Load(file, out _);
-        if (s is null) return;
         for (int i = 1; i < s.Events.Count; i++)
             Assert.True(s.Events[i].At >= s.Events[i - 1].At, $"{file}: step {i} goes backwards");
         foreach (var e in s.Events)
@@ -1395,7 +1561,6 @@ public class ReplayScenarioFileTests
     public void Shipped_Scenario_Survives_A_Write_Parse_Round_Trip(string file)
     {
         var s = Load(file, out _);
-        if (s is null) return;
         var again = TraceFormat.Parse(TraceFormat.Write(s), s.Name, out var w);
         Assert.Empty(w);
         Assert.Equal(s.Events.Count, again.Events.Count);
@@ -1408,8 +1573,9 @@ public class ReplayScenarioFileTests
     [MemberData(nameof(ShippedScenarios))]
     public void Shipped_Scenario_Replays_Every_Step(string file)
     {
+        // Harness plumbing only: the scripted engine scores nothing, so this asserts that
+        // every step reaches the engine unchanged and in order, not that anything detects.
         var s = Load(file, out _);
-        if (s is null) return;
 
         ReplayScriptedEngine? engine = null;
         var result = new TraceReplay(c => engine = new ReplayScriptedEngine(c)).Run(s);
@@ -1419,15 +1585,36 @@ public class ReplayScenarioFileTests
         Assert.Equal(s.Events.Select(e => e.Signal).ToList(), engine!.Fed);
     }
 
+    /// <summary>
+    /// Every expectation a shipped scenario writes down about itself must hold against the
+    /// REAL engine. This is the assertion the scenario files were always meant to carry, and
+    /// the one the suite was missing: the expectations were previously graded by a
+    /// test-local scorer, so a scenario could claim "no quarantine" while the shipping
+    /// engine quarantined the process on the very same trace.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ShippedScenarios))]
+    public void Shipped_Scenario_Meets_Its_Own_Expectations_Against_The_Real_Engine(string file)
+    {
+        var result = RealReplay(Load(file, out _));
+        Assert.True(result.Success, result.Summary);
+    }
+
     [Fact]
     public void Infostealer_Chain_Reaches_Quarantine_On_The_Stealer_Process()
     {
         var s = Load("infostealer-chain.jsonl", out _);
-        if (s is null) return;
 
-        var result = new TraceReplay(c => new ReplayMiniRuleEngine(c)).Run(s);
+        var result = RealReplay(s);
 
+        // pid 4816 is the hidden encoded PowerShell that reads the browser credential
+        // stores, stages the zip in %TEMP% and uploads it. If the real engine stops
+        // containing this, the collect -> stage -> exfil chain has regressed; do not
+        // soften the assertion to make it green again.
         Assert.Null(Expectation.Check("quarantine:pid=4816", result.Verdicts, result.FinalScores));
+
+        // The maldoc and the shell are context, not the target. Quarantining explorer.exe
+        // would take the user's desktop down.
         Assert.Null(Expectation.Check("no-quarantine:pid=3120", result.Verdicts, result.FinalScores));
         Assert.Null(Expectation.Check("no-quarantine:pid=1044", result.Verdicts, result.FinalScores));
     }
@@ -1436,7 +1623,6 @@ public class ReplayScenarioFileTests
     public void Infostealer_Chain_Contains_The_Whole_Narrative()
     {
         var s = Load("infostealer-chain.jsonl", out _);
-        if (s is null) return;
         var signals = s.Events.Select(e => e.Signal).ToList();
 
         Assert.Contains(signals, x => x.Kind == SignalKind.ProcessStart &&
@@ -1462,14 +1648,20 @@ public class ReplayScenarioFileTests
     }
 
     [Fact]
-    public void Rat_Beacon_Warns_Or_Worse_On_The_Dropped_Executable()
+    public void Rat_Beacon_Reaches_Quarantine_On_The_Dropped_Executable()
     {
         var s = Load("rat-beacon.jsonl", out _);
-        if (s is null) return;
 
-        var result = new TraceReplay(c => new ReplayMiniRuleEngine(c)).Run(s);
+        var result = RealReplay(s);
 
-        Assert.Null(Expectation.Check("warn:pid=6620", result.Verdicts, result.FinalScores));
+        // The scenario file only claims 'warn:pid=6620', which is the weaker, more
+        // future-proof form. Against the real engine the RAT core module (+50) plus the
+        // autostart Run key (+40) clear the quarantine threshold outright, so that is what
+        // is asserted here: a drop to Warn-only would be a genuine loss of containment and
+        // must show up as a failure rather than as a still-satisfied 'warn'.
+        Assert.Null(Expectation.Check("quarantine:pid=6620", result.Verdicts, result.FinalScores));
+
+        // explorer.exe merely launched it. Containing the shell is an outage.
         Assert.Null(Expectation.Check("no-quarantine:pid=2288", result.Verdicts, result.FinalScores));
     }
 
@@ -1477,7 +1669,6 @@ public class ReplayScenarioFileTests
     public void Rat_Beacon_Has_Twelve_Regular_Connections_To_One_Host()
     {
         var s = Load("rat-beacon.jsonl", out _);
-        if (s is null) return;
 
         var beacons = s.Events
             .Where(e => e.Signal.Kind == SignalKind.NetworkConnect)
@@ -1498,30 +1689,63 @@ public class ReplayScenarioFileTests
             IocDatabase.SuspiciousModuleFragments.Any((e.Signal.FilePath ?? "").ToLowerInvariant().Contains));
     }
 
+    /// <summary>
+    /// The false-positive guard, and the reason this whole class was rewritten. Crossing
+    /// the quarantine threshold suspends a live process and installs a persistent outbound
+    /// firewall block on its image, so a hit here is an outage on a developer's machine,
+    /// not a cosmetic defect.
+    /// </summary>
     [Fact]
     public void Benign_Developer_Day_Quarantines_Nothing()
     {
         var s = Load("benign-developer-day.jsonl", out _);
-        if (s is null) return;
 
-        var result = new TraceReplay(c => new ReplayMiniRuleEngine(c)).Run(s);
+        var result = RealReplay(s);
 
         Assert.DoesNotContain(result.Verdicts,
             v => v.Verdict.Equals("Quarantine", StringComparison.OrdinalIgnoreCase));
+
+        // Named per-pid as well as in aggregate, so a failure says WHICH ordinary process
+        // the engine would have frozen.
         foreach (int pid in s.Events.Select(e => e.Signal.Pid).Distinct())
             Assert.Null(Expectation.Check($"no-quarantine:pid={pid}", result.Verdicts, result.FinalScores));
     }
 
+    /// <summary>
+    /// Nothing in an ordinary morning may even reach the warn threshold. Warn is log-only,
+    /// so this is a noise budget rather than an outage -- but an alert on every build is
+    /// how a detection gets switched off, after which the outage arrives anyway.
+    ///
+    /// The threshold, not zero, is the assertion. A future low-weight rule that scores a
+    /// developer 5 points is a judgement call; one that scores them 40 is a defect.
+    /// </summary>
     [Fact]
-    public void Benign_Developer_Day_Scores_Nothing_At_All()
+    public void Benign_Developer_Day_Never_Reaches_The_Warn_Threshold()
     {
         var s = Load("benign-developer-day.jsonl", out _);
-        if (s is null) return;
 
-        var result = new TraceReplay(c => new ReplayMiniRuleEngine(c)).Run(s);
+        var result = RealReplay(s);
 
-        Assert.Empty(result.Verdicts);
-        Assert.All(result.FinalScores, kv => Assert.Equal(0, kv.Value));
+        // Checked twice on purpose, against the two independent things the engine reports:
+        // the verdict stream and the score table. An engine that emitted one without the
+        // other would slip past a single-sided check.
+        Assert.DoesNotContain(result.Verdicts,
+            v => v.Verdict.Equals("Warn", StringComparison.OrdinalIgnoreCase) ||
+                 v.Verdict.Equals("Quarantine", StringComparison.OrdinalIgnoreCase));
+
+        var over = result.FinalScores
+            .Where(kv => kv.Value >= RealDetectionReplayEngine.WarnThreshold)
+            .Select(kv => $"pid {kv.Key} = {kv.Value}")
+            .ToList();
+        Assert.True(over.Count == 0,
+            "benign trace scored at or above the warn threshold: " + string.Join(", ", over) +
+            Environment.NewLine + result.Summary);
+
+        // Every process in the trace must appear in the score table. A pid the engine never
+        // tracked cannot be asserted about, and a silently absent pid is how a
+        // false-positive guard turns into a test that checks nothing.
+        foreach (int pid in s.Events.Select(e => e.Signal.Pid).Where(p => p > 0).Distinct())
+            Assert.True(result.FinalScores.ContainsKey(pid), $"the engine never tracked pid {pid}");
     }
 
     [Fact]
@@ -1530,7 +1754,6 @@ public class ReplayScenarioFileTests
         // Asserted directly against the IOC tables rather than through the engine, so this
         // still guards the file if the scoring weights are ever retuned.
         var s = Load("benign-developer-day.jsonl", out _);
-        if (s is null) return;
 
         foreach (var e in s.Events)
         {
@@ -1551,7 +1774,6 @@ public class ReplayScenarioFileTests
         // If the benign trace stopped containing LolBins, archives and outbound traffic it
         // would stop being a false-positive guard and become a file that always passes.
         var s = Load("benign-developer-day.jsonl", out _);
-        if (s is null) return;
         var signals = s.Events.Select(e => e.Signal).ToList();
 
         Assert.Contains(signals, x => x.Kind == SignalKind.ProcessStart &&
@@ -1572,7 +1794,6 @@ public class ReplayScenarioFileTests
         foreach (string file in new[] { "infostealer-chain.jsonl", "rat-beacon.jsonl" })
         {
             var s = Load(file, out _);
-            if (s is null) continue;
 
             foreach (var e in s.Events.Where(x => x.Signal.Kind == SignalKind.NetworkConnect))
             {

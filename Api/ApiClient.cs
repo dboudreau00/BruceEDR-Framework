@@ -30,6 +30,13 @@ namespace ProcessShield.Api;
 //  * Headers the HTTP stack refuses to send are recorded in the same Warnings
 //    list rather than vanishing, so a report cannot claim a header was on the wire
 //    when it was not.
+//  * ApiSafetyPolicy.MaxRequestsPerSecond is enforced here as well as in
+//    CollectionRunner, so a direct SendAsync is paced instead of being unlimited.
+//    Two limiters in series simply take the slower of the two. The honest limit of
+//    this one: the budget is per ApiClient instance and nothing here is static, so a
+//    caller that constructs a fresh client per send (ApiStudioConsole.Send does) gets
+//    no pacing between those sends. It bounds a burst from one client, not the
+//    process. A policy with MaxRequestsPerSecond <= 0 turns it off entirely.
 //  * Nothing here mutates global state (no cookie container, no shared handler
 //    configuration), so two concurrent sends cannot contaminate each other.
 // ---------------------------------------------------------------------------
@@ -51,8 +58,14 @@ public interface IApiClient : IDisposable
 
 /// <summary>
 /// The real HTTP client. Enforces <see cref="ApiSafetyPolicy"/>, follows redirects
-/// manually so the hop chain is observable, caps the response body, and records
-/// what it can see of the TLS handshake for the security analyzer.
+/// manually so the hop chain is observable, caps the response body, paces its own sends
+/// to <see cref="ApiSafetyPolicy.MaxRequestsPerSecond"/>, and records what it can see of
+/// the TLS handshake for the security analyzer.
+/// <para>
+/// An instance is safe to share between concurrent callers, and sharing one is what makes
+/// the rate limit useful: the budget lives on the instance, so a caller that builds a new
+/// client for every request is not paced between them.
+/// </para>
 /// </summary>
 public sealed class ApiClient : IApiClient
 {
@@ -79,6 +92,16 @@ public sealed class ApiClient : IApiClient
     private readonly ApiSafetyPolicy _policy;
     private readonly IClock _clock;
     private volatile bool _disposed;
+
+    private readonly object _rateGate = new();
+
+    /// <summary>
+    /// Monotonic <see cref="Stopwatch"/> timestamp at which the next send may start.
+    /// Zero until the first send, which is therefore never delayed. This deliberately
+    /// does not use <see cref="IClock"/>: a rate limit must not be steered by a wall
+    /// clock that can jump, which also means it cannot be virtualised by a test clock.
+    /// </summary>
+    private long _nextSendTicks;
 
     public ApiClient(ApiSafetyPolicy policy, IClock? clock = null)
     {
@@ -130,6 +153,29 @@ public sealed class ApiClient : IApiClient
         if (!TryBuildBody(resolved, boundary, out byte[]? payload, out string bodyContentType, out string bodyError))
             return Fail(started, sw, bodyError, uri.AbsoluteUri);
 
+        // Pace the send. Everything above this line can fail without a packet leaving the
+        // machine, so a refused, malformed or unbuildable request neither waits nor burns a
+        // slot -- there is nothing to pace. Only the caller's token cancels the wait; the
+        // per-request timeout is started afterwards so queueing does not eat into it.
+        TimeSpan queued;
+        try
+        {
+            queued = await ThrottleAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return Fail(started, sw, "canceled", uri.AbsoluteUri);
+        }
+
+        if (queued > TimeSpan.Zero)
+        {
+            // Waiting for our own rate limit is queueing, not endpoint latency. Folding it
+            // into Elapsed would fail a ResponseTimeUnderMs assertion against a server that
+            // answered instantly, so the reported clocks start when the wait ends.
+            started = _clock.UtcNow;
+            sw.Restart();
+        }
+
         int timeoutSeconds = EffectiveTimeoutSeconds(resolved.TimeoutSeconds);
         long maxBytes = _policy.MaxResponseBytes > 0 ? _policy.MaxResponseBytes : 8L * 1024 * 1024;
 
@@ -147,7 +193,11 @@ public sealed class ApiClient : IApiClient
             if (droppedHeaders.Count == 0) return warnings.ToArray();
             var all = new List<string>(warnings)
             {
-                "header(s) rejected by the HTTP stack and never sent: " + string.Join(", ", droppedHeaders)
+                // "on at least one hop", not "never": a content header attaches to hop 1 but
+                // has nothing to attach to after a 303 drops the body, and claiming it never
+                // travelled would be the same kind of lie this list exists to prevent.
+                "header(s) the HTTP stack refused on at least one hop and did not send: " +
+                string.Join(", ", droppedHeaders)
             };
             return all.ToArray();
         }
@@ -160,7 +210,8 @@ public sealed class ApiClient : IApiClient
         // in TIME_WAIT -- the classic socket-exhaustion trap. It is the right trade here
         // anyway: the SslOptions callback has to close over per-request state to record
         // the certificate, API Studio is an interactive diagnostic tool sending tens of
-        // requests, and ApiSafetyPolicy.MaxRequestsPerSecond caps the rate regardless.
+        // requests, and the throttle above bounds how fast this client opens fresh
+        // connections whenever the policy sets a rate (<= 0 removes that bound).
         // A shared handler would need an AsyncLocal to route certificates back to the
         // right request, and would also share connections (and therefore TLS sessions)
         // across targets, which is exactly what we are trying to observe.
@@ -280,6 +331,56 @@ public sealed class ApiClient : IApiClient
     }
 
     public void Dispose() => _disposed = true;
+
+    // -------------------------------------------------------------- throttle
+
+    /// <summary>
+    /// Waits for this client's rate-limit slot and returns how long that actually took,
+    /// so the caller can keep its own queueing out of the reported exchange timings.
+    /// Cancellation surfaces as <see cref="OperationCanceledException"/>; the single
+    /// caller converts it into an error response, because SendAsync never throws.
+    /// </summary>
+    private async Task<TimeSpan> ThrottleAsync(CancellationToken ct)
+    {
+        TimeSpan wait = ReserveSendSlot();
+        if (wait <= TimeSpan.Zero) return TimeSpan.Zero;
+        await Task.Delay(wait, ct).ConfigureAwait(false);
+        return wait;
+    }
+
+    /// <summary>
+    /// Claims the next slot allowed by <see cref="ApiSafetyPolicy.MaxRequestsPerSecond"/>
+    /// and returns how long the caller must wait for it. The marker is advanced under a
+    /// lock as the slot is handed out, so concurrent callers on one client queue behind
+    /// each other rather than all observing the same "last send" and leaving together.
+    /// <para>
+    /// Limitations, stated plainly: the budget is per <see cref="ApiClient"/> instance, so
+    /// two clients (or a second process) do not share it; a slot claimed by a caller that
+    /// is then cancelled is simply left unused; and the pacing is a minimum gap between
+    /// starts, not a sliding window, so it does not smooth a burst that was already in
+    /// flight. A non-positive or NaN rate disables the limit entirely.
+    /// </para>
+    /// </summary>
+    private TimeSpan ReserveSendSlot()
+    {
+        double perSecond = _policy.MaxRequestsPerSecond;
+        if (double.IsNaN(perSecond) || perSecond <= 0) return TimeSpan.Zero;
+
+        long interval = (long)(Stopwatch.Frequency / perSecond);
+        if (interval <= 0) return TimeSpan.Zero;   // finer than the timer can resolve
+
+        long now = Stopwatch.GetTimestamp();
+        long slot;
+        lock (_rateGate)
+        {
+            slot = _nextSendTicks > now ? _nextSendTicks : now;
+            _nextSendTicks = slot + interval;
+        }
+
+        return slot <= now
+            ? TimeSpan.Zero
+            : TimeSpan.FromSeconds((double)(slot - now) / Stopwatch.Frequency);
+    }
 
     // ------------------------------------------------------------------ URL
 

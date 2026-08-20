@@ -92,7 +92,7 @@ detection walkthrough below works with either front-end.
 
 ## 4. Run the unit tests
 
-- In VS: **Test -> Run All Tests** (opens Test Explorer). All 1,990 tests should pass.
+- In VS: **Test -> Run All Tests** (opens Test Explorer). All 2,016 tests should pass.
   They cover the exfil-chain scoring, the JSON rule engine, ATT&CK mapping, beacon and
   DGA analytics, the process tree (including PID reuse and hostile parent cycles), PE
   parsing against malformed files, indicator feeds, the encrypted quarantine vault,
@@ -368,7 +368,7 @@ Two capabilities are intentionally not shippable here because they're gated behi
 Microsoft programs: **PPL/ELAM tamper protection** and **production driver
 signing**. See `README.md` -> "Security model & honest limitations".
 
-What *is* verified on every build: the solution compiles with zero warnings, 1,990 unit
+What *is* verified on every build: the solution compiles with zero warnings, 2,016 unit
 tests pass, all 72 detection rules validate, and all three replay scenarios meet their
 expectations — including the benign one that must produce no verdicts at all.
 

@@ -287,7 +287,7 @@ public sealed class DetectionEngine
         }
 
         foreach (var ioc in IocDatabase.CommandLineIocs)
-            if (cmd.Contains(ioc))
+            if (CommandLineContains(cmd, ioc))
                 Score(p, 15, $"Command-line IOC '{ioc}'", "builtin-cmdline-ioc",
                       CommandLineTechniques(ioc), s.TimestampUtc);
     }
@@ -639,7 +639,19 @@ public sealed class DetectionEngine
 
     private DetectionResult? Decide(ThreatProfile p, string trigger, DateTime nowUtc)
     {
-        if (!p.SignatureChecked)
+        // Authenticode verification is deferred until the score could actually be changed
+        // by it. WinVerifyTrust walks a certificate chain and touches the file, and the
+        // check used to run on the FIRST signal of EVERY process -- including the vast
+        // majority that never score at all -- on the single detection thread. Below the
+        // warn threshold the verdict is Allow whether or not the image is trusted, so the
+        // work cannot affect the outcome. Gating here keeps the result identical while
+        // removing the check from the hot path for almost every process on the box.
+        //
+        // It stays INLINE rather than moving to the response worker on purpose: trust has
+        // to be known at the moment a verdict is computed. Resolving it asynchronously
+        // would let a trusted process be contained before its signature came back, which
+        // trades a latency problem for a false positive.
+        if (!p.SignatureChecked && p.Score >= _warn)
         {
             p.SignatureChecked = true;
             bool trusted;
@@ -827,6 +839,46 @@ public sealed class DetectionEngine
             int shed = (int)Math.Min(int.MaxValue, steps * _opt.ScoreDecayPoints);
             p.Score = Math.Max(0, p.Score - shed);
             p.LastDecayUtc = now;
+        }
+    }
+
+    /// <summary>
+    /// Substring match for content IOCs, token match for switch-like ones.
+    ///
+    /// A bare <c>Contains</c> was wrong for the flag entries: <c>-nop</c> matched anywhere
+    /// in a command line, so an ordinary path or argument containing those three characters
+    /// scored a process 15 points for "hidden PowerShell". It also double-counted, because
+    /// <c>-enc</c> is a prefix of <c>-encodedcommand</c> and both are in the table, so an
+    /// encoded command scored twice for one flag. Requiring a token boundary fixes both:
+    /// a switch has to start at the beginning or after whitespace, and end at the end or
+    /// before whitespace.
+    ///
+    /// Content IOCs like <c>downloadstring</c> or <c>frombase64string</c> keep substring
+    /// matching, because those legitimately appear glued to surrounding expression text.
+    ///
+    /// HONEST LIMIT: token matching still does not understand quoting, so an argument that
+    /// embeds a switch inside a quoted string can still match. That is a far smaller surface
+    /// than matching anywhere, and the alternative is a full command-line parser per
+    /// shell dialect.
+    /// </summary>
+    internal static bool CommandLineContains(string commandLine, string ioc)
+    {
+        if (string.IsNullOrEmpty(commandLine) || string.IsNullOrEmpty(ioc)) return false;
+        bool isSwitch = ioc[0] is '-' or '/';
+        if (!isSwitch) return commandLine.Contains(ioc, StringComparison.Ordinal);
+
+        int from = 0;
+        while (true)
+        {
+            int at = commandLine.IndexOf(ioc, from, StringComparison.Ordinal);
+            if (at < 0) return false;
+
+            bool startOk = at == 0 || char.IsWhiteSpace(commandLine[at - 1]);
+            int end = at + ioc.Length;
+            bool endOk = end == commandLine.Length || char.IsWhiteSpace(commandLine[end]);
+            if (startOk && endOk) return true;
+
+            from = at + 1;
         }
     }
 
