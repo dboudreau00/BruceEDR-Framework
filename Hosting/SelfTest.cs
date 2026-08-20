@@ -15,39 +15,68 @@ namespace ProcessShield.Hosting;
 /// </summary>
 public static class SelfTest
 {
-    /// <summary>Process exit code: 0 when everything passed.</summary>
-    public static int Run(string? rulesPath = null, string? scenariosPath = null, TextWriter? outWriter = null)
+    /// <summary>
+    /// Process exit code: 0 when everything passed.
+    /// </summary>
+    /// <param name="allowEmpty">
+    /// Accept a run that found no rule directory and/or no scenarios. Off by default: a
+    /// self-test that validated nothing must not report PASS, because CI and
+    /// <c>tools/verify.ps1</c> read that exit code as "the shipped content is good". The
+    /// same switch is honoured as <c>--allow-empty</c> on the process command line, since
+    /// the argument dispatcher forwards only the two path options.
+    /// </param>
+    public static int Run(string? rulesPath = null, string? scenariosPath = null,
+        TextWriter? outWriter = null, bool allowEmpty = false)
     {
         var w = outWriter ?? Console.Out;
         int failures = 0;
+        bool allow = allowEmpty || CommandLineAllowsEmpty();
 
         w.WriteLine("ProcessShield self-test");
         w.WriteLine("=======================");
         w.WriteLine();
 
         var rulesDir = Resolve(rulesPath, "rules/detection");
-        failures += CheckRules(rulesDir, w);
+        failures += CheckRules(rulesDir, w, allow);
 
         w.WriteLine();
         var scenarioDir = Resolve(scenariosPath, "Replay/scenarios");
-        failures += CheckScenarios(scenarioDir, rulesDir, w);
+        failures += CheckScenarios(scenarioDir, rulesDir, w, allow);
 
         w.WriteLine();
         w.WriteLine(failures == 0
-            ? "self-test PASSED"
+            ? (allow ? "self-test PASSED (--allow-empty: missing content was tolerated)" : "self-test PASSED")
             : $"self-test FAILED with {failures} problem(s)");
         return failures == 0 ? 0 : 1;
     }
 
+    /// <summary>True when the process was started with <c>--allow-empty</c>.</summary>
+    private static bool CommandLineAllowsEmpty()
+    {
+        try
+        {
+            foreach (var a in Environment.GetCommandLineArgs())
+                if (string.Equals(a, "--allow-empty", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        catch { /* nothing readable: treat as not set, i.e. the strict default */ }
+        return false;
+    }
+
     // ------------------------------------------------------------------- rules
 
-    private static int CheckRules(string? dir, TextWriter w)
+    private static int CheckRules(string? dir, TextWriter w, bool allowEmpty)
     {
         w.WriteLine("[1] detection rule packs");
         if (dir is null)
         {
-            w.WriteLine("    no rules/detection directory found; nothing to validate");
-            return 0;
+            if (allowEmpty)
+            {
+                w.WriteLine("    no rules/detection directory found; skipped (--allow-empty)");
+                return 0;
+            }
+            w.WriteLine("    FAIL: no rules/detection directory found, so no rule pack was validated.");
+            w.WriteLine("          Point --rules at the directory, or pass --allow-empty to accept this.");
+            return 1;
         }
 
         var set = RuleEngine.LoadDirectory(dir, m => w.WriteLine("    warn: " + m));
@@ -101,13 +130,19 @@ public static class SelfTest
 
     // --------------------------------------------------------------- scenarios
 
-    private static int CheckScenarios(string? dir, string? rulesDir, TextWriter w)
+    private static int CheckScenarios(string? dir, string? rulesDir, TextWriter w, bool allowEmpty)
     {
         w.WriteLine("[2] replay scenarios");
         if (dir is null)
         {
-            w.WriteLine("    no Replay/scenarios directory found; nothing to replay");
-            return 0;
+            if (allowEmpty)
+            {
+                w.WriteLine("    no Replay/scenarios directory found; skipped (--allow-empty)");
+                return 0;
+            }
+            w.WriteLine("    FAIL: no Replay/scenarios directory found, so no detection was exercised.");
+            w.WriteLine("          Point --scenarios at the directory, or pass --allow-empty to accept this.");
+            return 1;
         }
 
         string[] files;
@@ -116,8 +151,14 @@ public static class SelfTest
 
         if (files.Length == 0)
         {
-            w.WriteLine($"    {dir} contains no .jsonl scenarios");
-            return 0;
+            if (allowEmpty)
+            {
+                w.WriteLine($"    {dir} contains no .jsonl scenarios; skipped (--allow-empty)");
+                return 0;
+            }
+            w.WriteLine($"    FAIL: {dir} contains no .jsonl scenarios, so no detection was exercised.");
+            w.WriteLine("          Pass --allow-empty to accept this.");
+            return 1;
         }
 
         Array.Sort(files, StringComparer.OrdinalIgnoreCase);
@@ -214,6 +255,12 @@ public static class SelfTest
     /// Resolves a content directory. Prefers an explicit path, then the directory next to
     /// the executable (the published layout), then walks up from the executable looking for
     /// the repository layout, so the same command works from bin/ and from a source tree.
+    ///
+    /// The upward walk is safe HERE and only here: --selftest is an offline developer/CI
+    /// command that starts no monitor and runs at the invoking user's own privilege. The
+    /// running agent deliberately does NOT use this method (see Composition.ResolveContentDir),
+    /// because a SYSTEM-level service walking up from C:\Program Files\ would happily load a
+    /// rule pack planted by a standard user.
     /// </summary>
     internal static string? Resolve(string? explicitPath, string relative)
     {

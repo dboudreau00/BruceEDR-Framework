@@ -91,6 +91,15 @@ public sealed record TraceScenario
 ///   newer build still replays on an older one (forward compatibility for the on-disk format).</description></item>
 ///   <item><description>A line with an unusable <c>kind</c> is skipped rather than guessed at.
 ///   Guessing would quietly change what a detection test asserts.</description></item>
+///   <item><description>The monotonic-clock invariant is enforced on <c>at</c> ONLY. An explicit
+///   <c>timestampUtc</c> is stored verbatim, including one that predates the scenario start or
+///   the previous step, because that is the only way to round-trip a real capture faithfully
+///   (<see cref="FromSignals"/> clamps the offset of an out-of-order arrival but keeps the
+///   timestamp the monitor actually reported) and the only way to author a deliberate
+///   clock-skew scenario. Such a timestamp is reported through the warnings channel so it is
+///   never a silent surprise, and it does not move the replay clock -- <c>TraceReplay</c>
+///   advances on <c>at</c>, so a backwards timestamp travels on the signal as data rather
+///   than rewinding the engine's correlation windows.</description></item>
 /// </list>
 /// </summary>
 public static class TraceFormat
@@ -133,7 +142,10 @@ public static class TraceFormat
     public static TraceScenario Parse(IEnumerable<string> lines, string name, out IReadOnlyList<string> warnings)
     {
         var warn = new List<string>();
-        var pending = new List<(long AtMs, Signal Sig, bool ExplicitTime)>();
+        // The line number rides along because an explicit timestampUtc can only be checked
+        // against the scenario start once the whole file has been read, long after the
+        // line itself is gone.
+        var pending = new List<(long AtMs, Signal Sig, bool ExplicitTime, int LineNo)>();
 
         string metaName = "";
         string metaDescription = "";
@@ -186,7 +198,7 @@ public static class TraceFormat
                 if (TryReadStep(root, lineNo, warn, prevMs, out long atMs, out var sig, out bool explicitTime) && sig is not null)
                 {
                     prevMs = atMs;
-                    pending.Add((atMs, sig, explicitTime));
+                    pending.Add((atMs, sig, explicitTime, lineNo));
                 }
             }
             catch (JsonException ex)
@@ -205,10 +217,30 @@ public static class TraceFormat
         // Timestamps are resolved after the whole file has been read so that a meta line
         // placed at the bottom still anchors the events above it. Authors do put it last.
         var events = new List<TraceStep>(pending.Count);
-        foreach (var (atMs, sig, explicitTime) in pending)
+        DateTime prevStamp = start;
+        foreach (var (atMs, sig, explicitTime, stepLine) in pending)
         {
             var at = TimeSpan.FromMilliseconds(atMs);
-            events.Add(new TraceStep(at, explicitTime ? sig : sig with { TimestampUtc = AddSafe(start, at) }));
+            var resolved = explicitTime ? sig : sig with { TimestampUtc = AddSafe(start, at) };
+
+            // An explicit timestamp is kept exactly as written -- see the note on this
+            // class about why it is not clamped -- but a backwards one is called out, so
+            // that a mistyped year reads as a warning in CI rather than as a scenario
+            // whose verdicts could not have occurred on a real host. Implied timestamps
+            // need no check: they are start + a non-decreasing offset by construction.
+            if (explicitTime)
+            {
+                if (resolved.TimestampUtc < start)
+                    warn.Add($"line {stepLine}: 'timestampUtc' {Iso(resolved.TimestampUtc)} predates the scenario " +
+                             $"start ({Iso(start)}); kept as written -- the replay clock follows 'at', not this field");
+                else if (resolved.TimestampUtc < prevStamp)
+                    warn.Add($"line {stepLine}: 'timestampUtc' {Iso(resolved.TimestampUtc)} is earlier than the " +
+                             $"previous step's ({Iso(prevStamp)}); kept as written -- the replay clock follows 'at', " +
+                             "so this trace exercises clock skew rather than rewinding the engine");
+            }
+
+            prevStamp = resolved.TimestampUtc;
+            events.Add(new TraceStep(at, resolved));
         }
 
         warnings = warn;

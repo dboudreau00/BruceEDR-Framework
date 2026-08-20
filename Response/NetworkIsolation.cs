@@ -137,7 +137,7 @@ public sealed class NetworkIsolation
         // here can never leave the host blocked without its allowlist in place.
         for (int i = 0; i < commands.Count; i++)
         {
-            if (RunNetsh(commands[i], out string detail)) continue;
+            if (RunNetsh(commands[i], out string detail, out _)) continue;
 
             string what = string.Join(" ", commands[i]);
             _log.Action($"isolation aborted at step {i + 1}/{commands.Count}: {detail}");
@@ -170,6 +170,12 @@ public sealed class NetworkIsolation
     /// restored FIRST so connectivity comes back even if deleting the allow rules then
     /// fails; leftover allow rules are a far smaller problem than a still-isolated host.
     ///
+    /// Because blind cleanup is the normal case, a delete step that netsh answers with a
+    /// non-zero exit code — which is what it does for "No rules match the specified
+    /// criteria" — is treated as success. Otherwise every release on a host that was
+    /// never isolated would report failure. A delete that could not run AT ALL (netsh
+    /// missing, or timed out) is still reported, as is any failure of the policy restore.
+    ///
     /// Two honest limitations: the restored policy is the Windows default
     /// (block inbound / allow outbound), not whatever the host had before — this class
     /// does not snapshot the prior policy — and the firewall is left ENABLED even if
@@ -183,8 +189,14 @@ public sealed class NetworkIsolation
 
         for (int i = 0; i < commands.Count; i++)
         {
-            if (!RunNetsh(commands[i], out string detail))
-                failures.Add($"step {i + 1} ('{string.Join(" ", commands[i])}'): {detail}");
+            if (RunNetsh(commands[i], out string detail, out int exitCode)) continue;
+
+            // netsh cannot be asked "delete this rule if it exists"; it reports the empty
+            // case as an error. exitCode > 0 means netsh ran and declined, which for a
+            // cleanup delete is indistinguishable from, and usually is, "nothing to do".
+            if (IsCleanupDelete(commands[i]) && exitCode > 0) continue;
+
+            failures.Add($"step {i + 1} ('{string.Join(" ", commands[i])}'): {detail}");
         }
 
         // Step 0 is the policy restore. If that one worked the host has connectivity
@@ -273,6 +285,14 @@ public sealed class NetworkIsolation
     };
 
     /// <summary>
+    /// True for the "delete rule" steps of a release, whose failure is tolerated because
+    /// netsh reports "nothing matched" as an error. Kept as a pure predicate over the
+    /// argument vector so <see cref="BuildReleaseCommands"/> stays data, not policy.
+    /// </summary>
+    internal static bool IsCleanupDelete(IReadOnlyList<string> args)
+        => args.Count >= 4 && args[0] == "advfirewall" && args[1] == "firewall" && args[2] == "delete";
+
+    /// <summary>
     /// Accepts a single IPv4/IPv6 address, a CIDR block, an <c>a-b</c> range, or one of
     /// netsh's remoteip keywords.
     ///
@@ -357,10 +377,15 @@ public sealed class NetworkIsolation
     /// Runs one netsh command. Arguments go through ArgumentList so each element is
     /// quoted by the runtime and a rule name containing spaces stays one argument;
     /// building a command string by concatenation here would be an injection bug.
+    ///
+    /// <paramref name="exitCode"/> is -1 when netsh could not be started, timed out, or
+    /// threw. That lets a caller distinguish "netsh ran and refused" (which for a delete
+    /// usually just means the rule was not there) from "netsh never ran".
     /// </summary>
-    private bool RunNetsh(string[] args, out string detail)
+    private bool RunNetsh(string[] args, out string detail, out int exitCode)
     {
         detail = "";
+        exitCode = -1;
         try
         {
             var psi = new ProcessStartInfo("netsh")
@@ -387,10 +412,11 @@ public sealed class NetworkIsolation
                 return false;
             }
 
-            if (proc.ExitCode == 0) return true;
+            exitCode = proc.ExitCode;
+            if (exitCode == 0) return true;
 
             string text = (Result(stdout) + " " + Result(stderr)).Trim();
-            detail = $"netsh exit code {proc.ExitCode}" + (text.Length == 0 ? "" : ": " + Collapse(text));
+            detail = $"netsh exit code {exitCode}" + (text.Length == 0 ? "" : ": " + Collapse(text));
             return false;
         }
         catch (Exception ex)
@@ -406,11 +432,17 @@ public sealed class NetworkIsolation
         catch { return ""; }
     }
 
-    /// <summary>Squashes netsh's multi-line output into one log-friendly line.</summary>
+    /// <summary>
+    /// Squashes netsh's multi-line output into one log-friendly line. The separators go
+    /// in as an explicit array: passing them as two char arguments binds to the
+    /// Split(char, int, StringSplitOptions) overload, because the options enum converts
+    /// to int, which would split on '\r' only and cap the result at 10 parts.
+    /// </summary>
     private static string Collapse(string text)
     {
-        string one = string.Join(" ", text.Split('\r', '\n', StringSplitOptions.RemoveEmptyEntries |
-                                                             StringSplitOptions.TrimEntries));
+        string one = string.Join(" ", text.Split(new[] { '\r', '\n' },
+                                                 StringSplitOptions.RemoveEmptyEntries |
+                                                 StringSplitOptions.TrimEntries));
         return one.Length <= 300 ? one : one[..300] + "...";
     }
 }

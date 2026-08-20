@@ -196,6 +196,18 @@ public sealed record RuleSet(IReadOnlyList<DetectionRule> Rules, IReadOnlyList<R
 /// </summary>
 public sealed record RuleContext
 {
+    /// <summary>
+    /// The subject process's own image name, carried from its ThreatProfile.
+    ///
+    /// This exists because most signals do NOT carry a process name -- a FileCreate,
+    /// DnsQuery, RegistryWrite or ProcessAccess event has a pid and a target, nothing more.
+    /// Resolving <c>processName</c> from the signal alone silently made every
+    /// <c>none: processName in [...]</c> exclusion in the shipped rule packs inert, which is
+    /// exactly the guard those packs use to avoid flagging a browser for reading its own
+    /// profile.
+    /// </summary>
+    public string ProcessName { get; init; } = "";
+
     /// <summary>Immediate parent's image name, e.g. <c>winword.exe</c>. Empty when unknown.</summary>
     public string ParentName { get; init; } = "";
 
@@ -345,7 +357,10 @@ internal static class RuleFields
             case RuleField.Pid: return FieldValues.One(s.Pid.ToString(CultureInfo.InvariantCulture));
             case RuleField.ParentPid: return FieldValues.One(s.ParentPid.ToString(CultureInfo.InvariantCulture));
             case RuleField.TargetPid: return FieldValues.One(s.TargetPid.ToString(CultureInfo.InvariantCulture));
-            case RuleField.ProcessName: return FieldValues.One(s.ProcessName);
+            // Fall back to the profile's known name: most signal kinds carry no process
+            // name of their own, and without this every processName exclusion is inert.
+            case RuleField.ProcessName:
+                return FieldValues.One(string.IsNullOrEmpty(s.ProcessName) ? ctx.ProcessName : s.ProcessName);
             case RuleField.ImagePath: return FieldValues.One(s.ImagePath);
             case RuleField.CommandLine: return FieldValues.One(s.CommandLine);
             case RuleField.FilePath: return FieldValues.One(s.FilePath);

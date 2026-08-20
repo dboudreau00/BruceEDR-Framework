@@ -233,7 +233,19 @@ public class MonitorSupportDomainTests
     public void IsIgnorableDomain_Suppresses_The_Hosts_Own_Name()
     {
         Assert.True(MonitorSupport.IsIgnorableDomain("desktop-abc", "DESKTOP-ABC"));
-        Assert.True(MonitorSupport.IsIgnorableDomain("DESKTOP-ABC.corp.example.com", "DESKTOP-ABC"));
+
+        // Only the bare name, or the name under a non-routable local suffix, is dropped.
+        Assert.True(MonitorSupport.IsIgnorableDomain("DESKTOP-ABC.local", "DESKTOP-ABC"));
+
+        // A name that merely BEGINS with the machine name and continues into a registered
+        // domain is NOT ignorable. This assertion used to expect the opposite, which made
+        // the monitor silently discard the exact shape DNS tunnelling produces -- the
+        // exfiltrating resolver prefixes the source host precisely so the operator can tell
+        // victims apart. Suppressing the machine's real AD FQDN is not worth that hole; a
+        // legitimate corporate FQDN simply gets scored by the normal rules and matches none.
+        Assert.False(MonitorSupport.IsIgnorableDomain("DESKTOP-ABC.corp.example.com", "DESKTOP-ABC"));
+        Assert.False(MonitorSupport.IsIgnorableDomain(
+            "DESKTOP-ABC.MFYGC43UMVZXI2LFOJSXG.exfil.example", "DESKTOP-ABC"));
     }
 
     // Adversarial: a two-character hostname must not turn "pc.evil.com" into an

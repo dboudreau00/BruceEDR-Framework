@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text;
+using ProcessShield.Analysis;
 using ProcessShield.Api;
 using ProcessShield.Detection;
 using ProcessShield.Monitoring;
@@ -32,8 +33,9 @@ public sealed class ShieldHostOptions
 /// <summary>
 /// Single-owner (actor) orchestrator. Exactly ONE thread reads and mutates
 /// detection state; monitors and the console feed the same queue. Slow containment
-/// runs on a separate response worker. Detection posture is hot-reloadable via a
-/// ConfigCommand routed through the same owner thread.
+/// runs on a separate response worker, which prioritises containment over best-effort
+/// memory scans. Detection posture is hot-reloadable via a ConfigCommand routed through
+/// the same owner thread.
 /// </summary>
 public sealed class ShieldHost : IDisposable
 {
@@ -83,6 +85,12 @@ public sealed class ShieldHost : IDisposable
         public required IReadOnlyList<string> Hits { get; init; }
     }
 
+    private sealed class ImageAnalysisCommand : Command
+    {
+        public required int Pid { get; init; }
+        public required FileAnalysis Analysis { get; init; }
+    }
+
     // Arbitrary read-only work that must run on the owner thread because it touches
     // engine-owned state (the profile store, the surface inventory, the process tree).
     // Keeping it a command is what lets the console, the GUI and the HTTP control plane
@@ -103,7 +111,16 @@ public sealed class ShieldHost : IDisposable
     // drains the control queue with priority over signals.
     private readonly BlockingCollection<Command> _signalQueue = new(boundedCapacity: 8192);
     private readonly BlockingCollection<Command> _controlQueue = new(boundedCapacity: 1024);
+
+    // Response work is split for the same reason, and it matters more here. Containment
+    // (firewall, vaulting, kill, triage) MUST run; a memory scan is best-effort and can
+    // occupy the worker for up to ~2s. With one shared queue a burst of processes claiming
+    // scans delayed real containment by minutes and, once the queue hit its cap, the
+    // containment task itself was the work that got discarded -- leaving a malicious
+    // process merely suspended. The worker now drains _responseQueue to empty before it
+    // looks at _scanQueue, so a scan backlog can only ever cost scans.
     private readonly BlockingCollection<Action> _responseQueue = new(boundedCapacity: 1024);
+    private readonly BlockingCollection<Action> _scanQueue = new(boundedCapacity: 1024);
 
     private Thread? _ownerThread;
     private Thread? _responseThread;
@@ -124,6 +141,8 @@ public sealed class ShieldHost : IDisposable
     private long _signalsDropped;
     private long _responsesRun;
     private long _responseErrors;
+    private long _responsesDropped;
+    private long _scansDropped;
     private int _stopped;
 
     public string ActiveMonitors { get; private set; } = "none";
@@ -137,6 +156,18 @@ public sealed class ShieldHost : IDisposable
     /// is built around the host and cannot be passed into its constructor.
     /// </summary>
     public Action<PlaybookAction, ProfileSnapshot>? ExtendedAction { get; set; }
+
+    /// <summary>
+    /// Supplies the PE analyzer used by <see cref="ScheduleImageAnalysis"/>. Set by the
+    /// composition root; null disables static image analysis entirely.
+    /// </summary>
+    public Func<string, FileAnalysis?>? ImageAnalyzer
+    {
+        get => _analyzeImage;
+        set => _analyzeImage = value;
+    }
+
+    private volatile Func<string, FileAnalysis?>? _analyzeImage;
 
     public ShieldHost(bool autoKill, DetectionEngine engine, ResponseManager response,
         IMemoryScanner scanner, Logger log)
@@ -252,13 +283,18 @@ public sealed class ShieldHost : IDisposable
         try { _controlQueue.CompleteAdding(); } catch { }
         _ownerThread?.Join(TimeSpan.FromSeconds(5));
 
+        // Both response queues must be completed or the worker blocks forever waiting on
+        // the one that is still open, and the join below just times out.
         try { _responseQueue.CompleteAdding(); } catch { }
+        try { _scanQueue.CompleteAdding(); } catch { }
         _responseThread?.Join(TimeSpan.FromSeconds(8));
 
         _log.Info($"shutdown complete. processed={Interlocked.Read(ref _signalsProcessed)} " +
                   $"dropped={Interlocked.Read(ref _signalsDropped)} " +
                   $"responses={Interlocked.Read(ref _responsesRun)} " +
-                  $"responseErrors={Interlocked.Read(ref _responseErrors)}");
+                  $"responseErrors={Interlocked.Read(ref _responseErrors)} " +
+                  $"responsesDropped={Interlocked.Read(ref _responsesDropped)} " +
+                  $"scansDropped={Interlocked.Read(ref _scansDropped)}");
     }
 
     public void Dispose()
@@ -267,6 +303,7 @@ public sealed class ShieldHost : IDisposable
         try { _signalQueue.Dispose(); } catch { }
         try { _controlQueue.Dispose(); } catch { }
         try { _responseQueue.Dispose(); } catch { }
+        try { _scanQueue.Dispose(); } catch { }
     }
 
     // --------------------------------------------------------------- producers
@@ -303,7 +340,7 @@ public sealed class ShieldHost : IDisposable
     /// <summary>Apply a hot-reloaded detection posture on the owner thread.</summary>
     public void ApplyDetectionConfig(int warn, int quarantine, int windowSeconds, int trustDiscount, bool autoKill)
     {
-        TryPost(new ConfigCommand
+        bool posted = TryPost(new ConfigCommand
         {
             Warn = warn,
             Quarantine = quarantine,
@@ -311,6 +348,12 @@ public sealed class ShieldHost : IDisposable
             TrustDiscount = trustDiscount,
             AutoKill = autoKill
         });
+        // Posting is bounded now (see TryPost), so a saturated control queue or a shutdown
+        // in flight means the new posture was NOT applied. Say so rather than letting the
+        // operator believe a reload that never happened took effect.
+        if (!posted)
+            _log.Error("detection config reload not applied",
+                new InvalidOperationException("control queue full or agent shutting down"));
     }
 
     public string Stats()
@@ -321,6 +364,9 @@ public sealed class ShieldHost : IDisposable
                $"queued={_signalQueue.Count} " +
                $"responsesRun={Interlocked.Read(ref _responsesRun)} " +
                $"responseErrors={Interlocked.Read(ref _responseErrors)} " +
+               $"responsesDropped={Interlocked.Read(ref _responsesDropped)} " +
+               $"responseQueued={_responseQueue.Count} " +
+               $"scansDropped={Interlocked.Read(ref _scansDropped)} " +
                $"warns={m.Warns} quarantines={m.Quarantines} " +
                $"p95={m.LatencyP95Ms:F2}ms " +
                $"autoKill={_autoKill} monitors=[{ActiveMonitors}]";
@@ -372,14 +418,25 @@ public sealed class ShieldHost : IDisposable
     {
         var tcs = new TaskCompletionSource<ActionResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!TryPost(new ActionCommand { Kind = kind, Pid = pid, Result = tcs }))
-            return ActionResult.Fail("agent is shutting down");
+            return ActionResult.Fail("agent is busy or shutting down; command not queued");
         return Wait(tcs.Task, ActionResult.Fail("timed out waiting for the engine"));
     }
 
+    /// <summary>
+    /// How long a producer will wait for room in the control queue before giving up. The
+    /// control plane and the console are single-threaded, so an unbounded wait on a full
+    /// queue hangs them outright; the callers all have a failure path, and every caller
+    /// that waits on a result already allows 10s, so this stays well inside their budget.
+    /// </summary>
+    private static readonly TimeSpan ControlPostTimeout = TimeSpan.FromSeconds(2);
+
     private bool TryPost(Command cmd)
     {
-        try { _controlQueue.Add(cmd); return true; }
-        catch (InvalidOperationException) { return false; }
+        // ObjectDisposedException derives from InvalidOperationException, so the more
+        // derived type has to come first or the compiler rejects it as unreachable.
+        try { return _controlQueue.TryAdd(cmd, ControlPostTimeout); }
+        catch (ObjectDisposedException) { return false; /* disposed during shutdown */ }
+        catch (InvalidOperationException) { return false; /* CompleteAdding called */ }
     }
 
     private static T Wait<T>(Task<T> task, T fallback)
@@ -431,10 +488,15 @@ public sealed class ShieldHost : IDisposable
                 foreach (var verdict in _engine.Ingest(sc.Signal))
                     OnVerdict(verdict);
                 Metrics.ObserveDetectionLatency(System.Diagnostics.Stopwatch.GetElapsedTime(startTicks));
-                // Offload the (up to ~2s) memory scan to the response worker so it never
-                // stalls the detection loop; hits fold back in via MemScanResultCommand.
+                // Offload the (up to ~2s) memory scan to the response worker's best-effort
+                // scan queue so it never stalls the detection loop and never delays or
+                // displaces containment; hits fold back in via MemScanResultCommand.
                 if (sc.Signal.Pid > 0 && _engine.TryClaimMemoryScan(sc.Signal.Pid))
                     ScheduleMemoryScan(sc.Signal.Pid);
+                // Same treatment for the PE parse: it reads the image off disk, so it goes
+                // on the droppable scan queue rather than the detection thread.
+                if (sc.Signal.Pid > 0 && _engine.TryClaimImageAnalysis(sc.Signal.Pid, out string imagePath))
+                    ScheduleImageAnalysis(sc.Signal.Pid, imagePath);
                 break;
             }
 
@@ -454,6 +516,11 @@ public sealed class ShieldHost : IDisposable
             case KillDoneCommand kd:
                 if (kd.Outcome.Ok) _engine.SetTerminated(kd.Pid);
                 kd.Result.TrySetResult(kd.Outcome);
+                break;
+
+            case ImageAnalysisCommand ia:
+                foreach (var verdict in _engine.ApplyImageAnalysis(ia.Pid, ia.Analysis))
+                    OnVerdict(verdict);
                 break;
 
             case MemScanResultCommand mr:
@@ -485,21 +552,46 @@ public sealed class ShieldHost : IDisposable
         bool scheduled = EnqueueResponse(() =>
         {
             var r = ResponseManager.KillProcess(pid);
-            TryPost(new KillDoneCommand { Pid = pid, Result = tcs, Outcome = r });
+            // If the follow-up cannot be queued the engine's Terminated flag stays unset,
+            // but the analyst still gets the real outcome instead of a 10s timeout.
+            if (!TryPost(new KillDoneCommand { Pid = pid, Result = tcs, Outcome = r }))
+                tcs.TrySetResult(r);
         });
         if (!scheduled)
             tcs.TrySetResult(ActionResult.Fail("response queue full; kill not scheduled"));
     }
 
+    /// <summary>
+    /// Runs the PE parse on the best-effort scan queue. The analyzer itself is supplied by
+    /// the composition root (cached, size-capped); a null result just means "nothing useful
+    /// to say about this image", which is the normal outcome for a script host or a path
+    /// that no longer exists.
+    /// </summary>
+    private void ScheduleImageAnalysis(int pid, string imagePath)
+    {
+        var analyze = _analyzeImage;
+        if (analyze is null) return;
+
+        EnqueueScan(() =>
+        {
+            FileAnalysis? analysis;
+            try { analysis = analyze(imagePath); }
+            catch { return; }
+            if (analysis is null) return;
+            if (!TryPost(new ImageAnalysisCommand { Pid = pid, Analysis = analysis }))
+                _log.Info($"pid {pid}: image analysis discarded; control queue full");
+        });
+    }
+
     private void ScheduleMemoryScan(int pid)
     {
-        EnqueueResponse(() =>
+        EnqueueScan(() =>
         {
             IReadOnlyList<string> hits;
             try { hits = _scanner.Scan(pid); }
             catch { return; }
-            if (hits.Count > 0)
-                TryPost(new MemScanResultCommand { Pid = pid, Hits = hits });
+            if (hits.Count > 0 && !TryPost(new MemScanResultCommand { Pid = pid, Hits = hits }))
+                _log.Info($"pid {pid}: memory scan hits discarded; control queue full");
         });
     }
 
@@ -548,26 +640,66 @@ public sealed class ShieldHost : IDisposable
             _log.Action(suspend.Ok
                 ? $"pid {snap.Pid} suspended"
                 : $"pid {snap.Pid} suspend failed: {suspend.Message}");
+            // Contained is set the moment the Quarantine verdict is emitted, i.e. before
+            // containment is attempted. If the freeze failed (access denied, a protected
+            // process) the process is NOT contained, and leaving the flag set would
+            // downgrade every later Quarantine for this pid to log-only -- it could never
+            // be contained again. Clear it so fresh evidence can re-escalate.
+            if (!suspend.Ok) _engine.MarkContainmentFailed(snap.Pid);
         }
 
         bool firewall = decision.Actions.Contains(PlaybookAction.FirewallBlock);
         bool quarantineFiles = decision.Actions.Contains(PlaybookAction.QuarantineFiles);
         bool kill = _autoKill || decision.Actions.Contains(PlaybookAction.Kill);
-        var extra = decision.Actions
-            .Where(a => a is PlaybookAction.IsolateHost or PlaybookAction.CollectTriage or PlaybookAction.NotifyWebhook)
-            .ToArray();
+
+        // The playbook's action list is ORDERED, and that order carries a real guarantee:
+        // triage (and host isolation) are collected before anything destructive runs. The
+        // host implements firewall/quarantine/kill as one Contain() call, so the actions it
+        // delegates are split at the ordered Kill: everything the playbook placed before it
+        // runs BEFORE Contain, everything after it runs after. Running them all afterwards
+        // meant CollectTriage packaged a process that had already been killed. When no Kill
+        // is ordered but auto-kill is on, Contain still kills, so every delegated action
+        // runs first.
+        int destructiveAt = decision.Actions.Count;
+        for (int i = 0; i < decision.Actions.Count; i++)
+        {
+            if (decision.Actions[i] != PlaybookAction.Kill) continue;
+            destructiveAt = i;
+            break;
+        }
+
+        var beforeContain = new List<PlaybookAction>();
+        var afterContain = new List<PlaybookAction>();
+        for (int i = 0; i < decision.Actions.Count; i++)
+        {
+            var a = decision.Actions[i];
+            if (a is not (PlaybookAction.IsolateHost or PlaybookAction.CollectTriage or PlaybookAction.NotifyWebhook))
+                continue;
+            (i < destructiveAt ? beforeContain : afterContain).Add(a);
+        }
         var extendedAction = ExtendedAction;
 
         EnqueueResponse(() =>
         {
+            RunExtendedActions(beforeContain, snap, extendedAction);
             _response.Contain(snap, alreadySuspended, kill, firewall, quarantineFiles);
-            if (extendedAction is null) return;
-            foreach (var a in extra)
-            {
-                try { extendedAction(a, snap); }
-                catch (Exception ex) { _log.Error($"playbook action {a}", ex); }
-            }
+            RunExtendedActions(afterContain, snap, extendedAction);
         });
+    }
+
+    /// <summary>
+    /// Runs delegated playbook actions in order on the response worker. A handler that
+    /// throws is logged and skipped so one bad sink cannot abort the rest of the response.
+    /// </summary>
+    private void RunExtendedActions(IReadOnlyList<PlaybookAction> actions, ProfileSnapshot snap,
+        Action<PlaybookAction, ProfileSnapshot>? handler)
+    {
+        if (handler is null || actions.Count == 0) return;
+        foreach (var a in actions)
+        {
+            try { handler(a, snap); }
+            catch (Exception ex) { _log.Error($"playbook action {a}", ex); }
+        }
     }
 
     private ActionResult ExecuteAction(ActionKind kind, int pid)
@@ -583,8 +715,26 @@ public sealed class ShieldHost : IDisposable
             }
             case ActionKind.Resume:
             {
+                // The console advertises resume as "release a false positive", so it has to
+                // undo BOTH halves of containment. Un-suspending alone left the binary
+                // permanently blocked by the outbound firewall rule with no route to remove
+                // it -- the analyst got a running process that silently could not reach the
+                // network, which looks exactly like the app being broken.
+                var snap = _engine.SnapshotOne(pid);
                 var r = ResponseManager.ResumeProcess(pid);
                 if (r.Ok) _engine.SetSuspendedByAnalyst(pid, false);
+
+                if (!string.IsNullOrEmpty(snap?.ImagePath))
+                {
+                    var unblock = ResponseManager.RemoveOutboundFirewallBlock(pid, snap!.ImagePath);
+                    _log.Action(unblock.Ok
+                        ? $"pid {pid}: {unblock.Message}"
+                        : $"pid {pid}: firewall block NOT removed -- {unblock.Message}");
+                    if (r.Ok && !unblock.Ok)
+                        return ActionResult.Success(
+                            r.Message + "; WARNING: the outbound firewall block could not be " +
+                            "removed, so this binary still has no network access");
+                }
                 return r;
             }
             case ActionKind.Suspend:
@@ -623,34 +773,79 @@ public sealed class ShieldHost : IDisposable
 
     // --------------------------------------------------------- response thread
 
+    /// <summary>
+    /// Queues containment work on the priority response queue. A drop here means real
+    /// containment was discarded, so it is counted in Metrics as a failed response (and in
+    /// a dropped gauge) as well as in the local counter -- reporting zero failures while
+    /// throwing containment away is worse than the backlog itself.
+    /// </summary>
     private bool EnqueueResponse(Action work)
     {
         try
         {
             if (_responseQueue.TryAdd(work)) return true;
             Interlocked.Increment(ref _responseErrors);
+            long dropped = Interlocked.Increment(ref _responsesDropped);
+            Metrics.IncResponses(false);
+            Metrics.SetGauge("response_containment_dropped", dropped);
             _log.Error("response backlog", new InvalidOperationException("queue full; dropped a containment task"));
             return false;
         }
         catch (InvalidOperationException) { return false; /* shutting down */ }
     }
 
-    private void ResponseLoop()
+    /// <summary>
+    /// Queues a best-effort memory scan. This queue is the droppable one: losing a scan
+    /// costs enrichment, never containment. Drops are counted and exposed rather than
+    /// silently swallowed, so an operator can see the scanner falling behind.
+    /// </summary>
+    private bool EnqueueScan(Action work)
     {
         try
         {
-            foreach (var work in _responseQueue.GetConsumingEnumerable())
+            if (_scanQueue.TryAdd(work)) return true;
+            long dropped = Interlocked.Increment(ref _scansDropped);
+            Metrics.SetGauge("response_scans_dropped", dropped);
+            return false;
+        }
+        catch (InvalidOperationException) { return false; /* shutting down */ }
+    }
+
+    // One worker owns both response queues, so containment steps still execute one at a
+    // time in the order they were ordered. Containment is drained to empty before a scan
+    // is even considered; TakeFromAny then blocks until either queue has work, and ends
+    // the loop only when both are completed and empty (shutdown still drains what is
+    // already queued).
+    private void ResponseLoop()
+    {
+        var queues = new[] { _responseQueue, _scanQueue };
+        try
+        {
+            while (true)
             {
-                try { work(); Interlocked.Increment(ref _responsesRun); Metrics.IncResponses(true); }
-                catch (Exception ex)
-                {
-                    Interlocked.Increment(ref _responseErrors);
-                    Metrics.IncResponses(false);
-                    _log.Error("response task", ex);
-                }
+                while (_responseQueue.TryTake(out var containment))
+                    RunResponse(containment);
+
+                Action? work;
+                int idx;
+                try { idx = BlockingCollection<Action>.TakeFromAny(queues, out work); }
+                catch (Exception) { break; }   // a queue was completed/disposed during shutdown
+                if (idx < 0 || work is null) break;
+                RunResponse(work);
             }
         }
         catch (Exception ex) { _log.Error("response loop terminated", ex); }
+    }
+
+    private void RunResponse(Action work)
+    {
+        try { work(); Interlocked.Increment(ref _responsesRun); Metrics.IncResponses(true); }
+        catch (Exception ex)
+        {
+            Interlocked.Increment(ref _responseErrors);
+            Metrics.IncResponses(false);
+            _log.Error("response task", ex);
+        }
     }
 
     private static void SafeDispose<T>(ref T? disposable) where T : class, IDisposable

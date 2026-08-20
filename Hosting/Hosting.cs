@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Hosting;
+using ProcessShield.Analysis;
 using ProcessShield.Api;
 using ProcessShield.Configuration;
 using ProcessShield.Core;
@@ -100,6 +101,7 @@ public sealed class Composition : IDisposable
             : null;
         var surface = new ApiSurfaceInventory(clock);
         var hashes = new ImageHashCache();
+        var images = new ImageAnalysisCache();
 
         var options = new EngineOptions
         {
@@ -113,6 +115,7 @@ public sealed class Composition : IDisposable
             ScoreDecayInterval = TimeSpan.FromSeconds(cfg.Detection.ScoreDecayIntervalSeconds),
             BeaconScore = cfg.Detection.BeaconScore,
             DgaScore = cfg.Detection.DgaScore,
+            EnableDomainAnalysis = cfg.Detection.EnableDomainAnalysis,
             IntelHitScore = cfg.Intel.HitScore,
             MaxTrackedProcesses = cfg.Detection.MaxTrackedProcesses
         };
@@ -125,7 +128,8 @@ public sealed class Composition : IDisposable
             Rules = ruleHolder.Engine,
             Intel = cfg.Intel.Enabled ? intelHolder.Feed : null,
             Surface = cfg.Api.EnableSurfaceInventory ? surface : null,
-            ImageHash = cfg.Intel.Enabled ? hashes.Sha256 : null
+            ImageHash = cfg.Intel.Enabled ? hashes.Sha256 : null,
+            AnalyzeImage = cfg.Detection.EnablePeAnalysis ? images.Analyze : null
         };
 
         // --- response ------------------------------------------------------------
@@ -162,6 +166,7 @@ public sealed class Composition : IDisposable
         };
 
         host.ExtendedAction = comp.RunExtendedAction;
+        host.ImageAnalyzer = deps.AnalyzeImage;
         comp._configWatcher = ConfigLoader.Watch(configPath, comp.Apply, m => log.Info("config: " + m));
         comp.ConnectMinifilter(cfg);
         comp.StartControlServer(cfg);
@@ -177,10 +182,10 @@ public sealed class Composition : IDisposable
     private static RuleSet LoadRules(DetectionConfig d, Logger log)
     {
         if (!d.EnableRuleEngine) return new RuleSet(Array.Empty<DetectionRule>(), Array.Empty<RuleValidationError>());
-        var dir = SelfTest.Resolve(null, d.RulesPath) ?? ResolvePath(d.RulesPath);
-        if (!Directory.Exists(dir))
+        var dir = ResolveContentDir(d.RulesPath, "rules", log);
+        if (dir is null)
         {
-            log.Info($"rules: '{dir}' not found; running with builtin detections only");
+            log.Info("rules: running with builtin detections only");
             return new RuleSet(Array.Empty<DetectionRule>(), Array.Empty<RuleValidationError>());
         }
         var set = RuleEngine.LoadDirectory(dir, m => log.Info("rules: " + m));
@@ -192,9 +197,65 @@ public sealed class Composition : IDisposable
     private static IocFeed LoadIntel(IntelConfig i, Logger log)
     {
         if (!i.Enabled) return new IocFeed();
-        var dir = SelfTest.Resolve(null, i.FeedPath) ?? ResolvePath(i.FeedPath);
-        if (!Directory.Exists(dir)) return new IocFeed();
+        var dir = ResolveContentDir(i.FeedPath, "intel", log);
+        if (dir is null) return new IocFeed();
         return IocFeed.LoadDirectory(dir, m => log.Info("intel: " + m));
+    }
+
+    /// <summary>
+    /// Resolves a content directory (rule packs, indicator feeds) for the RUNNING agent, and
+    /// logs which directory was chosen so an operator can see what is actually armed.
+    ///
+    /// Unlike <see cref="SelfTest.Resolve"/> this never ascends to parent directories. From
+    /// an installed location such as C:\Program Files\ProcessShield\ an upward walk reaches
+    /// the drive root and other user-writable places, so a standard user could plant a
+    /// rules\detection folder that the SYSTEM-level agent would then load and enforce as
+    /// detection policy. SelfTest keeps the walk deliberately: it is an explicit, offline,
+    /// unprivileged developer tool, not the agent. Dropping it here costs little, because the
+    /// project file copies rules/, Replay/scenarios/ and intel/feeds/ into the output
+    /// directory; a layout that genuinely lives elsewhere needs an absolute path in the
+    /// config, which is the honest way to say so.
+    ///
+    /// An absolute configured path is honoured as written: the config file is trusted input
+    /// that only an administrator can edit. A relative path that escapes the agent directory
+    /// via ".." is refused, because that is the same privilege boundary in disguise.
+    /// </summary>
+    private static string? ResolveContentDir(string configured, string what, Logger log)
+    {
+        if (string.IsNullOrWhiteSpace(configured)) return null;
+
+        string dir;
+        if (Path.IsPathRooted(configured))
+        {
+            dir = Path.GetFullPath(configured);
+        }
+        else
+        {
+            var baseDir = Path.GetFullPath(AppContext.BaseDirectory);
+            dir = Path.GetFullPath(Path.Combine(baseDir, configured));
+            if (!IsUnder(baseDir, dir))
+            {
+                log.Info($"{what}: '{configured}' resolves outside the agent directory; refused");
+                return null;
+            }
+        }
+
+        if (!Directory.Exists(dir))
+        {
+            log.Info($"{what}: '{dir}' not found");
+            return null;
+        }
+        log.Info($"{what}: loading from '{dir}'");
+        return dir;
+    }
+
+    /// <summary>True when <paramref name="candidate"/> is the base directory or sits below it.</summary>
+    private static bool IsUnder(string baseDir, string candidate)
+    {
+        var b = baseDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var c = candidate.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (string.Equals(b, c, StringComparison.OrdinalIgnoreCase)) return true;
+        return c.StartsWith(b + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
     private static Playbook LoadPlaybook(ResponseConfig r, Logger log)
@@ -286,15 +347,23 @@ public sealed class Composition : IDisposable
         var formatter = EventFormatters.Resolve(t.Format);
         bool native = string.Equals(formatter.Name, "native", StringComparison.OrdinalIgnoreCase);
 
+        // Both paths ship relative ("incidents.jsonl", "audit.log"). The console runs from
+        // the install directory, but the Windows Service starts with a working directory of
+        // C:\Windows\System32 -- so an unresolved relative path would drop evidence there and
+        // start a SECOND audit chain unrelated to the console's. Resolve against the binary's
+        // own directory, the way the vault, triage and heartbeat paths already are.
+        var jsonlPath = ResolvePath(t.JsonlPath);
+        var auditPath = ResolvePath(t.AuditPath);
+
         var sinks = new List<IEventSink>
         {
-            native ? new JsonlSink(t.JsonlPath) : new FormattingSink(t.JsonlPath, formatter)
+            native ? new JsonlSink(jsonlPath) : new FormattingSink(jsonlPath, formatter)
         };
 
         // Open the audit log defensively: if its file is genuinely unreadable (locked,
         // permissions), disable the audit sink LOUDLY and keep the agent running rather
         // than crashing startup or silently resetting the tamper-evident chain.
-        try { sinks.Add(new AuditLogSink(t.AuditPath)); }
+        try { sinks.Add(new AuditLogSink(auditPath)); }
         catch (Exception ex) { log.Error("audit log unavailable; audit sink disabled", ex); }
 
         if (t.Syslog.Enabled)
@@ -349,13 +418,15 @@ public sealed class Composition : IDisposable
             // Rules and indicator feeds reload live. The holders are what the engine holds
             // a reference to, so swapping their contents takes effect on the next signal
             // without the engine ever seeing a half-built rule set.
+            // The swap is unconditional: setting enableRuleEngine:false must actually DISARM
+            // the loaded packs. Keeping the previous set when the new one is empty would make
+            // "turn the rule engine off" a silent no-op with the old rules still firing.
             var rules = LoadRules(next.Detection, Log);
-            if (rules.Rules.Count > 0 || next.Detection.EnableRuleEngine)
-            {
-                _ruleHolder.Set(rules);
-                Rules = rules;
-                Log.Info($"rules reloaded: {rules.Rules.Count} active");
-            }
+            _ruleHolder.Set(rules);
+            Rules = rules;
+            Log.Info(next.Detection.EnableRuleEngine
+                ? $"rules reloaded: {rules.Rules.Count} active"
+                : "rules disarmed: enableRuleEngine is off, builtin detections only");
 
             var feed = LoadIntel(next.Intel, Log);
             _intelHolder.Set(feed);
@@ -363,20 +434,97 @@ public sealed class Composition : IDisposable
 
             ApiPolicy = BuildApiPolicy(next.Api.Studio);
 
-            if (!string.Equals(next.Detection.MemoryScanEngine, Config.Detection.MemoryScanEngine, StringComparison.OrdinalIgnoreCase))
-                Log.Info("note: scan-engine change takes effect after restart");
-            if (!string.Equals(next.Telemetry.Format, Config.Telemetry.Format, StringComparison.OrdinalIgnoreCase))
-                Log.Info("note: telemetry format change takes effect after restart");
-            if (next.Api.Control.Enabled != Config.Api.Control.Enabled)
-                Log.Info("note: control-API enable/disable takes effect after restart");
+            // Everything else is consumed once, while the composition is built: sinks, the
+            // control server, the scanner, the vault, the playbook, monitor selection and the
+            // immutable half of EngineOptions. Warning about only a few of those taught
+            // operators to trust a reload that had quietly ignored their edit, so name every
+            // changed restart-only setting in one line.
+            var pending = RestartRequiredChanges(Config, next);
+            if (pending.Count > 0)
+                Log.Info("note: change takes effect after restart: " + string.Join(", ", pending));
 
             Config = next;
         }
         catch (Exception ex) { Log.Error("apply config", ex); }
     }
 
+    /// <summary>
+    /// Names every setting that changed between two configs but is only read while the
+    /// composition is built, so <see cref="Apply"/> can say plainly what a reload did not do.
+    /// The list is maintained by hand against <see cref="Build"/>; anything genuinely
+    /// hot-reloaded (thresholds, autoKill, allowlist, rules, indicator feeds, API Studio
+    /// safety policy, telemetry.enableMetrics, the isolation allowlist and triage output
+    /// path) is deliberately absent.
+    /// </summary>
+    private static List<string> RestartRequiredChanges(ShieldConfig old, ShieldConfig next)
+    {
+        var changed = new List<string>();
+
+        void Text(string name, string? a, string? b)
+        {
+            if (!string.Equals(a ?? "", b ?? "", StringComparison.OrdinalIgnoreCase)) changed.Add(name);
+        }
+        void Flag(string name, bool a, bool b) { if (a != b) changed.Add(name); }
+        void Number(string name, long a, long b) { if (a != b) changed.Add(name); }
+
+        var od = old.Detection; var nd = next.Detection;
+        Text("detection.memoryScanEngine", od.MemoryScanEngine, nd.MemoryScanEngine);
+        Text("detection.yaraRulesPath", od.YaraRulesPath, nd.YaraRulesPath);
+        Flag("detection.kernelBlocking", od.KernelBlocking, nd.KernelBlocking);
+        Flag("detection.enableExtendedMonitors", od.EnableExtendedMonitors, nd.EnableExtendedMonitors);
+        Flag("detection.enableBeaconDetection", od.EnableBeaconDetection, nd.EnableBeaconDetection);
+        Number("detection.beaconMinConnections", od.BeaconMinConnections, nd.BeaconMinConnections);
+        Number("detection.beaconScore", od.BeaconScore, nd.BeaconScore);
+        Number("detection.dgaScore", od.DgaScore, nd.DgaScore);
+        Flag("detection.enableScoreDecay", od.EnableScoreDecay, nd.EnableScoreDecay);
+        Number("detection.scoreDecayPoints", od.ScoreDecayPoints, nd.ScoreDecayPoints);
+        Number("detection.scoreDecayIntervalSeconds", od.ScoreDecayIntervalSeconds, nd.ScoreDecayIntervalSeconds);
+        Number("detection.maxTrackedProcesses", od.MaxTrackedProcesses, nd.MaxTrackedProcesses);
+
+        var ot = old.Telemetry; var nt = next.Telemetry;
+        Text("telemetry.format", ot.Format, nt.Format);
+        Text("telemetry.jsonlPath", ot.JsonlPath, nt.JsonlPath);
+        Text("telemetry.auditPath", ot.AuditPath, nt.AuditPath);
+        Flag("telemetry.syslog.enabled", ot.Syslog.Enabled, nt.Syslog.Enabled);
+        Text("telemetry.syslog.host", ot.Syslog.Host, nt.Syslog.Host);
+        Number("telemetry.syslog.port", ot.Syslog.Port, nt.Syslog.Port);
+        Text("telemetry.syslog.protocol", ot.Syslog.Protocol, nt.Syslog.Protocol);
+        Text("telemetry.syslog.appName", ot.Syslog.AppName, nt.Syslog.AppName);
+        Flag("telemetry.webhook.enabled", ot.Webhook.Enabled, nt.Webhook.Enabled);
+        Text("telemetry.webhook.url", ot.Webhook.Url, nt.Webhook.Url);
+
+        var oi = old.Intel; var ni = next.Intel;
+        // Turning intel OFF does take effect (the reload installs an empty feed); turning it
+        // back ON does not, because the engine was wired with a null indicator source.
+        if (!oi.Enabled && ni.Enabled) changed.Add("intel.enabled");
+        Text("intel.feedPath", oi.FeedPath, ni.FeedPath);
+        Number("intel.hitScore", oi.HitScore, ni.HitScore);
+
+        var orr = old.Response; var nr = next.Response;
+        Flag("response.useEncryptedVault", orr.UseEncryptedVault, nr.UseEncryptedVault);
+        Text("response.quarantineVaultPath", orr.QuarantineVaultPath, nr.QuarantineVaultPath);
+        Text("response.playbookPath", orr.PlaybookPath, nr.PlaybookPath);
+
+        var oc = old.Api.Control; var nc = next.Api.Control;
+        Flag("api.control.enabled", oc.Enabled, nc.Enabled);
+        Text("api.control.address", oc.Address, nc.Address);
+        Number("api.control.port", oc.Port, nc.Port);
+        Text("api.control.token", oc.Token, nc.Token);
+        Flag("api.control.allowActions", oc.AllowActions, nc.AllowActions);
+        Flag("api.enableSurfaceInventory", old.Api.EnableSurfaceInventory, next.Api.EnableSurfaceInventory);
+
+        Text("service.heartbeatPath", old.Service.HeartbeatPath, next.Service.HeartbeatPath);
+        Text("service.serviceName", old.Service.ServiceName, next.Service.ServiceName);
+        Number("service.heartbeatIntervalSeconds",
+            old.Service.HeartbeatIntervalSeconds, next.Service.HeartbeatIntervalSeconds);
+
+        return changed;
+    }
+
+    /// <summary>Verifies the chain the sinks actually write to, so the same path resolution
+    /// used when opening the audit log is used when checking it.</summary>
     public string VerifyAudit()
-        => AuditLogSink.Verify(Config.Telemetry.AuditPath, out var err)
+        => AuditLogSink.Verify(ResolvePath(Config.Telemetry.AuditPath), out var err)
             ? "audit chain intact (local integrity only; an equal-privilege attacker with the key could re-forge it — off-box sinks are the true anchor)"
             : "AUDIT LOG TAMPERED/BROKEN: " + err;
 
@@ -453,6 +601,45 @@ internal sealed class IocFeedHolder
 /// binary on every process start. Bounded, and a hash failure is cached as "unknown" so a
 /// permanently unreadable path is not re-attempted on every signal.
 /// </summary>
+/// <summary>
+/// Caches PE analysis per image path so a machine launching the same binary hundreds of
+/// times parses it once. Bounded, and a parse failure is cached as "nothing to say" so an
+/// unreadable path is not retried on every process start.
+/// </summary>
+internal sealed class ImageAnalysisCache
+{
+    private const int MaxEntries = 2048;
+    private const long MaxFileBytes = 64L * 1024 * 1024;
+
+    private readonly Dictionary<string, FileAnalysis?> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _gate = new();
+
+    public FileAnalysis? Analyze(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        lock (_gate)
+        {
+            if (_cache.TryGetValue(path, out var cached)) return cached;
+        }
+
+        FileAnalysis? result = null;
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.Exists && info.Length <= MaxFileBytes)
+                result = FileAnalyzer.Analyze(path, MaxFileBytes);
+        }
+        catch { result = null; }
+
+        lock (_gate)
+        {
+            if (_cache.Count >= MaxEntries) _cache.Clear();
+            _cache[path] = result;
+        }
+        return result;
+    }
+}
+
 internal sealed class ImageHashCache
 {
     private const int MaxEntries = 4096;

@@ -15,11 +15,21 @@ namespace ProcessShield.Api;
 //    Redaction therefore happens exactly once, in one place. Five independent
 //    renderers reading ApiRunResult directly is five chances to leak a bearer
 //    token into a CI artifact, and the fifth one always gets forgotten.
-//  * Request and response BODIES are never included in any report. Bodies
-//    routinely carry tokens, session identifiers and personal data, and there is
-//    no dependable way to redact an arbitrary body. Size, content type and the
-//    assertion outcomes are reported instead. This is a real loss of debugging
-//    detail and it is the deliberate trade.
+//  * Request and response BODIES are not included. Bodies routinely carry tokens,
+//    session identifiers and personal data, and there is no dependable way to
+//    redact an arbitrary body. Size, content type and the assertion outcomes are
+//    reported instead. This is a real loss of debugging detail and it is the
+//    deliberate trade.
+//  * The one body-derived value a report does show is a CAPTURE. A capture is
+//    pulled out of a response by definition, so it is masked when the variable
+//    name looks like a credential or the environment declares it secret, and is
+//    otherwise truncated to MaxCapturedValueChars. That excerpt can still contain
+//    response data: a report is far safer to share than a raw transcript, not
+//    automatically safe.
+//  * Pass the ApiEnvironment to a renderer and ApiEnvironment.Secrets is honoured
+//    -- the named variables are masked, and literal occurrences of their values are
+//    scrubbed out of URLs, headers and free text. Without the environment the
+//    renderers fall back to the name-shaped heuristic in IsSecretName.
 //  * Reports are pure functions of the result. Nothing reads the wall clock, so
 //    rendering the same result twice produces byte-identical output.
 // ---------------------------------------------------------------------------
@@ -51,12 +61,13 @@ public static class ApiReports
 
     /// <summary>
     /// Machine-readable report. Stable, camelCase, secrets redacted, no bodies.
-    /// Intended for a CI artifact or for diffing two runs.
+    /// Intended for a CI artifact or for diffing two runs. Pass the environment the run
+    /// used so the names in <see cref="ApiEnvironment.Secrets"/> are masked as promised.
     /// </summary>
-    public static string ToJson(ApiRunResult result)
+    public static string ToJson(ApiRunResult result, ApiEnvironment? environment = null)
     {
         ArgumentNullException.ThrowIfNull(result);
-        return JsonSerializer.Serialize(Project(result), JsonOptions);
+        return JsonSerializer.Serialize(Project(result, environment), JsonOptions);
     }
 
     // ------------------------------------------------------------------ JUnit
@@ -67,10 +78,10 @@ public static class ApiReports
     /// first stripped of characters XML 1.0 cannot represent at all (a NUL in a response
     /// header would otherwise make the document unwritable).
     /// </summary>
-    public static string ToJUnitXml(ApiRunResult result)
+    public static string ToJUnitXml(ApiRunResult result, ApiEnvironment? environment = null)
     {
         ArgumentNullException.ThrowIfNull(result);
-        RunReport report = Project(result);
+        RunReport report = Project(result, environment);
 
         int errors = report.Executions.Count(e => !string.IsNullOrEmpty(e.Error));
         int failures = report.Executions.Count(e => string.IsNullOrEmpty(e.Error) && !e.Passed);
@@ -120,6 +131,8 @@ public static class ApiReports
             systemOut.Append("status ").Append(e.StatusCode.ToString(CultureInfo.InvariantCulture));
             if (!string.IsNullOrEmpty(e.ReasonPhrase)) systemOut.Append(' ').Append(e.ReasonPhrase);
             systemOut.Append('\n');
+            foreach (var w in e.Warnings)
+                systemOut.Append("warning ").Append(w).Append('\n');
             foreach (var f in e.Findings)
                 systemOut.Append("finding ").Append(f.Severity).Append(": ").Append(f.Title).Append('\n');
             testcase.Add(new XElement("system-out", new XText(XmlSafe(systemOut.ToString()))));
@@ -143,10 +156,10 @@ public static class ApiReports
     // --------------------------------------------------------------- Markdown
 
     /// <summary>Markdown summary for a pull-request comment or a wiki page.</summary>
-    public static string ToMarkdown(ApiRunResult result)
+    public static string ToMarkdown(ApiRunResult result, ApiEnvironment? environment = null)
     {
         ArgumentNullException.ThrowIfNull(result);
-        RunReport report = Project(result);
+        RunReport report = Project(result, environment);
         var sb = new StringBuilder();
 
         sb.Append("# API run: ").Append(Md(report.Collection)).Append('\n').Append('\n');
@@ -187,6 +200,15 @@ public static class ApiReports
             }
         }
 
+        var warned = report.Executions.Where(e => e.Warnings.Count > 0).ToList();
+        if (warned.Count > 0)
+        {
+            sb.Append("\n## Warnings\n\n");
+            foreach (var e in warned)
+                foreach (var w in e.Warnings)
+                    sb.Append("- ").Append(Md(e.Name)).Append(": ").Append(Md(w)).Append('\n');
+        }
+
         var findings = report.Executions.SelectMany(e => e.Findings).ToList();
         if (findings.Count > 0)
         {
@@ -204,7 +226,8 @@ public static class ApiReports
             }
         }
 
-        sb.Append("\n_Secrets in headers and URLs are redacted; request and response bodies are not included._\n");
+        sb.Append("\n_Secrets in headers and URLs are redacted; request and response bodies are not included. ")
+          .Append("Captured variables are shown as a truncated excerpt of the value._\n");
         return sb.ToString();
     }
 
@@ -215,10 +238,10 @@ public static class ApiReports
     /// it can be opened from an air-gapped analyst workstation or attached to a ticket.
     /// Every interpolated value goes through <see cref="WebUtility.HtmlEncode"/>.
     /// </summary>
-    public static string ToHtml(ApiRunResult result)
+    public static string ToHtml(ApiRunResult result, ApiEnvironment? environment = null)
     {
         ArgumentNullException.ThrowIfNull(result);
-        RunReport report = Project(result);
+        RunReport report = Project(result, environment);
         var sb = new StringBuilder();
 
         sb.Append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n");
@@ -263,6 +286,9 @@ public static class ApiReports
             if (!string.IsNullOrEmpty(e.Error))
                 sb.Append("<p class=\"bad\">transport error: ").Append(H(e.Error)).Append("</p>\n");
 
+            foreach (var w in e.Warnings)
+                sb.Append("<p class=\"warn\">warning: ").Append(H(w)).Append("</p>\n");
+
             if (e.Assertions.Count > 0)
             {
                 sb.Append("<table class=\"inner\"><thead><tr><th>Assertion</th><th>Result</th><th>Detail</th></tr></thead><tbody>\n");
@@ -301,7 +327,8 @@ public static class ApiReports
         }
 
         sb.Append("<p class=\"foot\">Secrets in headers and URLs are redacted. ")
-          .Append("Request and response bodies are deliberately omitted from this report.</p>\n");
+          .Append("Request and response bodies are deliberately omitted from this report; ")
+          .Append("captured variables appear only as a truncated excerpt.</p>\n");
         sb.Append("</body>\n</html>\n");
         return sb.ToString();
     }
@@ -309,10 +336,10 @@ public static class ApiReports
     // ---------------------------------------------------------------- console
 
     /// <summary>Plain text for a terminal or a log file. No ANSI colour, so it stays readable when redirected.</summary>
-    public static string ToConsoleText(ApiRunResult result)
+    public static string ToConsoleText(ApiRunResult result, ApiEnvironment? environment = null)
     {
         ArgumentNullException.ThrowIfNull(result);
-        RunReport report = Project(result);
+        RunReport report = Project(result, environment);
         var sb = new StringBuilder();
 
         sb.Append("API run: ").Append(report.Collection)
@@ -331,6 +358,8 @@ public static class ApiReports
 
             if (!string.IsNullOrEmpty(e.Error))
                 sb.Append("        error: ").Append(e.Error).Append('\n');
+            foreach (var w in e.Warnings)
+                sb.Append("        warning: ").Append(w).Append('\n');
             foreach (var a in e.Assertions.Where(a => !a.Passed))
                 sb.Append("        assertion failed: ").Append(a.Name)
                   .Append(string.IsNullOrEmpty(a.Detail) ? "" : " -- " + a.Detail).Append('\n');
@@ -352,9 +381,13 @@ public static class ApiReports
 
     /// <summary>
     /// The single redaction point. Everything a report can show is produced here.
+    /// <paramref name="environment"/> is optional because an <see cref="ApiRunResult"/>
+    /// does not carry the environment it ran against; when it is supplied,
+    /// <see cref="ApiEnvironment.Secrets"/> is honoured on top of the name heuristic.
     /// </summary>
-    internal static RunReport Project(ApiRunResult result)
+    internal static RunReport Project(ApiRunResult result, ApiEnvironment? environment = null)
     {
+        var mask = new SecretMask(environment);
         var executions = new List<ExecutionReport>(result.Executions.Count);
         int index = 0;
 
@@ -366,28 +399,33 @@ public static class ApiReports
                 Index = index,
                 Name = e.Request.DisplayName,
                 Method = string.IsNullOrWhiteSpace(e.Request.Method) ? "GET" : e.Request.Method,
-                Url = RedactUrl(string.IsNullOrEmpty(e.ResolvedUrl) ? e.Request.Url : e.ResolvedUrl),
+                Url = mask.Scrub(RedactUrl(string.IsNullOrEmpty(e.ResolvedUrl) ? e.Request.Url : e.ResolvedUrl)),
                 StatusCode = e.Response.StatusCode,
                 ReasonPhrase = e.Response.ReasonPhrase,
                 ElapsedMs = Math.Round(e.Response.Elapsed.TotalMilliseconds, 3),
                 BodyBytes = e.Response.BodyBytes,
                 BodyTruncated = e.Response.BodyTruncated,
                 ContentType = e.Response.ContentType,
-                Error = e.Response.Error,
+                Error = mask.Scrub(e.Response.Error),
+                Warnings = e.Response.Warnings.Select(mask.Scrub).ToArray(),
                 Passed = e.Passed,
-                RequestHeaders = RedactHeaders(e.Request.Headers.Where(h => h.Enabled)),
-                ResponseHeaders = RedactHeaders(e.Response.Headers),
-                RedirectChain = e.Response.RedirectChain.Select(RedactUrl).ToArray(),
+                RequestHeaders = RedactHeaders(e.Request.Headers.Where(h => h.Enabled), mask),
+                ResponseHeaders = RedactHeaders(e.Response.Headers, mask),
+                RedirectChain = e.Response.RedirectChain.Select(u => mask.Scrub(RedactUrl(u))).ToArray(),
                 Assertions = e.Assertions.Select(a => new AssertionReport
                 {
                     Name = a.Name,
                     Kind = a.Kind.ToString(),
                     Passed = a.Passed,
-                    Detail = a.Detail
+                    Detail = mask.Scrub(a.Detail)
                 }).ToArray(),
+                // A capture is a slice of the response body, so it is treated as one: masked
+                // by name when the name says credential, otherwise excerpted.
                 Captured = e.Captured.ToDictionary(
                     kv => kv.Key,
-                    kv => IsSecretName(kv.Key) ? RedactionPlaceholder : kv.Value,
+                    kv => IsSecretName(kv.Key) || mask.IsSecretVariable(kv.Key)
+                        ? RedactionPlaceholder
+                        : Excerpt(mask.Scrub(kv.Value)),
                     StringComparer.OrdinalIgnoreCase),
                 Findings = e.Findings.Select(f => new FindingReport
                 {
@@ -395,12 +433,13 @@ public static class ApiReports
                     Title = f.Title,
                     Severity = f.Severity.ToString(),
                     Owasp = f.Owasp,
-                    Detail = f.Detail,
+                    Detail = mask.Scrub(f.Detail),
                     Recommendation = f.Recommendation,
-                    // Evidence is documented as already redacted by the analyzer; it is not
-                    // re-processed here because we cannot tell a snippet from a secret.
-                    Evidence = f.Evidence,
-                    Endpoint = RedactUrl(f.Endpoint)
+                    // Evidence is documented as already redacted by the analyzer; beyond
+                    // scrubbing declared secret values it is not re-processed here, because
+                    // we cannot tell a snippet from a secret.
+                    Evidence = mask.Scrub(f.Evidence),
+                    Endpoint = mask.Scrub(RedactUrl(f.Endpoint))
                 }).ToArray(),
                 Tls = e.Response.Tls is null ? null : new TlsReport
                 {
@@ -439,8 +478,12 @@ public static class ApiReports
         };
     }
 
-    private static IReadOnlyList<HeaderReport> RedactHeaders(IEnumerable<ApiKeyValue> headers) =>
-        headers.Select(h => new HeaderReport { Name = h.Name, Value = RedactHeaderValue(h.Name, h.Value) }).ToArray();
+    private static IReadOnlyList<HeaderReport> RedactHeaders(IEnumerable<ApiKeyValue> headers, SecretMask mask) =>
+        headers.Select(h => new HeaderReport
+        {
+            Name = h.Name,
+            Value = mask.Scrub(RedactHeaderValue(h.Name, h.Value))
+        }).ToArray();
 
     // ------------------------------------------------------------- redaction
 
@@ -460,6 +503,70 @@ public static class ApiReports
             || n.Contains("secret", StringComparison.Ordinal)
             || n.Contains("password", StringComparison.Ordinal)
             || n.Contains("credential", StringComparison.Ordinal);
+    }
+
+    /// <summary>Maximum characters of a captured value any report will show.</summary>
+    internal const int MaxCapturedValueChars = 40;
+
+    /// <summary>
+    /// A captured value is lifted straight out of a response body, so it is shown only as
+    /// a short excerpt. Truncation bounds the damage when a capture grabbed more than the
+    /// operator expected; it does not make the excerpt safe on its own.
+    /// </summary>
+    internal static string Excerpt(string? value)
+    {
+        string v = value ?? "";
+        return v.Length <= MaxCapturedValueChars ? v : v[..MaxCapturedValueChars] + "...[truncated]";
+    }
+
+    /// <summary>
+    /// Applies <see cref="ApiEnvironment.Secrets"/>, which nothing else can: the name test
+    /// in <see cref="IsSecretName"/> only recognises conventionally named credentials, and
+    /// a secret's VALUE reaches a report through text no name test can inspect (a resolved
+    /// URL, an error string, an assertion detail). Values shorter than
+    /// <see cref="MinScrubbableLength"/> are left alone -- substituting a two-character
+    /// secret everywhere it appears would corrupt the whole report and hide nothing.
+    /// </summary>
+    internal sealed class SecretMask
+    {
+        /// <summary>Below this length a secret value is too common a substring to substitute.</summary>
+        internal const int MinScrubbableLength = 6;
+
+        /// <summary>The mask for a report rendered without an environment: names only.</summary>
+        internal static readonly SecretMask None = new(null);
+
+        private readonly ApiEnvironment? _environment;
+        private readonly string[] _values;
+
+        internal SecretMask(ApiEnvironment? environment)
+        {
+            _environment = environment;
+            _values = environment is null
+                ? Array.Empty<string>()
+                : environment.Variables
+                    .Where(kv => environment.IsSecret(kv.Key) && (kv.Value?.Length ?? 0) >= MinScrubbableLength)
+                    .Select(kv => kv.Value)
+                    .Distinct(StringComparer.Ordinal)
+                    // Longest first, then ordinal: a shorter secret that is a substring of a
+                    // longer one must not shred the longer one into a half-masked string, and
+                    // the tie-break keeps output identical across runs.
+                    .OrderByDescending(v => v.Length)
+                    .ThenBy(v => v, StringComparer.Ordinal)
+                    .ToArray();
+        }
+
+        /// <summary>True when the environment declares this variable name secret.</summary>
+        internal bool IsSecretVariable(string? name) =>
+            _environment is not null && !string.IsNullOrEmpty(name) && _environment.IsSecret(name);
+
+        /// <summary>Replaces every literal occurrence of a declared secret value.</summary>
+        internal string Scrub(string? text)
+        {
+            if (string.IsNullOrEmpty(text) || _values.Length == 0) return text ?? "";
+            string s = text;
+            foreach (string v in _values) s = s.Replace(v, RedactionPlaceholder, StringComparison.Ordinal);
+            return s;
+        }
     }
 
     internal static bool IsCookieHeader(string? name) =>
@@ -659,6 +766,7 @@ public static class ApiReports
         td.url { word-break: break-all; max-width: 32rem; }
         .ok { color: #14702f; font-weight: 600; }
         .bad { color: #a11; font-weight: 600; }
+        .warn { color: #8a5a00; font-weight: 600; }
         code { font-family: Consolas, monospace; font-size: .85em; }
         section { border-top: 1px solid #ddd; padding-top: .25rem; }
         .foot { margin-top: 2rem; font-size: .78rem; color: #666; }
@@ -669,12 +777,16 @@ public static class ApiReports
           section { border-color: #334; }
           .ok { color: #4ec97a; }
           .bad { color: #ff7a7a; }
+          .warn { color: #d9a441; }
         }
         """;
 
     // ------------------------------------------------------------ report model
 
-    /// <summary>Redacted, body-free projection of a run. The only thing the renderers see.</summary>
+    /// <summary>
+    /// Redacted projection of a run: no request or response bodies, and captured values
+    /// reduced to a truncated excerpt. The only thing the renderers see.
+    /// </summary>
     internal sealed record RunReport
     {
         public string Collection { get; init; } = "";
@@ -708,6 +820,8 @@ public static class ApiReports
         public bool BodyTruncated { get; init; }
         public string ContentType { get; init; } = "";
         public string Error { get; init; } = "";
+        /// <summary>What the client could not do as configured: dropped or refused headers.</summary>
+        public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
         public bool Passed { get; init; }
         public IReadOnlyList<HeaderReport> RequestHeaders { get; init; } = Array.Empty<HeaderReport>();
         public IReadOnlyList<HeaderReport> ResponseHeaders { get; init; } = Array.Empty<HeaderReport>();

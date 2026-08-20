@@ -233,10 +233,12 @@ public static class MonitorSupport
     /// hijacking is itself an attack technique, so this exclusion is a genuine blind
     /// spot; detecting it needs the response, not the query.</description></item>
     /// <item><description><c>localhost</c> -- loopback.</description></item>
-    /// <item><description>the machine's own name -- a host resolving itself. The
-    /// prefix form (<c>machine.suffix</c>) is only honoured when the machine name is
-    /// at least four characters, so a very short hostname cannot be abused to whitelist
-    /// an attacker-registered domain such as <c>pc.evil.com</c>.</description></item>
+    /// <item><description>the machine's own name -- a host resolving itself. Only the
+    /// bare name, or the name under one of the non-routable suffixes in
+    /// <see cref="LocalHostSuffixes"/>, is dropped; a name that merely BEGINS with the
+    /// machine name is kept. The four-character floor still applies to the suffixed
+    /// form, so a two-letter hostname cannot whitelist <c>pc.lan</c> for everyone on
+    /// the segment.</description></item>
     /// </list>
     /// </summary>
     /// <param name="domain">Name to test; re-normalised defensively.</param>
@@ -256,10 +258,47 @@ public static class MonitorSupport
         string m = NormalizeDomain(machineName);
         if (m.Length == 0) return false;
         if (d == m) return true;
-        if (m.Length >= 4 && d.StartsWith(m + ".", StringComparison.Ordinal)) return true;
+
+        // Deliberately an EXACT match against "<machine>.<local suffix>" and never a
+        // prefix test. DNS tunnelling encodes the source host in the leftmost labels, so
+        // exfiltration from this box looks exactly like "<machine>.<encoded>.evil.com".
+        // A StartsWith(m + ".") test drops every one of those before the scoring engine
+        // ever sees them -- the monitor would be blindest precisely where it matters
+        // most. Requiring the remainder to be a suffix that cannot be delegated in the
+        // public DNS closes that hole while still swallowing the self-lookup noise the
+        // exclusion exists for.
+        if (m.Length < 4 || d.Length <= m.Length || d[m.Length] != '.') return false;
+        if (!d.StartsWith(m, StringComparison.Ordinal)) return false;
+
+        string tail = d[(m.Length + 1)..];
+        foreach (string suffix in LocalHostSuffixes)
+            if (string.Equals(tail, suffix, StringComparison.Ordinal)) return true;
 
         return false;
     }
+
+    /// <summary>
+    /// Parent zones that may follow the machine's own short name and still count as "this
+    /// host looking itself up". Every entry is either reserved for local use or is not
+    /// delegated in the public DNS, so none of them can be registered by an attacker and
+    /// turned into an exfiltration channel. Anything else after the machine name -- most
+    /// importantly a real registrable domain -- is left for the engine to score.
+    ///
+    /// <c>local</c> is listed for completeness even though mDNS names are already dropped
+    /// by the <c>.local</c> rule above; keeping it here means the two rules can be changed
+    /// independently without opening a gap.
+    /// </summary>
+    private static readonly string[] LocalHostSuffixes =
+    {
+        "local",
+        "localdomain",
+        "lan",
+        "home",
+        "home.arpa",
+        "internal",
+        "intranet",
+        "workgroup"
+    };
 
     // ------------------------------------------------------------------- pipes
 

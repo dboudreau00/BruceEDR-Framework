@@ -7,6 +7,16 @@ namespace ProcessShield.Core;
 /// Thread-safe console writer plus a fan-out to a structured event sink (JSONL,
 /// syslog, webhook, audit). Console writes are serialised; colour is skipped when
 /// output is redirected. The sink is swappable for hot-reload.
+///
+/// Every level except <see cref="Raw"/> reaches the sink. That matters because under the
+/// Windows Service host there is no console at all: if <see cref="Info"/> and
+/// <see cref="Error"/> only wrote to stdout, startup failures, monitors that refused to
+/// start, and the generated control-plane bearer token would be lost with no trace.
+/// <see cref="Raw"/> stays console-only on purpose -- it echoes interactive analyst-console
+/// output that is already derived from events the sink has seen.
+///
+/// LIMITATION: sink failures are swallowed, so a broken sink degrades to console-only
+/// silently. Anything that must not be lost also needs an off-box sink (syslog/webhook).
 /// </summary>
 public sealed class Logger
 {
@@ -17,7 +27,13 @@ public sealed class Logger
 
     public void SetSink(IEventSink? sink) => _sink = sink;
 
-    public void Info(string message) => WriteLine(ConsoleColor.Gray, "[*] " + message);
+    public void Info(string message)
+    {
+        WriteLine(ConsoleColor.Gray, "[*] " + message);
+        Emit(new ShieldEvent { Level = "INFO", Category = "system", Message = message });
+    }
+
+    /// <summary>Console-only echo for interactive analyst-console output. Not forwarded.</summary>
     public void Raw(string text) { lock (_gate) { SafeWrite(text); } }
 
     public void Action(string message)
@@ -27,7 +43,11 @@ public sealed class Logger
     }
 
     public void Error(string context, Exception ex)
-        => WriteLine(ConsoleColor.Magenta, $"[ERR] {context}: {ex.GetType().Name}: {ex.Message}");
+    {
+        string message = $"{context}: {ex.GetType().Name}: {ex.Message}";
+        WriteLine(ConsoleColor.Magenta, "[ERR] " + message);
+        Emit(new ShieldEvent { Level = "ERROR", Category = "system", Message = message });
+    }
 
     public void Warn(DetectionResult d)
     {
@@ -66,6 +86,8 @@ public sealed class Logger
         };
     }
 
+    // Deliberately swallows everything and never calls back into Info/Error: a sink that
+    // throws on every event would otherwise recurse forever now that errors are forwarded.
     private void Emit(ShieldEvent e)
     {
         var sink = _sink;

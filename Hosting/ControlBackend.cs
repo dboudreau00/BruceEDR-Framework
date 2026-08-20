@@ -42,7 +42,10 @@ internal sealed class ControlBackend : IControlBackend
             detectionRules = _composition.Rules.Rules.Count,
             ruleErrors = _composition.Rules.Errors.Count(e => e.IsBlocking),
             indicators = _composition.Intel.Count,
-            surfaceEndpoints = _composition.Surface.Count,
+            // ApiSurfaceInventory is owner-thread-only; read its size through the same
+            // owner-thread query the /surface route uses rather than touching the field
+            // from this HTTP handler thread.
+            surfaceEndpoints = host.SurfaceEndpoints().Count,
             vaultEnabled = _composition.Vault is not null,
             isolationActive = _composition.Isolation.State.Active,
             signals = m.Signals,
@@ -69,7 +72,16 @@ internal sealed class ControlBackend : IControlBackend
     public string Surface()
         => JsonSerializer.Serialize(_composition.Host.SurfaceEndpoints(), Json);
 
-    public string Metrics() => _composition.Host.Metrics.ToPrometheusText();
+    /// <summary>
+    /// Prometheus exposition for the /metrics route. When telemetry.enableMetrics is off the
+    /// route stays reachable (the control server owns routing) but exposes no series, so an
+    /// operator who turned metrics off does not keep publishing them. The switch is read per
+    /// request, which makes it hot-reloadable.
+    /// </summary>
+    public string Metrics()
+        => _composition.Config.Telemetry.EnableMetrics
+            ? _composition.Host.Metrics.ToPrometheusText()
+            : "# metrics disabled by configuration (telemetry.enableMetrics=false)\n";
 
     public string Events(int limit) => _composition.Events.RecentJson(limit);
 

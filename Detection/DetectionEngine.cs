@@ -1,3 +1,4 @@
+using ProcessShield.Analysis;
 using ProcessShield.Api;
 using ProcessShield.Core;
 using ProcessShield.Intel;
@@ -24,6 +25,8 @@ public sealed class EngineOptions
     public int BeaconScore { get; init; } = 35;
     /// <summary>Points added for a DNS name that scores as likely DGA or a DNS tunnel.</summary>
     public int DgaScore { get; init; } = 25;
+    /// <summary>Run DGA / dynamic-DNS / tunnelling analysis on resolved names.</summary>
+    public bool EnableDomainAnalysis { get; init; } = true;
     /// <summary>Points added when an indicator feed matches the process image, a domain or an address.</summary>
     public int IntelHitScore { get; init; } = 60;
 
@@ -57,6 +60,13 @@ public sealed class EngineDependencies
     /// treats a null result as "not known yet" rather than blocking.
     /// </summary>
     public Func<string, string?>? ImageHash { get; init; }
+
+    /// <summary>
+    /// Parses a process image (PE sections, entropy, imphash, packer indicators, suspicious
+    /// imports). Reads up to tens of megabytes, so ShieldHost runs it on the response worker
+    /// and folds the result back in -- never on the detection thread.
+    /// </summary>
+    public Func<string, FileAnalysis?>? AnalyzeImage { get; init; }
 }
 
 public sealed class DetectionResult
@@ -210,6 +220,25 @@ public sealed class DetectionEngine
         return true;
     }
 
+    /// <summary>
+    /// Clears the Contained flag after containment was attempted and FAILED.
+    ///
+    /// Contained is set the moment a Quarantine verdict is emitted, because it is what stops
+    /// the same verdict firing on every subsequent signal. But if the suspend then fails --
+    /// access denied, a protected process, a PID that already exited -- leaving the flag set
+    /// permanently downgrades that process to log-only: every later Quarantine is swallowed
+    /// and it is never contained again. ShieldHost calls this so a later signal can re-escalate.
+    /// </summary>
+    public bool MarkContainmentFailed(int pid)
+    {
+        if (!_profiles.TryGetValue(pid, out var p)) return false;
+        if (!p.Contained) return false;
+        p.Contained = false;
+        // Re-arm the reporting gate too, otherwise the retry is suppressed as a duplicate.
+        p.ReportedTechniques = 0;
+        return true;
+    }
+
     public bool SetTerminated(int pid)
     {
         if (!_profiles.TryGetValue(pid, out var p)) return false;
@@ -277,11 +306,18 @@ public sealed class DetectionEngine
         string file = (s.FilePath ?? "").ToLowerInvariant();
         if (file.Length == 0) return;
 
-        if (IocDatabase.SensitiveFileFragments.Any(file.Contains))
+        // Match the SPECIFIC secret artifact, never the whole profile directory, skip the
+        // application that owns the store, and score each distinct artifact at most once per
+        // process. Without all three of these, a browser starting up on a clean machine
+        // scored 35 per file under its own User Data folder and crossed the quarantine
+        // threshold in milliseconds -- suspending and firewall-blocking the user's browser.
+        string? artifact = FirstMatch(IocDatabase.CredentialArtifacts, file);
+        if (artifact is not null && !OwnsCredentialStore(p.ProcessName, file)
+            && p.FiredOnce.Add("credstore:" + artifact))
         {
             p.CredentialAccessUtc = s.TimestampUtc;
-            Score(p, 35, "Touched sensitive credential/secret store", "builtin-credential-store",
-                  Tech("T1555.003", "T1539"), s.TimestampUtc);
+            Score(p, 35, $"Touched sensitive credential/secret store ({artifact})",
+                  "builtin-credential-store", Tech("T1555.003", "T1539"), s.TimestampUtc);
         }
 
         string ext = Path.GetExtension(file);
@@ -349,6 +385,8 @@ public sealed class DetectionEngine
         string domain = (s.Domain ?? "").Trim().ToLowerInvariant();
         if (domain.Length == 0) return;
         if (!p.Domains.Add(domain)) return;   // score each distinct name once per process
+
+        if (!_opt.EnableDomainAnalysis) return;
 
         var verdict = DomainAnalysis.Analyze(domain);
 
@@ -424,6 +462,9 @@ public sealed class DetectionEngine
 
         var ctx = new RuleContext
         {
+            // Carried from the profile because most signal kinds have no process name of
+            // their own; without it every processName exclusion in a rule pack is inert.
+            ProcessName = p.ProcessName,
             ParentName = _profiles.TryGetValue(p.ParentPid, out var parent) ? parent.ProcessName : "",
             Ancestry = _deps.Tree is null
                 ? Array.Empty<string>()
@@ -497,6 +538,9 @@ public sealed class DetectionEngine
 
         foreach (var p in _profiles.Values)
         {
+            // An exited process cannot be contained, and acting on its PID risks hitting
+            // whatever process Windows has since given that number to.
+            if (p.Exited || p.Terminated) continue;
             if (p.Score <= 0 || p.Contained) continue;
             if (now - p.LastUpdatedUtc > _window) continue;
 
@@ -521,6 +565,53 @@ public sealed class DetectionEngine
         if (p.MemoryScanned || p.Score < _scanAt) return false;
         p.MemoryScanned = true;
         return true;
+    }
+
+    /// <summary>
+    /// Owner-thread only. Returns true at most once per process, when its image is first
+    /// known. The caller runs the (disk-bound) PE parse off the detection thread and folds
+    /// the result back through <see cref="ApplyImageAnalysis"/>.
+    /// </summary>
+    public bool TryClaimImageAnalysis(int pid, out string imagePath)
+    {
+        imagePath = "";
+        if (_deps.AnalyzeImage is null) return false;
+        if (!_profiles.TryGetValue(pid, out var p)) return false;
+        if (p.ImageAnalyzed || string.IsNullOrEmpty(p.ImagePath)) return false;
+        p.ImageAnalyzed = true;
+        imagePath = p.ImagePath;
+        return true;
+    }
+
+    /// <summary>
+    /// Owner-thread only. Scores static properties of the process image.
+    ///
+    /// Scored conservatively and deliberately below the quarantine threshold: packing is
+    /// common in legitimate installers and protected commercial software, and an
+    /// injection-capable import set describes debuggers and AV as accurately as it does
+    /// malware. These are corroborating signals, not verdicts.
+    /// </summary>
+    public IReadOnlyList<DetectionResult> ApplyImageAnalysis(int pid, FileAnalysis analysis)
+    {
+        var results = new List<DetectionResult>();
+        if (analysis is null || !analysis.Valid || !analysis.IsPeFile) return results;
+        if (!_profiles.TryGetValue(pid, out var p)) return results;
+
+        var now = _clock.UtcNow;
+
+        if (analysis.PackerIndicators.Count > 0 && p.FiredOnce.Add("pe-packed"))
+            Score(p, 20, "Image looks packed or obfuscated: " +
+                         string.Join(", ", analysis.PackerIndicators.Take(3)),
+                  "builtin-pe-packed", Tech("T1027.002"), now);
+
+        if (analysis.SuspiciousImports.Count >= 3 && p.FiredOnce.Add("pe-imports"))
+            Score(p, 15, "Image imports an injection/credential-access API set: " +
+                         string.Join(", ", analysis.SuspiciousImports.Take(4)),
+                  "builtin-pe-imports", Tech("T1055"), now);
+
+        var r = Decide(p, "ImageAnalysis", now);
+        if (r is not null) results.Add(r);
+        return results;
     }
 
     /// <summary>
@@ -579,6 +670,16 @@ public sealed class DetectionEngine
                   : Verdict.Allow;
 
         if (v == Verdict.Allow) return null;
+
+        // Warn is one-shot per escalation, like Quarantine. Previously EVERY signal from a
+        // process already above the warn threshold emitted a fresh Warn, so one noisy
+        // process produced thousands of duplicate alerts and drowned the event feed. A new
+        // Warn is only interesting when fresh evidence (a new technique) has arrived.
+        if (v == Verdict.Warn)
+        {
+            if (p.WarnRaised && p.Techniques.Count <= p.ReportedTechniques) return null;
+            p.WarnRaised = true;
+        }
 
         if (v == Verdict.Quarantine && p.Contained)
         {
@@ -730,6 +831,31 @@ public sealed class DetectionEngine
     }
 
     private static string[] Tech(params string[] ids) => ids;
+
+    /// <summary>First fragment of <paramref name="set"/> contained in the already-lowercased
+    /// <paramref name="haystack"/>, or null. Returned so the alert can name what matched.</summary>
+    private static string? FirstMatch(string[] set, string haystack)
+    {
+        foreach (var f in set)
+            if (haystack.Contains(f, StringComparison.Ordinal)) return f;
+        return null;
+    }
+
+    /// <summary>
+    /// True when this process is the application that legitimately owns the credential store
+    /// it just touched -- Chrome reading Chrome's own Login Data. Name-based, so it is a
+    /// false-positive suppressor rather than a security boundary; the Authenticode trust
+    /// check is what separates the real browser from something merely named like it.
+    /// </summary>
+    private static bool OwnsCredentialStore(string processName, string lowerFilePath)
+    {
+        if (string.IsNullOrEmpty(processName)) return false;
+        foreach (var (proc, fragment) in IocDatabase.CredentialStoreOwners)
+            if (string.Equals(processName, proc, StringComparison.OrdinalIgnoreCase)
+                && lowerFilePath.Contains(fragment, StringComparison.Ordinal))
+                return true;
+        return false;
+    }
 
     private static string[] CommandLineTechniques(string ioc) => ioc switch
     {

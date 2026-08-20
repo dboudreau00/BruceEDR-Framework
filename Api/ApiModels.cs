@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 
 namespace ProcessShield.Api;
@@ -253,13 +254,22 @@ public sealed record ApiCollection
 
 /// <summary>
 /// A named set of variables (dev / staging / prod). Names listed in
-/// <see cref="Secrets"/> are masked in every report and export.
+/// <see cref="Secrets"/> are masked by <see cref="ApiReports"/> -- but only when the
+/// environment is passed to the renderer, because an <see cref="ApiRunResult"/> does not
+/// carry the environment it was produced with. A report rendered without it falls back
+/// to the name-shaped heuristic and cannot know about an oddly named secret.
 /// </summary>
 public sealed record ApiEnvironment
 {
     public string Name { get; init; } = "default";
     public IReadOnlyDictionary<string, string> Variables { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Variable names whose values are credentials. When the environment reaches a
+    /// report, both the named variable and any literal occurrence of its value are
+    /// replaced by the redaction placeholder. Values shorter than a few characters are
+    /// left alone: substituting them everywhere would corrupt unrelated text.
+    /// </summary>
     public IReadOnlyCollection<string> Secrets { get; init; } = Array.Empty<string>();
 
     public bool IsSecret(string name) =>
@@ -304,6 +314,13 @@ public sealed record ApiResponse
     public IReadOnlyList<string> RedirectChain { get; init; } = Array.Empty<string>();
     public TlsInfo? Tls { get; init; }
     public string Error { get; init; } = "";
+    /// <summary>
+    /// Non-fatal facts about how the exchange was really performed: headers the HTTP
+    /// stack refused to put on the wire, credentials dropped on a cross-origin redirect.
+    /// Empty on a clean exchange. This exists so a report cannot claim a header was sent
+    /// when it never was.
+    /// </summary>
+    public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
     public DateTime StartedUtc { get; init; }
 
     public bool Completed => string.IsNullOrEmpty(Error);
@@ -437,11 +454,47 @@ public sealed record ApiSafetyPolicy
             return "plain http is blocked: enable allowInsecureHttp or use https";
 
         if (AllowedHosts.Contains("*")) return null;
-        bool hostOk = AllowedHosts.Any(h =>
-            string.Equals(h, uri.Host, StringComparison.OrdinalIgnoreCase) ||
-            (h.StartsWith("*.", StringComparison.Ordinal) &&
-             uri.Host.EndsWith(h[1..], StringComparison.OrdinalIgnoreCase)));
+
+        string host = NormalizeHost(uri.Host);
+        bool hostOk = AllowedHosts.Any(h => HostMatches(h, host));
 
         return hostOk ? null : $"host '{uri.Host}' is not in the API allowlist";
+    }
+
+    /// <summary>
+    /// Matches one allowlist entry against an already-normalised host. Both sides are
+    /// normalised because <see cref="Uri.Host"/> keeps the brackets around an IPv6
+    /// literal ("[::1]") while a human writes the entry without them, and without this
+    /// the shipped "::1" entry could never match. Addresses are compared as parsed
+    /// <see cref="IPAddress"/> values so "::1" and "0:0:0:0:0:0:0:1" are one host.
+    /// Wildcards stay textual: a suffix match is meaningless for an address literal.
+    /// </summary>
+    private static bool HostMatches(string? entry, string host)
+    {
+        string e = NormalizeHost(entry ?? "");
+        if (e.Length == 0) return false;
+
+        if (e.StartsWith("*.", StringComparison.Ordinal))
+            return host.EndsWith(e[1..], StringComparison.OrdinalIgnoreCase);
+
+        if (string.Equals(e, host, StringComparison.OrdinalIgnoreCase)) return true;
+
+        return IPAddress.TryParse(e, out IPAddress? left) &&
+               IPAddress.TryParse(host, out IPAddress? right) &&
+               left.Equals(right);
+    }
+
+    /// <summary>
+    /// Strips what a host string carries but a comparison must ignore: the brackets
+    /// around an IPv6 literal, an IPv6 zone index, and the root's trailing dot.
+    /// </summary>
+    private static string NormalizeHost(string? host)
+    {
+        string h = (host ?? "").Trim();
+        if (h.Length >= 2 && h[0] == '[' && h[^1] == ']') h = h[1..^1];
+        int zone = h.IndexOf('%');
+        if (zone > 0) h = h[..zone];
+        if (h.Length > 1 && h[^1] == '.') h = h[..^1];
+        return h;
     }
 }

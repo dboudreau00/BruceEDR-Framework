@@ -22,6 +22,14 @@ namespace ProcessShield.Api;
 //  * The safety policy is consulted before a socket is opened, and again for
 //    every redirect hop, because a redirect is an attacker-controlled way to
 //    move the request to a host the operator never allowed.
+//  * Credentials do not cross an origin boundary. When a redirect moves the
+//    request to a different scheme/host/port, the Authorization,
+//    Proxy-Authorization, Cookie and api-key headers are left behind and the drop
+//    is reported in ApiResponse.Warnings. Replaying them is how a hostile endpoint
+//    turns a 302 into a token harvest; curl --location behaves the same way.
+//  * Headers the HTTP stack refuses to send are recorded in the same Warnings
+//    list rather than vanishing, so a report cannot claim a header was on the wire
+//    when it was not.
 //  * Nothing here mutates global state (no cookie container, no shared handler
 //    configuration), so two concurrent sends cannot contaminate each other.
 // ---------------------------------------------------------------------------
@@ -128,6 +136,22 @@ public sealed class ApiClient : IApiClient
         var tls = new TlsCapture();
         var chain = new List<string>();
 
+        // Warnings describe the gap between what was configured and what was sent.
+        var warnings = new List<string>();
+        var droppedHeaders = new List<string>();
+        IReadOnlyList<string> credentialHeaders = CrossOriginCredentialHeaders(resolved);
+        bool credentialsDropped = false;
+
+        IReadOnlyList<string> CollectWarnings()
+        {
+            if (droppedHeaders.Count == 0) return warnings.ToArray();
+            var all = new List<string>(warnings)
+            {
+                "header(s) rejected by the HTTP stack and never sent: " + string.Join(", ", droppedHeaders)
+            };
+            return all.ToArray();
+        }
+
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
@@ -156,7 +180,21 @@ public sealed class ApiClient : IApiClient
         {
             for (int hop = 0; ; hop++)
             {
-                using var message = BuildMessage(method, current, resolved, payload, bodyContentType, boundary, sendBody);
+                // Credentials are scoped to the origin the operator typed. Replaying them to
+                // wherever a Location header points hands the bearer token to whoever controls
+                // the endpoint, so they are dropped once the request leaves that origin -- and
+                // stay dropped, because the comparison is always against the original URI.
+                bool crossOrigin = !SameOrigin(uri, current);
+                if (crossOrigin && !credentialsDropped && credentialHeaders.Count > 0)
+                {
+                    credentialsDropped = true;
+                    warnings.Add($"credentials were not replayed across the redirect to " +
+                                 $"{current.GetLeftPart(UriPartial.Authority)}: " +
+                                 string.Join(", ", credentialHeaders) + " dropped");
+                }
+
+                using var message = BuildMessage(method, current, resolved, payload, bodyContentType, boundary,
+                                                 sendBody, crossOrigin ? credentialHeaders : null, droppedHeaders);
 
                 response?.Dispose();
                 response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, linked.Token)
@@ -188,7 +226,7 @@ public sealed class ApiClient : IApiClient
                     chain.Add(next.AbsoluteUri);
                     return Fail(started, sw,
                         $"blocked by API safety policy: redirect to '{next}' refused ({hopRefusal})",
-                        current.AbsoluteUri, tls.Build(), chain);
+                        current.AbsoluteUri, tls.Build(), chain, CollectWarnings());
                 }
 
                 current = next;
@@ -210,26 +248,30 @@ public sealed class ApiClient : IApiClient
                 FinalUrl = finalUrl,
                 RedirectChain = chain.Count > 1 ? chain.ToArray() : Array.Empty<string>(),
                 Tls = tls.Build(),
+                Warnings = CollectWarnings(),
                 StartedUtc = started
             };
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
-            return Fail(started, sw, $"timed out after {timeoutSeconds}s", current.AbsoluteUri, tls.Build(), chain);
+            return Fail(started, sw, $"timed out after {timeoutSeconds}s", current.AbsoluteUri, tls.Build(), chain,
+                        CollectWarnings());
         }
         catch (OperationCanceledException)
         {
             // Caller-initiated cancellation. Reported, not thrown, so a partial collection
             // run still has a complete record of what happened to this request.
-            return Fail(started, sw, "canceled", current.AbsoluteUri, tls.Build(), chain);
+            return Fail(started, sw, "canceled", current.AbsoluteUri, tls.Build(), chain, CollectWarnings());
         }
         catch (HttpRequestException ex)
         {
-            return Fail(started, sw, "request failed: " + Flatten(ex), current.AbsoluteUri, tls.Build(), chain);
+            return Fail(started, sw, "request failed: " + Flatten(ex), current.AbsoluteUri, tls.Build(), chain,
+                        CollectWarnings());
         }
         catch (Exception ex)
         {
-            return Fail(started, sw, "request failed: " + Flatten(ex), current.AbsoluteUri, tls.Build(), chain);
+            return Fail(started, sw, "request failed: " + Flatten(ex), current.AbsoluteUri, tls.Build(), chain,
+                        CollectWarnings());
         }
         finally
         {
@@ -309,6 +351,52 @@ public sealed class ApiClient : IApiClient
 
     /// <summary>Status codes that carry a Location we are willing to follow.</summary>
     internal static bool IsRedirect(int status) => status is 301 or 302 or 303 or 307 or 308;
+
+    /// <summary>
+    /// Same scheme, host and port. Uri.Host renders an IPv6 literal identically on both
+    /// sides, so an ordinal comparison is enough here; no normalisation is needed.
+    /// </summary>
+    internal static bool SameOrigin(Uri a, Uri b) =>
+        string.Equals(a.Scheme, b.Scheme, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(a.Host, b.Host, StringComparison.OrdinalIgnoreCase) &&
+        a.Port == b.Port;
+
+    /// <summary>
+    /// The credential-bearing headers this request would actually put on the wire. Only
+    /// these are withheld on a cross-origin redirect, and only these are named in the
+    /// warning, so a report never claims a header was dropped that was never there.
+    /// An api key carried in the query string is not covered: it lives in the URL the
+    /// operator wrote, and a redirect target supplies its own URL.
+    /// </summary>
+    internal static IReadOnlyList<string> CrossOriginCredentialHeaders(ApiRequest request)
+    {
+        var names = new List<string>();
+
+        void Add(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return;
+            string n = name.Trim();
+            foreach (string existing in names)
+                if (string.Equals(existing, n, StringComparison.OrdinalIgnoreCase)) return;
+            names.Add(n);
+        }
+
+        foreach (var h in request.Headers)
+        {
+            if (!h.Enabled || string.IsNullOrWhiteSpace(h.Name)) continue;
+            if (IsCredentialHeaderName(h.Name)) Add(h.Name);
+        }
+
+        if (request.Auth.AuthorizationHeader() is not null) Add("Authorization");
+        if (request.Auth.Kind == ApiAuthKind.ApiKeyHeader) Add(request.Auth.KeyName);
+
+        return names;
+    }
+
+    private static bool IsCredentialHeaderName(string name) =>
+        string.Equals(name, "Authorization", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(name, "Proxy-Authorization", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(name, "Cookie", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Method and body for the next hop. 303 always downgrades to GET; 301/302 downgrade
@@ -525,11 +613,35 @@ public sealed class ApiClient : IApiClient
 
     // -------------------------------------------------------------- message
 
+    /// <summary>
+    /// Builds one hop's message. <paramref name="suppressed"/> names headers that must not
+    /// be sent to this destination (cross-origin credentials); <paramref name="dropped"/>
+    /// collects the names the HTTP stack itself refused, which would otherwise disappear
+    /// without trace and leave a report describing a header that never travelled.
+    /// </summary>
     private static HttpRequestMessage BuildMessage(string method, Uri uri, ApiRequest request,
                                                    byte[]? payload, string bodyContentType,
-                                                   string boundary, bool sendBody)
+                                                   string boundary, bool sendBody,
+                                                   IReadOnlyList<string>? suppressed = null,
+                                                   ICollection<string>? dropped = null)
     {
         var message = new HttpRequestMessage(new HttpMethod(method), uri);
+
+        bool IsSuppressed(string? name)
+        {
+            if (suppressed is null || string.IsNullOrEmpty(name)) return false;
+            foreach (string s in suppressed)
+                if (string.Equals(s, name, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        void Drop(string name)
+        {
+            if (dropped is null) return;
+            foreach (string d in dropped)
+                if (string.Equals(d, name, StringComparison.OrdinalIgnoreCase)) return;
+            dropped.Add(name);
+        }
 
         HttpContent? content = null;
         if (sendBody && payload is not null)
@@ -556,24 +668,31 @@ public sealed class ApiClient : IApiClient
         {
             if (!h.Enabled || string.IsNullOrWhiteSpace(h.Name)) continue;
             if (string.Equals(h.Name, "Content-Type", StringComparison.OrdinalIgnoreCase)) continue; // set above
+            if (IsSuppressed(h.Name)) continue;
             if (ContentHeaders.Contains(h.Name))
             {
-                content?.Headers.TryAddWithoutValidation(h.Name, h.Value);
+                // A content header with no body has nothing to attach to, and TryAdd on a
+                // null content is a silent no-op unless it is recorded here.
+                if (content is null) { Drop(h.Name); continue; }
+                if (!content.Headers.TryAddWithoutValidation(h.Name, h.Value)) Drop(h.Name);
                 continue;
             }
-            message.Headers.TryAddWithoutValidation(h.Name, h.Value);
+            if (!message.Headers.TryAddWithoutValidation(h.Name, h.Value)) Drop(h.Name);
         }
 
         // An explicit Authorization header the operator typed wins over the auth block:
         // the header is the more specific statement of intent.
         string? authorization = request.Auth.AuthorizationHeader();
-        if (authorization is not null && FindHeader(request.Headers, "Authorization") is null)
-            message.Headers.TryAddWithoutValidation("Authorization", authorization);
+        if (authorization is not null && FindHeader(request.Headers, "Authorization") is null && !IsSuppressed("Authorization"))
+        {
+            if (!message.Headers.TryAddWithoutValidation("Authorization", authorization)) Drop("Authorization");
+        }
 
         if (request.Auth.Kind == ApiAuthKind.ApiKeyHeader && !string.IsNullOrWhiteSpace(request.Auth.KeyName) &&
-            FindHeader(request.Headers, request.Auth.KeyName) is null)
+            FindHeader(request.Headers, request.Auth.KeyName) is null && !IsSuppressed(request.Auth.KeyName))
         {
-            message.Headers.TryAddWithoutValidation(request.Auth.KeyName, request.Auth.KeyValue);
+            if (!message.Headers.TryAddWithoutValidation(request.Auth.KeyName, request.Auth.KeyValue))
+                Drop(request.Auth.KeyName);
         }
 
         message.Content = content;
@@ -680,7 +799,8 @@ public sealed class ApiClient : IApiClient
     }
 
     private static ApiResponse Fail(DateTime started, Stopwatch sw, string error, string url = "",
-                                    TlsInfo? tls = null, IReadOnlyList<string>? chain = null)
+                                    TlsInfo? tls = null, IReadOnlyList<string>? chain = null,
+                                    IReadOnlyList<string>? warnings = null)
     {
         sw.Stop();
         return new ApiResponse
@@ -691,7 +811,8 @@ public sealed class ApiClient : IApiClient
             StartedUtc = started,
             FinalUrl = url,
             Tls = tls,
-            RedirectChain = chain is { Count: > 1 } ? chain.ToArray() : Array.Empty<string>()
+            RedirectChain = chain is { Count: > 1 } ? chain.ToArray() : Array.Empty<string>(),
+            Warnings = warnings ?? Array.Empty<string>()
         };
     }
 

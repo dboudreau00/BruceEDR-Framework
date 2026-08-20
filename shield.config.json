@@ -20,6 +20,7 @@
     "beaconMinConnections": 6,
     "beaconScore": 35,
 
+    "enablePeAnalysis": true,
     "enableDomainAnalysis": true,
     "dgaScore": 25,
 
@@ -42,7 +43,6 @@
     "useEncryptedVault": true,
     "quarantineVaultPath": "quarantine",
     "playbookPath": "",
-    "collectTriageOnContain": false,
     "triageOutputPath": "triage",
     "isolationAllowlist": []
   },
@@ -60,8 +60,7 @@
       "allowMutatingMethods": false,
       "allowInsecureHttp": false,
       "maxRequestsPerSecond": 5.0,
-      "maxResponseBytes": 8388608,
-      "workspacePath": "apistudio"
+      "maxResponseBytes": 8388608
     }
   },
   "telemetry": {

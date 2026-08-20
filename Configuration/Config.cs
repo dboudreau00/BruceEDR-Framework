@@ -66,11 +66,24 @@ public sealed class DetectionConfig
     public bool EnableScoreDecay { get; set; } = true;
 
     public bool EnableBeaconDetection { get; set; } = true;
+
+    /// <summary>
+    /// Statically analyse each process image (PE sections, entropy, imphash, packer
+    /// indicators, suspicious imports). Runs off the detection thread and is cached per
+    /// path, but it does read the binary, so it can be turned off on IO-constrained hosts.
+    /// </summary>
+    public bool EnablePeAnalysis { get; set; } = true;
+
+    /// <summary>
+    /// Score resolved DNS names for DGA, dynamic-DNS and tunnelling shape. Turn off if the
+    /// heuristic is noisy against your estate's CDN or cloud hostnames -- it scores, it does
+    /// not convict, but on some fleets it scores often.
+    /// </summary>
+    public bool EnableDomainAnalysis { get; set; } = true;
     public int BeaconMinConnections { get; set; } = 6;
     /// <summary>Score added once when a process is judged to be beaconing.</summary>
     public int BeaconScore { get; set; } = 35;
 
-    public bool EnableDomainAnalysis { get; set; } = true;
     /// <summary>Score added for a domain that scores as likely DGA.</summary>
     public int DgaScore { get; set; } = 25;
 
@@ -101,8 +114,7 @@ public sealed class ResponseConfig
     public string QuarantineVaultPath { get; set; } = "quarantine";
     /// <summary>Path to a JSON playbook. Empty uses the built-in default playbook.</summary>
     public string PlaybookPath { get; set; } = "";
-    /// <summary>Collect a forensic triage zip when a process is contained.</summary>
-    public bool CollectTriageOnContain { get; set; } = false;
+    /// <summary>Where CollectTriage playbook actions write their forensic zip.</summary>
     public string TriageOutputPath { get; set; } = "triage";
     /// <summary>Addresses that stay reachable when the host is isolated (management/RDP/AD).</summary>
     public string[] IsolationAllowlist { get; set; } = Array.Empty<string>();
@@ -139,8 +151,6 @@ public sealed class ApiStudioConfig
     public bool AllowInsecureHttp { get; set; } = false;
     public double MaxRequestsPerSecond { get; set; } = 5.0;
     public long MaxResponseBytes { get; set; } = 8L * 1024 * 1024;
-    /// <summary>Where saved collections and environments live.</summary>
-    public string WorkspacePath { get; set; } = "apistudio";
 }
 
 public sealed class AllowlistConfig

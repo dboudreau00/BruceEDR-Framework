@@ -14,6 +14,8 @@ namespace ProcessShield.Response;
 /// </summary>
 public sealed class ResponseManager
 {
+    private const int NetshTimeoutMs = 5000;
+
     private readonly Logger _log;
     private readonly AuthenticodeVerifier _verifier;
     private readonly string _quarantineDir;
@@ -105,11 +107,74 @@ public sealed class ResponseManager
         catch (Exception ex) { return ActionResult.Fail(ex.Message); }
     }
 
+    /// <summary>
+    /// The rule name used for the per-binary outbound block. Add and remove MUST derive
+    /// the name the same way -- netsh cannot delete by wildcard, so a name that differs
+    /// by one character leaves the binary blocked forever.
+    /// </summary>
+    public static string OutboundBlockRuleName(int pid, string imagePath)
+        => FirewallRuleName.Sanitize($"ProcessShield Block {Path.GetFileName(imagePath)} {pid}");
+
+    /// <summary>
+    /// Removes the outbound block rule this class installs for a contained binary, so
+    /// releasing a false positive actually restores its network access instead of only
+    /// un-suspending it. Safe to call when no rule exists.
+    ///
+    /// Limitation: the rule name embeds the PID, so this only removes the rule added for
+    /// THAT containment. A block left behind by an earlier agent instance (different PID)
+    /// has to be removed by name from the firewall UI or netsh.
+    /// </summary>
+    public static ActionResult RemoveOutboundFirewallBlock(int pid, string imagePath)
+    {
+        string ruleName = OutboundBlockRuleName(pid, imagePath);
+        var args = new[] { "advfirewall", "firewall", "delete", "rule", $"name={ruleName}" };
+
+        if (RunNetsh(args, out string detail, out int exitCode))
+            return ActionResult.Success($"firewall block '{ruleName}' removed");
+
+        // netsh exits non-zero for "No rules match the specified criteria", which is the
+        // normal outcome when the binary was never blocked (or was already released).
+        // Only a netsh that could not be run at all (exit code unknown) is a real failure.
+        return exitCode > 0
+            ? ActionResult.Success($"no firewall block named '{ruleName}' to remove")
+            : ActionResult.Fail($"firewall block '{ruleName}' not removed: {detail}");
+    }
+
     private void AddOutboundFirewallBlock(string imagePath, int pid)
     {
+        string ruleName = OutboundBlockRuleName(pid, imagePath);
+
+        // Delete-then-add. netsh 'add rule' will happily create a SECOND rule with the
+        // same name, so containing the same binary repeatedly would otherwise accumulate
+        // duplicates that an analyst has to unpick by hand.
+        var removed = RemoveOutboundFirewallBlock(pid, imagePath);
+        if (!removed.Ok) _log.Action($"firewall: pre-add cleanup failed: {removed.Message}");
+
+        var args = new[]
+        {
+            "advfirewall", "firewall", "add", "rule",
+            $"name={ruleName}",
+            "dir=out", "action=block", $"program={imagePath}", "enable=yes"
+        };
+
+        _log.Action(RunNetsh(args, out string detail, out _)
+            ? "outbound firewall block added"
+            : "firewall: " + detail);
+    }
+
+    /// <summary>
+    /// Runs one netsh command. Arguments go through ArgumentList so each element is
+    /// quoted by the runtime and a rule name containing spaces stays one argument;
+    /// concatenating a command string here would be an injection bug.
+    /// <paramref name="exitCode"/> is -1 when netsh could not be started, timed out, or
+    /// threw, which is how callers tell "the command ran and said no" from "it never ran".
+    /// </summary>
+    private static bool RunNetsh(IReadOnlyList<string> args, out string detail, out int exitCode)
+    {
+        detail = "";
+        exitCode = -1;
         try
         {
-            string ruleName = FirewallRuleName.Sanitize($"ProcessShield Block {Path.GetFileName(imagePath)} {pid}");
             var psi = new ProcessStartInfo("netsh")
             {
                 CreateNoWindow = true,
@@ -117,23 +182,33 @@ public sealed class ResponseManager
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            psi.ArgumentList.Add("advfirewall");
-            psi.ArgumentList.Add("firewall");
-            psi.ArgumentList.Add("add");
-            psi.ArgumentList.Add("rule");
-            psi.ArgumentList.Add($"name={ruleName}");
-            psi.ArgumentList.Add("dir=out");
-            psi.ArgumentList.Add("action=block");
-            psi.ArgumentList.Add($"program={imagePath}");
-            psi.ArgumentList.Add("enable=yes");
+            foreach (var a in args) psi.ArgumentList.Add(a);
 
             using var proc = Process.Start(psi);
-            if (proc is null) { _log.Action("firewall: failed to launch netsh"); return; }
-            if (!proc.WaitForExit(5000)) { _log.Action("firewall: netsh timed out"); return; }
-            _log.Action(proc.ExitCode == 0 ? "outbound firewall block added"
-                                           : $"firewall: netsh exit code {proc.ExitCode}");
+            if (proc is null) { detail = "failed to launch netsh"; return false; }
+
+            // Drain both pipes concurrently with the wait; a full pipe buffer would
+            // otherwise deadlock the wait against the child.
+            _ = proc.StandardOutput.ReadToEndAsync();
+            _ = proc.StandardError.ReadToEndAsync();
+
+            if (!proc.WaitForExit(NetshTimeoutMs))
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                detail = $"netsh timed out after {NetshTimeoutMs} ms";
+                return false;
+            }
+
+            exitCode = proc.ExitCode;
+            if (exitCode == 0) return true;
+            detail = $"netsh exit code {exitCode}";
+            return false;
         }
-        catch (Exception ex) { _log.Error("firewall block", ex); }
+        catch (Exception ex)
+        {
+            detail = $"{ex.GetType().Name}: {ex.Message}";
+            return false;
+        }
     }
 
     private void QuarantineArchives(ProfileSnapshot snap)

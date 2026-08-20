@@ -708,45 +708,73 @@ public sealed class QuarantineVault : IDisposable
 
     // ---------------------------------------------------------------------- key
 
+    /// <summary>
+    /// Reads the vault key, or creates one on first use.
+    ///
+    /// Creation is first-writer-wins rather than read-then-write: two vault instances
+    /// opened on the same directory at the same time would otherwise BOTH see no key,
+    /// both generate one, and the second write would destroy the first instance's key —
+    /// permanently orphaning anything it had already stored, and surfacing later as a
+    /// bogus tamper/authentication failure. The new key is therefore written to a temp
+    /// file and moved into place with overwrite:false; if the move loses the race, the
+    /// winner's key is re-read and the loser's key is discarded unused.
+    /// </summary>
     private static byte[] LoadOrCreateKey(string keyPath)
     {
-        if (File.Exists(keyPath))
-        {
-            string hex;
-            try { hex = File.ReadAllText(keyPath).Trim(); }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException(
-                    $"vault key '{keyPath}' exists but cannot be read ({ex.Message}); refusing to open the vault " +
-                    "because generating a replacement key would orphan every stored blob", ex);
-            }
-
-            if (hex.Length != 64)
-                throw new InvalidOperationException(
-                    $"vault key '{keyPath}' is malformed (expected 64 hex characters, found {hex.Length}); " +
-                    "refusing to open the vault because generating a replacement key would orphan every stored blob");
-
-            try { return Convert.FromHexString(hex); }
-            catch (FormatException ex)
-            {
-                throw new InvalidOperationException(
-                    $"vault key '{keyPath}' is not valid hex; refusing to open the vault because generating a " +
-                    "replacement key would orphan every stored blob", ex);
-            }
-        }
+        if (File.Exists(keyPath)) return ReadKey(keyPath);
 
         byte[] key = RandomNumberGenerator.GetBytes(32);
+        string tmpPath = keyPath + "." +
+            Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant() + ".tmp";
         try
         {
-            File.WriteAllText(keyPath, Convert.ToHexString(key));
+            File.WriteAllText(tmpPath, Convert.ToHexString(key));
+            File.Move(tmpPath, keyPath, overwrite: false);
+            return key;
+        }
+        catch (IOException) when (File.Exists(keyPath))
+        {
+            // Someone else got there first. Their key is the one every blob in this
+            // directory is encrypted under, so adopt it and throw ours away.
+            TryDeleteFile(tmpPath, out _);
+            return ReadKey(keyPath);
         }
         catch (Exception ex)
         {
+            TryDeleteFile(tmpPath, out _);
             throw new InvalidOperationException(
                 $"could not persist the vault key to '{keyPath}' ({ex.Message}); refusing to continue because " +
                 "items stored under an unsaved key would be unrecoverable after a restart", ex);
         }
-        return key;
+    }
+
+    /// <summary>
+    /// Reads and validates an existing key file. Every failure here is fatal on purpose:
+    /// silently minting a replacement key would orphan every blob already stored.
+    /// </summary>
+    private static byte[] ReadKey(string keyPath)
+    {
+        string hex;
+        try { hex = File.ReadAllText(keyPath).Trim(); }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"vault key '{keyPath}' exists but cannot be read ({ex.Message}); refusing to open the vault " +
+                "because generating a replacement key would orphan every stored blob", ex);
+        }
+
+        if (hex.Length != 64)
+            throw new InvalidOperationException(
+                $"vault key '{keyPath}' is malformed (expected 64 hex characters, found {hex.Length}); " +
+                "refusing to open the vault because generating a replacement key would orphan every stored blob");
+
+        try { return Convert.FromHexString(hex); }
+        catch (FormatException ex)
+        {
+            throw new InvalidOperationException(
+                $"vault key '{keyPath}' is not valid hex; refusing to open the vault because generating a " +
+                "replacement key would orphan every stored blob", ex);
+        }
     }
 
     /// <summary>

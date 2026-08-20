@@ -33,6 +33,21 @@ public sealed record RuleMatch(DetectionRule Rule, string Explanation);
 /// </summary>
 public sealed class RuleEngine
 {
+    private long _budgetExhausted;
+
+    /// <summary>
+    /// How many signals had rule evaluation cut short by <see cref="EvaluationBudget"/>.
+    /// Non-zero means a rule pack is too slow and some rules never got to run on those
+    /// signals -- a silent detection gap, so it is counted rather than swallowed.
+    /// </summary>
+    public long BudgetExhaustedCount => System.Threading.Interlocked.Read(ref _budgetExhausted);
+
+    /// <summary>
+    /// Wall-clock ceiling for evaluating ALL rules against ONE signal. Distinct from the
+    /// per-match Regex timeout, which bounds a single pattern rather than the whole pack.
+    /// </summary>
+    internal static readonly TimeSpan EvaluationBudget = TimeSpan.FromMilliseconds(250);
+
     /// <summary>
     /// Regex match budget. A catastrophically backtracking pattern in a community rule must
     /// degrade one evaluation, not wedge the detection thread; 250 ms is far above any
@@ -486,10 +501,20 @@ public sealed class RuleEngine
         List<RuleMatch>? hits = null;
         var kind = signal.Kind;
 
+        // The 250 ms Regex timeout is PER MATCH. A pack with many regex rules -- or one
+        // pathological pattern hit by many rules -- could therefore burn seconds on a single
+        // signal, and this runs on the single detection thread, so telemetry backs up and the
+        // bounded queue starts dropping events. Bound the whole evaluation instead: once the
+        // budget is spent, stop and keep what matched. Losing the tail of one signal's rules
+        // is strictly better than stalling detection for every process on the box.
+        var budget = System.Diagnostics.Stopwatch.StartNew();
+        bool exhausted = false;
+
         foreach (var cr in _compiled)
         {
             if (!cr.Enabled) continue;
             if (cr.Kinds is not null && !ContainsKind(cr.Kinds, kind)) continue;
+            if (budget.Elapsed > EvaluationBudget) { exhausted = true; break; }
 
             try
             {
@@ -505,6 +530,7 @@ public sealed class RuleEngine
             }
         }
 
+        if (exhausted) System.Threading.Interlocked.Increment(ref _budgetExhausted);
         return hits ?? (IReadOnlyList<RuleMatch>)Array.Empty<RuleMatch>();
     }
 

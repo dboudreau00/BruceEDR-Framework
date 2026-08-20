@@ -11,7 +11,7 @@ namespace ProcessShield.Telemetry;
 /// <summary>Structured event forwarded to every configured sink.</summary>
 public sealed record ShieldEvent
 {
-    public string Level { get; init; } = "INFO";          // INFO | WARN | QUARANTINE | ACTION
+    public string Level { get; init; } = "INFO";          // INFO | ACTION | WARN | ERROR | QUARANTINE
     public string Category { get; init; } = "system";     // detection | response | system | api
     public DateTime TimeUtc { get; init; } = DateTime.UtcNow;
     public int Pid { get; init; }
@@ -219,6 +219,7 @@ public sealed class SyslogSink : AsyncSinkBase
         int severity = e.Level switch
         {
             "QUARANTINE" => 1,   // alert
+            "ERROR" => 3,        // error -- agent-internal failures, not detections
             "WARN" => 4,         // warning
             "ACTION" => 5,       // notice
             _ => 6               // info
@@ -290,9 +291,19 @@ public sealed class WebhookSink : AsyncSinkBase
 /// hash chain. A keyed head-anchor sidecar records the last committed (seq, hash) so
 /// tail truncation and full emptying are detectable -- not just interior edits.
 ///
+/// The anchor is a HIGH-WATER MARK and only ever moves forward. On restart the stored
+/// anchor is loaded and MAC-verified before the tail is recovered, and an anchor at or
+/// below the stored seq is refused, so a restart on a truncated log cannot overwrite the
+/// evidence of its own truncation.
+///
 /// HONEST THREAT MODEL / LIMITATION:
 ///  - Detects, even against an attacker who lacks the key: interior edits (incl. the
 ///    logged timestamp), reordering, seq gaps, tail truncation, and full emptying.
+///  - Truncation evidence is durable but not permanent: after a truncation the agent
+///    resumes numbering from the recovered (lower) seq, so once enough NEW records push
+///    the chain past the old anchor, Verify stops reporting the gap. The restart that
+///    observed it raises <see cref="IntegrityWarning"/> once -- that alert, or an off-box
+///    copy of the events, is what survives.
 ///  - The key lives in a sibling "&lt;path&gt;.key" file. Anyone who can READ that key can
 ///    re-forge the entire chain. ProcessShield runs elevated, so a SAME-PRIVILEGE
 ///    attacker still defeats this; protect the audit directory with an admin-only ACL.
@@ -312,12 +323,78 @@ public sealed class AuditLogSink : IEventSink
     private string _prevHash;
     private long _seq;
 
-    public AuditLogSink(string path)
+    // High-water mark of the anchor: the furthest (seq, hash) this chain is known to have
+    // reached. Guarded by _gate once construction completes. -1 means "no valid anchor yet".
+    private long _anchorSeq;
+    private string _anchorHash;
+
+    /// <summary>
+    /// Non-null when construction found evidence that the chain was tampered with while the
+    /// agent was down: the on-disk tail is shorter than the keyed head anchor (records
+    /// truncated or deleted), the head hash disagrees with the anchor at the same seq (the
+    /// last record was rewritten), or the anchor itself is present but fails its MAC.
+    /// Surfaced so the host can alert; the sink still opens, because refusing to log from
+    /// here on would only finish the job the attacker started.
+    /// </summary>
+    public string? IntegrityWarning { get; }
+
+    /// <param name="integrityAlert">
+    /// Optional callback invoked once, during construction, if the chain fails its
+    /// start-up integrity check. Kept as a parameter rather than a Logger dependency so
+    /// Telemetry stays free of a back-reference to Core.
+    /// </param>
+    public AuditLogSink(string path, Action<string>? integrityAlert = null)
     {
         _path = path;
         _anchorPath = path + ".anchor";
         _key = LoadOrCreateKey(path + ".key");
+
+        // Read the anchor BEFORE recovering the tail. The anchor is the only surviving
+        // record of how far the chain got last time, so it has to be loaded first and then
+        // never moved backwards: a truncated log recovers to a LOWER seq, and letting the
+        // next Emit rewrite the anchor with that lower seq would erase the one piece of
+        // evidence that proves the truncation happened.
+        bool anchorPresent = false;
+        try { anchorPresent = File.Exists(_anchorPath); } catch { }
+        if (TryReadAnchor(_anchorPath, _key, out long anchorSeq, out string anchorHash))
+        {
+            _anchorSeq = anchorSeq;
+            _anchorHash = anchorHash;
+        }
+        else
+        {
+            _anchorSeq = -1;
+            _anchorHash = "";
+        }
+
         (_seq, _prevHash) = RecoverTail(path);
+
+        // _seq is the NEXT seq to write, so the last committed record is _seq - 1.
+        long lastSeq = _seq - 1;
+        string? warning = null;
+        if (_anchorSeq >= 0 && lastSeq < _anchorSeq)
+        {
+            warning = $"audit chain at '{path}' is SHORTER than its keyed head anchor: the on-disk tail " +
+                      $"ends at seq {lastSeq} but the anchor commits seq {_anchorSeq}. " +
+                      $"{_anchorSeq - lastSeq} record(s) were truncated or deleted.";
+        }
+        else if (_anchorSeq >= 0 && lastSeq == _anchorSeq && !HexEquals(_prevHash, _anchorHash))
+        {
+            warning = $"audit chain at '{path}' ends at the anchored seq {lastSeq} but with a different head " +
+                      "hash; the last record was rewritten (its MAC will also fail verification).";
+        }
+        else if (anchorPresent && _anchorSeq < 0)
+        {
+            warning = $"audit head anchor '{_anchorPath}' exists but failed its MAC check; it was corrupted, " +
+                      "rewritten, or written under a different key. Truncation before this point cannot be proven.";
+        }
+
+        IntegrityWarning = warning;
+        if (warning is not null)
+        {
+            try { integrityAlert?.Invoke(warning); } catch { /* an alert must never block audit logging */ }
+            try { Console.Error.WriteLine("[AUDIT] " + warning); } catch { }
+        }
     }
 
     public void Emit(ShieldEvent e)
@@ -420,14 +497,24 @@ public sealed class AuditLogSink : IEventSink
         => prevHash + "|" + seq.ToString(CultureInfo.InvariantCulture) + "|" +
            timeUtc.ToString("O", CultureInfo.InvariantCulture) + "|" + canonical;
 
+    /// <summary>
+    /// Commits the new head to the anchor sidecar. MONOTONIC BY CONTRACT: the anchor is a
+    /// high-water mark, so a seq at or below the one already stored is refused. Without that
+    /// guard a restart on a truncated log (which recovers to a lower seq) would overwrite the
+    /// anchor with the lower value on the very next Emit and destroy the truncation evidence.
+    /// Callers hold <c>_gate</c>, so the compare-then-write is not racy.
+    /// </summary>
     private void WriteAnchor(long seq, string hash)
     {
+        if (seq <= _anchorSeq) return;
         try
         {
             var a = new AnchorRecord { Seq = seq, Hash = hash, Mac = MacHex(_key, AnchorInput(seq, hash)) };
             string tmp = _anchorPath + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(a, Json.Compact));
             File.Move(tmp, _anchorPath, overwrite: true);   // atomic replace
+            _anchorSeq = seq;
+            _anchorHash = hash;
         }
         catch { /* best effort; the next successful Emit re-establishes the anchor */ }
     }
@@ -493,17 +580,44 @@ public sealed class AuditLogSink : IEventSink
         return last is null ? (0, Genesis) : (last.Seq + 1, last.Hash);
     }
 
+    /// <summary>
+    /// Loads the per-install audit key, minting a new one ONLY when the key file genuinely
+    /// does not exist. A key file that is present but unreadable (ACL'd away, locked) or
+    /// malformed is NOT replaced: silently minting a replacement would start a fresh chain
+    /// under a new key and permanently mark every previously written record as tampered,
+    /// converting "someone attacked my key" into a false verdict that hides the attack.
+    /// Throwing instead lets BuildSink disable the audit sink loudly, and the existing
+    /// records stay verifiable once the real key is restored from backup.
+    /// Existence is probed by reading rather than by File.Exists, because File.Exists also
+    /// reports false for a file that exists but is denied to us -- exactly the attack case.
+    /// </summary>
     private static byte[] LoadOrCreateKey(string keyPath)
     {
-        try
+        string? hex = null;
+        try { hex = File.ReadAllText(keyPath).Trim(); }
+        catch (FileNotFoundException) { /* genuinely absent: fall through and create */ }
+        catch (DirectoryNotFoundException) { /* genuinely absent: fall through and create */ }
+        catch (Exception ex)
         {
-            if (File.Exists(keyPath))
+            throw new InvalidOperationException(
+                $"audit key '{keyPath}' exists but could not be read; refusing to mint a replacement " +
+                "because that would invalidate every existing audit record", ex);
+        }
+
+        if (hex is not null)
+        {
+            if (hex.Length != 64)
+                throw new InvalidOperationException(
+                    $"audit key '{keyPath}' is malformed (expected 64 hex chars, found {hex.Length}); " +
+                    "refusing to mint a replacement because that would invalidate every existing audit record");
+            try { return Convert.FromHexString(hex); }
+            catch (FormatException ex)
             {
-                string hex = File.ReadAllText(keyPath).Trim();
-                if (hex.Length == 64) return Convert.FromHexString(hex);
+                throw new InvalidOperationException(
+                    $"audit key '{keyPath}' is not valid hex; refusing to mint a replacement " +
+                    "because that would invalidate every existing audit record", ex);
             }
         }
-        catch { /* fall through to (re)create */ }
 
         byte[] key = RandomNumberGenerator.GetBytes(32);
         try { File.WriteAllText(keyPath, Convert.ToHexString(key)); }

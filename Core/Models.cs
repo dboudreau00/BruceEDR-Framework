@@ -170,6 +170,8 @@ public sealed class ThreatProfile
     public bool SuspendedByAnalyst { get; set; }
     public bool Terminated { get; set; }
     public bool MemoryScanned { get; set; }
+    /// <summary>Whether the image has been PE-analyzed; the parse is claimed once per process.</summary>
+    public bool ImageAnalyzed { get; set; }
     public bool Exited { get; set; }
 
     /// <summary>Rendered reason lines. Kept in lockstep with <see cref="ReasonLog"/>.</summary>
@@ -198,6 +200,8 @@ public sealed class ThreatProfile
     /// this is what lets the engine publish an incident update instead of going silent.
     /// </summary>
     public int ReportedTechniques { get; set; }
+    /// <summary>Whether a Warn has already been raised, so Warn is one-shot like Quarantine.</summary>
+    public bool WarnRaised { get; set; }
     /// <summary>Last time decay was applied, so decay is charged once per interval.</summary>
     public DateTime LastDecayUtc { get; set; }
 
@@ -269,12 +273,58 @@ public static class IocDatabase
         "-executionpolicy bypass"
     };
 
+    /// <summary>
+    /// Paths interesting enough to push to the kernel minifilter. Includes whole profile
+    /// DIRECTORIES, which is right for "watch this area" but far too broad for scoring --
+    /// see <see cref="CredentialArtifacts"/>.
+    /// </summary>
     public static readonly string[] SensitiveFileFragments =
     {
         @"\google\chrome\user data\", @"\microsoft\edge\user data\",
         @"\mozilla\firefox\profiles\", "login data", "cookies.sqlite",
         "local state", "key4.db", "logins.json",
         "wallet.dat", @"\electrum\wallets\", @"\exodus\", @"\discord\leveldb\"
+    };
+
+    /// <summary>
+    /// The specific secret artifacts whose access is worth scoring.
+    ///
+    /// Deliberately NOT the profile directories above. A browser touches thousands of files
+    /// under its own User Data folder during a normal start, so matching the directory made
+    /// a clean machine cross the quarantine threshold within milliseconds of the user
+    /// opening Chrome -- suspending and firewall-blocking their browser. Match the loot, not
+    /// the neighbourhood.
+    /// </summary>
+    public static readonly string[] CredentialArtifacts =
+    {
+        "login data", "cookies.sqlite", "local state", "key4.db", "key3.db",
+        "logins.json", "signons.sqlite", "wallet.dat", "formhistory.sqlite",
+        @"\electrum\wallets\", @"\discord\leveldb\", "credentials.json"
+    };
+
+    /// <summary>
+    /// Which process legitimately owns which credential store. Chrome reading Chrome's own
+    /// Login Data is a browser starting up; anything else reading it is the interesting case.
+    ///
+    /// HONEST LIMIT: this matches on image name, which malware can trivially copy. It is a
+    /// false-positive suppressor, not a security boundary -- the Authenticode trust check is
+    /// what actually distinguishes the real browser from something merely named like it.
+    /// </summary>
+    public static readonly (string Process, string PathFragment)[] CredentialStoreOwners =
+    {
+        ("chrome.exe", @"\google\chrome\"),
+        ("chromium.exe", @"\chromium\"),
+        ("brave.exe", @"\bravesoftware\"),
+        ("msedge.exe", @"\microsoft\edge\"),
+        ("msedgewebview2.exe", @"\microsoft\edge\"),
+        ("opera.exe", @"\opera software\"),
+        ("vivaldi.exe", @"\vivaldi\"),
+        ("yandex.exe", @"\yandex\"),
+        ("firefox.exe", @"\mozilla\"),
+        ("thunderbird.exe", @"\thunderbird\"),
+        ("discord.exe", @"\discord\"),
+        ("exodus.exe", @"\exodus\"),
+        ("electrum.exe", @"\electrum\")
     };
 
     public static readonly string[] ArchiveExtensions =
