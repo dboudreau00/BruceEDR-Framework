@@ -5,6 +5,7 @@
 # BruceEDR
 
 Behavioural Risk Under Correlated Evidence
+
 Behavioural Rules, Unified Containment, Evidence
 
 **An open, hackable Windows EDR framework — behavioural detection, ATT&CK-mapped JSON rules,
