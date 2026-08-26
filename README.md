@@ -12,7 +12,6 @@ your machine actually talks to.**
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0E1621.svg)](#)
 [![Tests](https://img.shields.io/badge/tests-1969%20passing-3FA9B8.svg)](#verifying-a-build)
-[![Status](https://img.shields.io/badge/status-unaudited%20beta-E0A458.svg)](#-honest-scope)
 
 </div>
 

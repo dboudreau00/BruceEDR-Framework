@@ -3,31 +3,45 @@
                     xmlns:sys="clr-namespace:System;assembly=System.Runtime">
 
     <!-- ============================================================
-         DESIGN TOKENS
-         Chrome stays a quiet, desaturated blue-slate. Colour is spent
-         only on threat state (safe / watch / contained), so the eye
-         goes straight to signal. Accent (interactive) is a cool cyan,
-         deliberately distinct from the "safe" green so brand != state.
+         DESIGN TOKENS — "Nova" theme.
+         Ported 1:1 from the Magic Patterns design (ps-* CSS variables):
+         deep near-black navy layers, hairline borders, three text tiers,
+         semantic state colours with 12% "dim" fills, and a single electric
+         violet accent that is deliberately NOT the safe green, so brand
+         never reads as state.
          ============================================================ -->
 
-    <!-- Neutrals -->
-    <Color x:Key="Ink">#0E1621</Color>        <!-- app background -->
-    <Color x:Key="InkRaised">#121C28</Color>  <!-- header / nav rail -->
-    <Color x:Key="Panel">#16212E</Color>      <!-- cards / surfaces -->
-    <Color x:Key="PanelHover">#1C2A38</Color>
-    <Color x:Key="Line">#253341</Color>       <!-- hairline dividers / borders -->
-    <Color x:Key="LineSoft">#1E2A36</Color>
-    <Color x:Key="Paper">#DCE6F0</Color>      <!-- primary text -->
-    <Color x:Key="Mist">#8CA0B3</Color>       <!-- secondary text -->
-    <Color x:Key="Faint">#5E7186</Color>      <!-- muted / captions -->
+    <!-- Background layers (ps-bg-*) -->
+    <Color x:Key="Ink">#070910</Color>        <!-- app background -->
+    <Color x:Key="InkRaised">#0B0E18</Color>  <!-- sidebar / status bar / wells -->
+    <Color x:Key="Panel">#10141F</Color>      <!-- cards / surfaces -->
+    <Color x:Key="PanelHover">#161B29</Color>
 
-    <!-- Signal (state) colours -->
-    <Color x:Key="Safe">#4FB286</Color>       <!-- trusted / allowed -->
-    <Color x:Key="Watch">#E0A458</Color>      <!-- warn -->
-    <Color x:Key="Threat">#D66A6A</Color>     <!-- quarantine / contained -->
-    <Color x:Key="Info">#5B8FB9</Color>       <!-- actions / neutral events -->
-    <Color x:Key="Accent">#3FA9B8</Color>     <!-- brand / interactive -->
-    <Color x:Key="AccentDim">#2C7B87</Color>
+    <!-- Hairlines (ps-border-*) -->
+    <Color x:Key="Line">#232938</Color>
+    <Color x:Key="LineSoft">#171C29</Color>
+
+    <!-- Text tiers (ps-text-*) -->
+    <Color x:Key="Paper">#E8ECF5</Color>      <!-- primary -->
+    <Color x:Key="Mist">#99A2B8</Color>       <!-- secondary -->
+    <Color x:Key="Faint">#5C6479</Color>      <!-- muted / labels -->
+
+    <!-- Semantic state colours (ps-state-*); Dim = 12% fills for badges -->
+    <Color x:Key="Safe">#34D399</Color>
+    <Color x:Key="SafeDim">#1F34D399</Color>
+    <Color x:Key="Watch">#F2B33D</Color>
+    <Color x:Key="WatchDim">#1FF2B33D</Color>
+    <Color x:Key="Threat">#F2555A</Color>
+    <Color x:Key="ThreatDim">#1FF2555A</Color>
+    <Color x:Key="Info">#4C8DFF</Color>
+    <Color x:Key="InfoDim">#1F4C8DFF</Color>
+
+    <!-- Interactive accent (ps-accent): electric violet -->
+    <Color x:Key="Accent">#7C6CFF</Color>
+    <Color x:Key="AccentHover">#9184FF</Color>
+    <Color x:Key="AccentDim">#247C6CFF</Color>
+    <Color x:Key="AccentLine">#667C6CFF</Color>   <!-- accent at 40%, chip/brand borders -->
+    <Color x:Key="OnAccent">#0A0A16</Color>       <!-- text on a solid accent fill -->
 
     <!-- Brushes -->
     <SolidColorBrush x:Key="Brush.Ink"        Color="{StaticResource Ink}"/>
@@ -40,21 +54,30 @@
     <SolidColorBrush x:Key="Brush.Mist"       Color="{StaticResource Mist}"/>
     <SolidColorBrush x:Key="Brush.Faint"      Color="{StaticResource Faint}"/>
     <SolidColorBrush x:Key="Brush.Safe"       Color="{StaticResource Safe}"/>
+    <SolidColorBrush x:Key="Brush.SafeDim"    Color="{StaticResource SafeDim}"/>
     <SolidColorBrush x:Key="Brush.Watch"      Color="{StaticResource Watch}"/>
+    <SolidColorBrush x:Key="Brush.WatchDim"   Color="{StaticResource WatchDim}"/>
     <SolidColorBrush x:Key="Brush.Threat"     Color="{StaticResource Threat}"/>
+    <SolidColorBrush x:Key="Brush.ThreatDim"  Color="{StaticResource ThreatDim}"/>
     <SolidColorBrush x:Key="Brush.Info"       Color="{StaticResource Info}"/>
+    <SolidColorBrush x:Key="Brush.InfoDim"    Color="{StaticResource InfoDim}"/>
     <SolidColorBrush x:Key="Brush.Accent"     Color="{StaticResource Accent}"/>
+    <SolidColorBrush x:Key="Brush.AccentHover" Color="{StaticResource AccentHover}"/>
     <SolidColorBrush x:Key="Brush.AccentDim"  Color="{StaticResource AccentDim}"/>
+    <SolidColorBrush x:Key="Brush.AccentLine" Color="{StaticResource AccentLine}"/>
+    <SolidColorBrush x:Key="Brush.OnAccent"   Color="{StaticResource OnAccent}"/>
 
-    <!-- Type: Segoe UI for chrome; a mono face for telemetry (PIDs, scores, counters). -->
-    <FontFamily x:Key="Font.Ui">Segoe UI</FontFamily>
-    <FontFamily x:Key="Font.Data">Cascadia Mono, Consolas, Courier New</FontFamily>
+    <!-- Type: Inter for chrome when installed (Segoe fallback); JetBrains Mono for
+         telemetry data (PIDs, scores, timestamps, endpoints), Cascadia fallback. -->
+    <FontFamily x:Key="Font.Ui">Inter, Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="Font.Data">JetBrains Mono, Cascadia Mono, Consolas, Courier New</FontFamily>
 
-    <sys:Double x:Key="Size.Display">22</sys:Double>
-    <sys:Double x:Key="Size.Title">15</sys:Double>
-    <sys:Double x:Key="Size.Body">13</sys:Double>
-    <sys:Double x:Key="Size.Label">11.5</sys:Double>
-    <sys:Double x:Key="Size.Data">13</sys:Double>
+    <sys:Double x:Key="Size.Display">24</sys:Double>
+    <sys:Double x:Key="Size.Title">13.5</sys:Double>
+    <sys:Double x:Key="Size.Body">12.5</sys:Double>
+    <sys:Double x:Key="Size.Label">10.5</sys:Double>
+    <sys:Double x:Key="Size.Data">12</sys:Double>
+    <sys:Double x:Key="Size.DataSmall">11</sys:Double>
 
     <!-- Text styles -->
     <Style x:Key="Text.Display" TargetType="TextBlock">
@@ -78,7 +101,7 @@
         <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
     </Style>
 
-    <!-- Eyebrow / label: letter-spaced, uppercase, muted -->
+    <!-- Eyebrow / label: small caps, muted -->
     <Style x:Key="Text.Label" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource Font.Ui}"/>
         <Setter Property="FontSize" Value="{StaticResource Size.Label}"/>
@@ -92,9 +115,10 @@
         <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
     </Style>
 
-    <!-- Shared shapes -->
-    <CornerRadius x:Key="Radius.Card">10</CornerRadius>
-    <CornerRadius x:Key="Radius.Control">6</CornerRadius>
+    <!-- Shared shapes (ps-radius-*) -->
+    <CornerRadius x:Key="Radius.Card">12</CornerRadius>
+    <CornerRadius x:Key="Radius.Control">4</CornerRadius>
+    <CornerRadius x:Key="Radius.Chip">4</CornerRadius>
 
     <!-- Card container -->
     <Style x:Key="Card" TargetType="Border">

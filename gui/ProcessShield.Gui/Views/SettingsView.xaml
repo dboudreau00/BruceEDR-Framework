@@ -5,7 +5,7 @@
     <UserControl.Resources>
         <Style x:Key="Caption" TargetType="TextBlock" BasedOn="{StaticResource Text.Body}">
             <Setter Property="Foreground" Value="{StaticResource Brush.Faint}"/>
-            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontSize" Value="11.5"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
             <Setter Property="Margin" Value="0,3,0,0"/>
         </Style>
@@ -13,16 +13,16 @@
             <Setter Property="Margin" Value="0,0,0,6"/>
         </Style>
         <Style x:Key="SectionCard" TargetType="Border" BasedOn="{StaticResource Card}">
-            <Setter Property="Margin" Value="0,0,0,16"/>
+            <Setter Property="Margin" Value="0,0,0,14"/>
         </Style>
     </UserControl.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="26,24,26,24">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="22,20,22,20">
         <StackPanel MaxWidth="760" HorizontalAlignment="Left">
 
             <TextBlock Text="Settings" Style="{StaticResource Text.Display}"/>
             <TextBlock Text="Tune detection, trusted publishers, and where alerts are sent."
-                       Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" Margin="0,3,0,18"/>
+                       Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" Margin="0,3,0,16"/>
 
             <!-- Detection -->
             <Border Style="{StaticResource SectionCard}">
@@ -64,7 +64,7 @@
                     <Grid>
                         <StackPanel>
                             <TextBlock Text="Automatically end confirmed threats" Style="{StaticResource Text.Body}"/>
-                            <TextBlock Text="When off (recommended for beta), contained processes are only suspended, so you can review and release false positives."
+                            <TextBlock Text="When off (recommended), contained processes are only suspended, so you can review and release false positives."
                                        Style="{StaticResource Caption}" MaxWidth="560" HorizontalAlignment="Left"/>
                         </StackPanel>
                         <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" VerticalAlignment="Top"
@@ -172,6 +172,31 @@
                         <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" VerticalAlignment="Top"
                                       IsChecked="{Binding KernelBlocking}"/>
                     </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Interface -->
+            <Border Style="{StaticResource SectionCard}">
+                <StackPanel>
+                    <TextBlock Text="Interface" Style="{StaticResource Text.Title}" Margin="0,0,0,14"/>
+                    <Grid>
+                        <StackPanel>
+                            <TextBlock Text="Keep monitoring from the tray when minimized" Style="{StaticResource Text.Body}"/>
+                            <TextBlock Text="Minimizing hides the window to the notification area; containments raise a balloon alert. Applies immediately."
+                                       Style="{StaticResource Caption}" MaxWidth="560" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                        <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                      IsChecked="{Binding MinimizeToTray}"/>
+                    </Grid>
+                    <Border Height="1" Background="{StaticResource Brush.LineSoft}" Margin="0,14"/>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Open app log" Style="{StaticResource Btn.Subtle}"
+                                ToolTip="Reveal gui.log in File Explorer" Command="{Binding OpenLogCommand}"/>
+                        <Button Content="Open config file" Style="{StaticResource Btn.Subtle}" Margin="10,0,0,0"
+                                ToolTip="Reveal shield.config.json in File Explorer" Command="{Binding OpenConfigCommand}"/>
+                    </StackPanel>
+                    <TextBlock Text="Shortcuts: F5 refresh · Ctrl+1…5 switch views"
+                               Style="{StaticResource Caption}" Margin="0,12,0,0"/>
                 </StackPanel>
             </Border>
 

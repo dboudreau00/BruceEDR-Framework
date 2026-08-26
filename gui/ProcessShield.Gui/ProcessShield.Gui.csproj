@@ -4,6 +4,13 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <!-- WinForms is referenced ONLY for NotifyIcon (WPF has no tray support). The
+         implicit System.Windows.Forms/System.Drawing usings are removed below so WPF's
+         MessageBox, Application and Clipboard never become ambiguous. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- WFAC010: the WinForms analyzer wants DPI config moved out of app.manifest, but
+         this is a WPF app (WinForms is only the tray icon) and WPF reads the manifest. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <Nullable>enable</Nullable>
@@ -14,6 +21,12 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\shield.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- See UseWindowsForms above: WinForms types stay fully qualified, WPF stays implicit. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Reuse the whole detection/response/telemetry/config core from the console app. -->

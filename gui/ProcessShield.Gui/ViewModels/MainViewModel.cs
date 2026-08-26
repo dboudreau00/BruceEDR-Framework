@@ -1,5 +1,12 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Text.Json;
 using System.Windows;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
 using ProcessShield.Api;
@@ -20,6 +27,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private ShieldHost? _host;
     private DispatcherTimer? _timer;
     private int _refreshing;   // guards against overlapping refreshes
+    private bool _started;     // Start() is one-shot even if the window reloads
+
+    private DateTime _startedUtc;
+    private long _lastSignals;          // for the events/sec estimate
+    private DateTime _lastSignalsAtUtc;
 
     public ObservableCollection<ThreatRow> Threats { get; } = new();
     public ObservableCollection<EventRow> Events { get; } = new();
@@ -28,6 +40,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// <summary>ATT&amp;CK techniques the loaded rules cover, and what has been seen.</summary>
     public ObservableCollection<TechniqueRow> Techniques { get; } = new();
     public SettingsViewModel Settings { get; }
+
+    /// <summary>Raised for tray balloons: (title, message). Fired on containment and monitor loss.</summary>
+    public event Action<string, string>? AlertRaised;
+
+    // Events held back while the feed is paused, flushed in arrival order on resume.
+    private readonly List<ShieldEvent> _pendingWhilePaused = new();
+    private const int FeedCap = 250;
 
     public MainViewModel(string configPath)
     {
@@ -39,14 +58,46 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         SuspendCommand = new RelayCommand(() => Act(p => _host!.Suspend(p)), () => HasSelection && IsRunning);
         EndCommand     = new RelayCommand(EndSelected,                      () => HasSelection && IsRunning);
         RefreshCommand = new RelayCommand(() => _ = RefreshAsync());
-        ClearEventsCommand = new RelayCommand(() => { try { Events.Clear(); } catch { } });
+        ClearEventsCommand = new RelayCommand(ClearEvents);
+        TogglePauseCommand = new RelayCommand(TogglePause);
+        ExportEventsCommand = new RelayCommand(ExportEvents, () => Events.Count > 0);
+        ExportSurfaceCommand = new RelayCommand(ExportSurface, () => Surface.Count > 0);
+        CopyReportCommand = new RelayCommand(CopyReport, () => HasSelection);
+        CopyPathCommand = new RelayCommand(CopyPath, () => HasSelection);
+        OpenLocationCommand = new RelayCommand(OpenLocation,
+            () => HasSelection && !string.IsNullOrEmpty(SelectedThreat?.ImagePath));
+        OpenUrlCommand = new RelayCommandP(p => OpenUrl(p as string));
+        CopyEventCommand = new RelayCommandP(p => CopyEvent(p as EventRow));
+        SetEventFilterCommand = new RelayCommandP(p => EventFilter = p as string ?? "ALL");
+        SelectTabCommand = new RelayCommandP(p =>
+        {
+            if (int.TryParse(p as string, out var i)) SelectedTabIndex = Math.Clamp(i, 0, 4);
+        });
+
+        // The default collection views are what the XAML binds to, so installing a
+        // filter here filters every consumer without touching the source collections.
+        _threatsView = CollectionViewSource.GetDefaultView(Threats);
+        _threatsView.Filter = o => o is ThreatRow t && t.Matches(_threatSearch.Trim());
+        _eventsView = CollectionViewSource.GetDefaultView(Events);
+        _eventsView.Filter = o => o is EventRow r && EventPasses(r);
+        _surfaceView = CollectionViewSource.GetDefaultView(Surface);
+        _surfaceView.Filter = o => o is SurfaceRow s && SurfacePasses(s);
     }
+
+    private readonly ICollectionView _threatsView;
+    private readonly ICollectionView _eventsView;
+    private readonly ICollectionView _surfaceView;
 
     // -------------------------------------------------------------- lifecycle
     public void Start()
     {
+        if (_started) return;
+        _started = true;
         try
         {
+            _startedUtc = DateTime.UtcNow;
+            _lastSignalsAtUtc = _startedUtc;
+
             var sink = new UiEventSink(OnEvent);
             _composition = Composition.Build(_configPath, sink);
             _host = _composition.Host;
@@ -69,7 +120,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             catch (Exception ex) { AppLog.Error("rule coverage", ex); }
 
             if (!IsRunning)
+            {
                 SetProblem("No monitor could be started. Make sure ProcessShield is running as Administrator.");
+                AlertRaised?.Invoke("Not monitoring", "No monitor could be started. Run as Administrator.");
+            }
             else
             {
                 ClearProblem();
@@ -101,6 +155,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ICommand EndCommand { get; }
     public ICommand RefreshCommand { get; }
     public ICommand ClearEventsCommand { get; }
+    public ICommand TogglePauseCommand { get; }
+    public ICommand ExportEventsCommand { get; }
+    public ICommand ExportSurfaceCommand { get; }
+    public ICommand CopyReportCommand { get; }
+    public ICommand CopyPathCommand { get; }
+    public ICommand OpenLocationCommand { get; }
+    public ICommand OpenUrlCommand { get; }
+    public ICommand CopyEventCommand { get; }
+    public ICommand SetEventFilterCommand { get; }
+    public ICommand SelectTabCommand { get; }
 
     private void EndSelected()
     {
@@ -141,6 +205,52 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         });
     }
 
+    private void CopyReport()
+    {
+        var row = SelectedThreat;
+        if (row is null) return;
+        try { Clipboard.SetText(row.ToReport()); LastMessage = "Incident report copied."; }
+        catch (Exception ex) { AppLog.Error("copy report", ex); LastMessage = "Clipboard is busy — try again."; }
+    }
+
+    private void CopyPath()
+    {
+        var row = SelectedThreat;
+        if (row is null || string.IsNullOrEmpty(row.ImagePath)) return;
+        try { Clipboard.SetText(row.ImagePath); LastMessage = "Image path copied."; }
+        catch (Exception ex) { AppLog.Error("copy path", ex); LastMessage = "Clipboard is busy — try again."; }
+    }
+
+    private void OpenLocation()
+    {
+        var path = SelectedThreat?.ImagePath;
+        if (string.IsNullOrEmpty(path)) return;
+        try
+        {
+            if (File.Exists(path))
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+            else
+                LastMessage = "Image no longer exists on disk.";
+        }
+        catch (Exception ex) { AppLog.Error("open location", ex); LastMessage = "Could not open Explorer: " + ex.Message; }
+    }
+
+    private void CopyEvent(EventRow? row)
+    {
+        if (row is null) return;
+        try { Clipboard.SetText(row.ToClipboardLine()); }
+        catch (Exception ex) { AppLog.Error("copy event", ex); }
+    }
+
+    private static void OpenUrl(string? url)
+    {
+        // Only MITRE technique pages ever reach this; still, never shell out to an
+        // arbitrary scheme from a row payload.
+        if (string.IsNullOrEmpty(url) || !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return;
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception ex) { AppLog.Error("open url", ex); }
+    }
+
     // -------------------------------------------------------------- event feed
     private void OnEvent(ShieldEvent e)
     {
@@ -150,14 +260,162 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
-                    Events.Insert(0, new EventRow(e));
-                    while (Events.Count > 250) Events.RemoveAt(Events.Count - 1);
+                    if (e.Level == "QUARANTINE")
+                        AlertRaised?.Invoke("Threat contained",
+                            e.Pid > 0 ? $"pid {e.Pid} {e.Process} — {(string.IsNullOrEmpty(e.Trigger) ? e.Message : e.Trigger)}" : e.Message);
+
+                    if (IsPaused)
+                    {
+                        _pendingWhilePaused.Add(e);
+                        // A paused feed must not hoard unbounded history; keep the newest.
+                        if (_pendingWhilePaused.Count > FeedCap) _pendingWhilePaused.RemoveAt(0);
+                        PendingCount = _pendingWhilePaused.Count;
+                        return;
+                    }
+                    InsertEvent(e);
                 }
                 catch (Exception ex) { AppLog.Error("event insert", ex); }
             });
         }
         catch (Exception ex) { AppLog.Error("event dispatch", ex); }
     }
+
+    private void InsertEvent(ShieldEvent e)
+    {
+        Events.Insert(0, new EventRow(e));
+        BumpCount(e.Level, +1);
+        while (Events.Count > FeedCap)
+        {
+            BumpCount(Events[^1].Level, -1);
+            Events.RemoveAt(Events.Count - 1);
+        }
+    }
+
+    private void ClearEvents()
+    {
+        try
+        {
+            Events.Clear();
+            _pendingWhilePaused.Clear();
+            PendingCount = 0;
+            CountAll = CountQuarantine = CountWarn = CountAction = CountInfo = CountError = 0;
+        }
+        catch (Exception ex) { AppLog.Error("clear events", ex); }
+    }
+
+    private void TogglePause()
+    {
+        IsPaused = !IsPaused;
+        if (!IsPaused)
+        {
+            foreach (var e in _pendingWhilePaused) InsertEvent(e);
+            _pendingWhilePaused.Clear();
+            PendingCount = 0;
+        }
+    }
+
+    private void BumpCount(string level, int delta)
+    {
+        CountAll += delta;
+        switch (level)
+        {
+            case "QUARANTINE": CountQuarantine += delta; break;
+            case "WARN": CountWarn += delta; break;
+            case "ACTION": CountAction += delta; break;
+            case "ERROR": CountError += delta; break;
+            default: CountInfo += delta; break;
+        }
+    }
+
+    private bool EventPasses(EventRow r)
+    {
+        if (_eventFilter != "ALL" && !string.Equals(r.Level, _eventFilter, StringComparison.Ordinal))
+            return false;
+        var needle = _eventSearch.Trim();
+        return needle.Length == 0 || r.SearchText.Contains(needle, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool SurfacePasses(SurfaceRow s)
+    {
+        if (OnlyBeaconing && !s.Beaconing) return false;
+        var needle = _surfaceSearch.Trim();
+        return needle.Length == 0
+            || s.Endpoint.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || s.Process.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || s.Address.Contains(needle, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // -------------------------------------------------------------- export
+    private void ExportEvents()
+    {
+        try
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Export events (current filter)",
+                FileName = $"processshield-events-{DateTime.Now:yyyyMMdd-HHmmss}",
+                Filter = "CSV file (*.csv)|*.csv|JSON file (*.json)|*.json",
+            };
+            if (dlg.ShowDialog() != true) return;
+
+            var rows = _eventsView.Cast<EventRow>().ToArray();
+            if (dlg.FileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                var json = JsonSerializer.Serialize(rows.Select(r => r.Raw),
+                    new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(dlg.FileName, json);
+            }
+            else
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("time_utc,level,category,pid,process,score,trigger,message,techniques,rule_ids,incident_id");
+                foreach (var r in rows)
+                {
+                    var e = r.Raw;
+                    sb.AppendLine(string.Join(',',
+                        e.TimeUtc.ToString("o", CultureInfo.InvariantCulture), Csv(e.Level), Csv(e.Category),
+                        e.Pid.ToString(CultureInfo.InvariantCulture), Csv(e.Process),
+                        e.Score.ToString(CultureInfo.InvariantCulture), Csv(e.Trigger), Csv(e.Message),
+                        Csv(string.Join(';', e.Techniques)), Csv(string.Join(';', e.RuleIds)), Csv(e.IncidentId)));
+                }
+                File.WriteAllText(dlg.FileName, sb.ToString());
+            }
+            LastMessage = $"Exported {rows.Length} event(s).";
+        }
+        catch (Exception ex) { AppLog.Error("export events", ex); LastMessage = "Export failed: " + ex.Message; }
+    }
+
+    private void ExportSurface()
+    {
+        try
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Export observed endpoints",
+                FileName = $"processshield-surface-{DateTime.Now:yyyyMMdd-HHmmss}",
+                Filter = "CSV file (*.csv)|*.csv",
+            };
+            if (dlg.ShowDialog() != true) return;
+
+            var rows = _surfaceView.Cast<SurfaceRow>().ToArray();
+            var sb = new StringBuilder();
+            sb.AppendLine("pid,process,host,address,port,scheme,connections,beaconing,trusted,last_seen");
+            foreach (var s in rows)
+                sb.AppendLine(string.Join(',',
+                    s.Pid.ToString(CultureInfo.InvariantCulture), Csv(s.Process), Csv(s.Host), Csv(s.Address),
+                    s.Port.ToString(CultureInfo.InvariantCulture), Csv(s.Scheme),
+                    s.Connections.ToString(CultureInfo.InvariantCulture),
+                    s.Beaconing ? "true" : "false", s.Trusted ? "true" : "false", Csv(s.LastSeen)));
+            File.WriteAllText(dlg.FileName, sb.ToString());
+            LastMessage = $"Exported {rows.Length} endpoint(s).";
+        }
+        catch (Exception ex) { AppLog.Error("export surface", ex); LastMessage = "Export failed: " + ex.Message; }
+    }
+
+    private static string Csv(string s)
+        => s.Contains(',') || s.Contains('"') || s.Contains('\n')
+            ? "\"" + s.Replace("\"", "\"\"") + "\""
+            : s;
 
     // -------------------------------------------------------------- refresh
     private async Task RefreshAsync()
@@ -183,7 +441,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             FlaggedCount = snaps.Count;
             EndpointCount = endpoints.Count;
             BeaconCount = endpoints.Count(e => e.Beaconing);
-            Throughput = host.Stats();
+            UpdateStats(host);
 
             if (!IsRunning)
             {
@@ -202,6 +460,35 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex) { AppLog.Error("refresh", ex); }
         finally { Interlocked.Exchange(ref _refreshing, 0); }
+    }
+
+    private void UpdateStats(ShieldHost host)
+    {
+        try
+        {
+            var s = host.StatsSnapshot();
+            Throughput = host.Stats();
+
+            var now = DateTime.UtcNow;
+            var dt = (now - _lastSignalsAtUtc).TotalSeconds;
+            if (dt >= 1)
+            {
+                var rate = (s.SignalsProcessed - _lastSignals) / dt;
+                SignalRate = rate >= 100 ? $"{rate:F0}/s" : $"{rate:F1}/s";
+                _lastSignals = s.SignalsProcessed;
+                _lastSignalsAtUtc = now;
+            }
+
+            SignalsProcessed = s.SignalsProcessed.ToString("N0", CultureInfo.CurrentCulture);
+            DroppedSignals = s.SignalsDropped;
+            LatencyP95 = s.LatencyP95Ms >= 100 ? $"{s.LatencyP95Ms:F0} ms" : $"{s.LatencyP95Ms:F1} ms";
+
+            var up = now - _startedUtc;
+            Uptime = up.TotalHours >= 1 ? $"{(int)up.TotalHours}h {up.Minutes:D2}m"
+                   : up.TotalMinutes >= 1 ? $"{up.Minutes}m {up.Seconds:D2}s"
+                   : $"{up.Seconds}s";
+        }
+        catch (Exception ex) { AppLog.Error("stats", ex); }
     }
 
     private void MergeThreats(IReadOnlyList<ProfileSnapshot> snaps)
@@ -263,8 +550,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 .Select(id => new TechniqueRow(id,
                     covered.TryGetValue(id, out var r) ? r : 0,
                     observed.TryGetValue(id, out var o) ? o : 0))
-                .OrderByDescending(t => t.Observed)
-                .ThenBy(t => Array.IndexOf(AttackCatalog.Tactics, t.Tactic))
+                .OrderBy(t => Array.IndexOf(AttackCatalog.Tactics, t.Tactic))
+                .ThenByDescending(t => t.Observed)
                 .ThenBy(t => t.Id, StringComparer.Ordinal)
                 .ToArray();
 
@@ -277,6 +564,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             Techniques.Clear();
             foreach (var t in rows) Techniques.Add(t);
             CoveredTechniqueCount = covered.Count;
+            ObservedTechniqueCount = rows.Count(t => t.Observed > 0);
         }
         catch (Exception ex) { AppLog.Error("merge techniques", ex); }
     }
@@ -294,7 +582,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private bool _isRunning;
     public bool IsRunning { get => _isRunning; set { if (Set(ref _isRunning, value)) CommandManager.InvalidateRequerySuggested(); } }
 
-    private string _monitors = "starting\u2026";
+    private string _monitors = "starting…";
     public string Monitors { get => _monitors; set => Set(ref _monitors, value); }
 
     private int _containedCount;
@@ -315,13 +603,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private int _coveredTechniqueCount;
     public int CoveredTechniqueCount { get => _coveredTechniqueCount; set => Set(ref _coveredTechniqueCount, value); }
 
+    private int _observedTechniqueCount;
+    public int ObservedTechniqueCount { get => _observedTechniqueCount; set => Set(ref _observedTechniqueCount, value); }
+
     private int _indicatorCount;
     public int IndicatorCount { get => _indicatorCount; set => Set(ref _indicatorCount, value); }
 
     private string _throughput = "";
     public string Throughput { get => _throughput; set => Set(ref _throughput, value); }
 
-    private string _statusText = "Starting\u2026";
+    private string _statusText = "Starting…";
     public string StatusText { get => _statusText; set => Set(ref _statusText, value); }
 
     private string _statusLevel = "none";
@@ -329,6 +620,98 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private string _lastMessage = "";
     public string LastMessage { get => _lastMessage; set => Set(ref _lastMessage, value); }
+
+    // ---- status bar ----
+    private string _signalRate = "0/s";
+    public string SignalRate { get => _signalRate; set => Set(ref _signalRate, value); }
+
+    private string _signalsProcessed = "0";
+    public string SignalsProcessed { get => _signalsProcessed; set => Set(ref _signalsProcessed, value); }
+
+    private long _droppedSignals;
+    public long DroppedSignals
+    {
+        get => _droppedSignals;
+        set { if (Set(ref _droppedSignals, value)) OnPropertyChanged(nameof(HasDroppedSignals)); }
+    }
+    public bool HasDroppedSignals => _droppedSignals > 0;
+
+    private string _latencyP95 = "—";
+    public string LatencyP95 { get => _latencyP95; set => Set(ref _latencyP95, value); }
+
+    private string _uptime = "0s";
+    public string Uptime { get => _uptime; set => Set(ref _uptime, value); }
+
+    // ---- feed filtering ----
+    private bool _isPaused;
+    public bool IsPaused
+    {
+        get => _isPaused;
+        set { if (Set(ref _isPaused, value)) OnPropertyChanged(nameof(PauseLabel)); }
+    }
+
+    private int _pendingCount;
+    public int PendingCount
+    {
+        get => _pendingCount;
+        set { if (Set(ref _pendingCount, value)) OnPropertyChanged(nameof(PauseLabel)); }
+    }
+
+    public string PauseLabel => !IsPaused ? "Pause"
+                              : PendingCount > 0 ? $"Resume ({PendingCount})"
+                              : "Resume";
+
+    private string _eventFilter = "ALL";
+    public string EventFilter
+    {
+        get => _eventFilter;
+        set { if (Set(ref _eventFilter, value)) _eventsView.Refresh(); }
+    }
+
+    private string _eventSearch = "";
+    public string EventSearch
+    {
+        get => _eventSearch;
+        set { if (Set(ref _eventSearch, value)) _eventsView.Refresh(); }
+    }
+
+    private string _threatSearch = "";
+    public string ThreatSearch
+    {
+        get => _threatSearch;
+        set { if (Set(ref _threatSearch, value)) _threatsView.Refresh(); }
+    }
+
+    private string _surfaceSearch = "";
+    public string SurfaceSearch
+    {
+        get => _surfaceSearch;
+        set { if (Set(ref _surfaceSearch, value)) _surfaceView.Refresh(); }
+    }
+
+    private bool _onlyBeaconing;
+    public bool OnlyBeaconing
+    {
+        get => _onlyBeaconing;
+        set { if (Set(ref _onlyBeaconing, value)) _surfaceView.Refresh(); }
+    }
+
+    // ---- severity chip counts ----
+    private int _countAll;
+    public int CountAll { get => _countAll; set => Set(ref _countAll, value); }
+    private int _countQuarantine;
+    public int CountQuarantine { get => _countQuarantine; set => Set(ref _countQuarantine, value); }
+    private int _countWarn;
+    public int CountWarn { get => _countWarn; set => Set(ref _countWarn, value); }
+    private int _countAction;
+    public int CountAction { get => _countAction; set => Set(ref _countAction, value); }
+    private int _countInfo;
+    public int CountInfo { get => _countInfo; set => Set(ref _countInfo, value); }
+    private int _countError;
+    public int CountError { get => _countError; set => Set(ref _countError, value); }
+
+    private int _selectedTabIndex;
+    public int SelectedTabIndex { get => _selectedTabIndex; set => Set(ref _selectedTabIndex, value); }
 
     // problem banner
     private bool _hasProblem;

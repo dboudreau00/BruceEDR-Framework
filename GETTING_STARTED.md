@@ -78,6 +78,25 @@ flagged processes with one-click **Release / Suspend / End process**, a live eve
 feed, and a Settings editor that writes `shield.config.json` (threshold and
 allowlist changes apply live).
 
+Analyst conveniences built in:
+
+- **Incident detail** — the selected process shows its ATT&CK technique chips,
+  command line, ancestry chain, peak score and reason timeline; **Copy report**
+  puts a plain-text hand-off on the clipboard, **Open location** reveals the image
+  in Explorer (both also on the row's right-click menu).
+- **Live events** — search box, severity filter chips with live counts,
+  **Pause/Resume** (buffered while paused), **Export** to CSV/JSON, per-row copy.
+- **API surface** — search, an *only beaconing* switch, CSV export.
+- **Coverage** — techniques grouped by tactic with per-tactic coverage bars and
+  links to each MITRE page.
+- **Status bar** — monitor health, signals/sec, processed count, p95 detection
+  latency, rules/IOCs loaded, uptime, and a dropped-signal warning when the
+  pipeline sheds telemetry.
+- **Tray icon** — minimizing keeps monitoring from the notification area and
+  containments raise a balloon alert (toggle in Settings → Interface).
+- **Quality of life** — window size/position and last tab persist, `F5`
+  refreshes, `Ctrl+1…5` switch views.
+
 Build the solution (section 3), then run it either way:
 - **Visual Studio:** right-click **ProcessShield.Gui** in Solution Explorer ->
   **Set as Startup Project**, then **Debug -> Start** (F5). It requests administrator

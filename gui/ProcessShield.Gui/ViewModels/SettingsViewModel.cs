@@ -1,5 +1,8 @@
+using System.Diagnostics;
+using System.IO;
 using System.Windows.Input;
 using ProcessShield.Configuration;
+using ProcessShield.Gui.Services;
 
 namespace ProcessShield.Gui.ViewModels;
 
@@ -7,16 +10,53 @@ public sealed class SettingsViewModel : ViewModelBase
 {
     private readonly string _configPath;
     private ShieldConfig _config = new();
+    private UiState? _ui;
 
     public SettingsViewModel(string configPath)
     {
         _configPath = configPath;
         SaveCommand = new RelayCommand(Save);
         ReloadCommand = new RelayCommand(() => LoadFrom(ConfigLoader.Load(_configPath)));
+        OpenLogCommand = new RelayCommand(() => OpenFile(AppLog.LogPath));
+        OpenConfigCommand = new RelayCommand(() => OpenFile(_configPath));
+    }
+
+    /// <summary>Wire the persisted interface preferences (owned by the window).</summary>
+    public void AttachUiState(UiState ui)
+    {
+        _ui = ui;
+        _minimizeToTray = ui.MinimizeToTray;
+        OnPropertyChanged(nameof(MinimizeToTray));
+    }
+
+    /// <summary>Interface preference, saved immediately — no Save button round-trip.</summary>
+    private bool _minimizeToTray = true;
+    public bool MinimizeToTray
+    {
+        get => _minimizeToTray;
+        set
+        {
+            if (!Set(ref _minimizeToTray, value)) return;
+            if (_ui is null) return;
+            _ui.MinimizeToTray = value;
+            _ui.Save();
+        }
+    }
+
+    private static void OpenFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex) { AppLog.Error("open file", ex); }
     }
 
     public ICommand SaveCommand { get; }
     public ICommand ReloadCommand { get; }
+    public ICommand OpenLogCommand { get; }
+    public ICommand OpenConfigCommand { get; }
 
     public void LoadFrom(ShieldConfig c)
     {

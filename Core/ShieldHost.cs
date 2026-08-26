@@ -388,6 +388,28 @@ public sealed class ShieldHost : IDisposable
                 new InvalidOperationException("control queue full or agent shutting down"));
     }
 
+    /// <summary>
+    /// Structured counterpart of <see cref="Stats"/> for programmatic consumers (the GUI
+    /// status bar). Reading is lock-free; the numbers are the same ones Stats() formats.
+    /// </summary>
+    public HostStats StatsSnapshot()
+    {
+        var m = Metrics.Snapshot();
+        return new HostStats
+        {
+            SignalsProcessed = Interlocked.Read(ref _signalsProcessed),
+            SignalsDropped = Interlocked.Read(ref _signalsDropped),
+            SignalsQueued = _signalQueue.Count,
+            ResponsesRun = Interlocked.Read(ref _responsesRun),
+            ResponseErrors = Interlocked.Read(ref _responseErrors),
+            Warns = m.Warns,
+            Quarantines = m.Quarantines,
+            LatencyP95Ms = m.LatencyP95Ms,
+            AutoKill = _autoKill,
+            Monitors = ActiveMonitors,
+        };
+    }
+
     public string Stats()
     {
         var m = Metrics.Snapshot();
@@ -885,4 +907,22 @@ public sealed class ShieldHost : IDisposable
         try { disposable?.Dispose(); } catch { }
         disposable = null;
     }
+}
+
+/// <summary>
+/// Lock-free counter snapshot for programmatic consumers. String-free so a UI can
+/// format (and localise) the numbers itself instead of parsing <see cref="ShieldHost.Stats"/>.
+/// </summary>
+public sealed record HostStats
+{
+    public long SignalsProcessed { get; init; }
+    public long SignalsDropped { get; init; }
+    public int SignalsQueued { get; init; }
+    public long ResponsesRun { get; init; }
+    public long ResponseErrors { get; init; }
+    public long Warns { get; init; }
+    public long Quarantines { get; init; }
+    public double LatencyP95Ms { get; init; }
+    public bool AutoKill { get; init; }
+    public string Monitors { get; init; } = "";
 }
