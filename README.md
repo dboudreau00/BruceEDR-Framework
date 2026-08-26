@@ -11,12 +11,27 @@ your machine actually talks to.**
 [![License: MIT](https://img.shields.io/badge/License-MIT-3FA9B8.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0E1621.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-1969%20passing-3FA9B8.svg)](#verifying-a-build)
+[![Tests](https://img.shields.io/badge/tests-2096%20passing-3FA9B8.svg)](#verifying-a-build)
 
 </div>
 
 <div align="center">
-<img src="docs/dashboard.png" alt="ProcessShield dashboard" width="820" />
+<img src="docs/dashboard.png" alt="ProcessShield dashboard — a contained credential-theft chain with its ATT&CK techniques and reasons" width="880" />
+</div>
+
+<div align="center">
+
+<table>
+<tr>
+<td width="50%"><img src="docs/network-map.png" alt="Network map — observed destinations plotted offline, hover-linked to the endpoint list" /></td>
+<td width="50%"><img src="docs/watchlist.png" alt="Watchlist — operator-authored detections that contain on sight" /></td>
+</tr>
+<tr>
+<td align="center"><b>Network map</b> — where this host is talking, resolved entirely offline</td>
+<td align="center"><b>Watchlist</b> — your own detections, armed without a restart</td>
+</tr>
+</table>
+
 </div>
 
 ---
@@ -53,6 +68,7 @@ tool that overstates itself is worse than one that admits its edges.
 | **Rules** | **72 shipped JSON rules** across 5 packs, each carrying MITRE ATT&CK technique ids. Hot-reloadable, community-authorable, no C# required. See [`rules/detection/README.md`](rules/detection/README.md). |
 | **ATT&CK** | Every alert carries technique ids; `attack` in the console and the **Coverage** tab render rule coverage against what the host has actually exhibited. **71 techniques across 8 tactics** covered by the default packs. |
 | **Analytics** | C2 **beacon detection** (median interval + MAD jitter, not naive equality), **DGA and DNS-tunnel scoring**, and full **process lineage** with PID-reuse and cycle safety. |
+| **Watchlist** | Your own detections without writing a rule: name a **process, path, SHA-256 or command line** and *contain on sight*, warn, or score. A contain entry deliberately **overrides a trusted signature**, and is refused against protected Windows processes so a typo cannot bugcheck the host. Hot-reloaded. |
 | **Intel** | Drop hash / domain / IP / CIDR / URL indicator feeds into `intel/feeds/`; matching is hash-set based, so a million-entry feed costs the same per event as ten. |
 | **File analysis** | Dependency-free PE reader: sections, entropy, imphash, packer indicators, suspicious imports, SHA-256 — bounds-checked at every offset, because it gets pointed at hostile files. |
 | **Trust** | Full **Authenticode** verification (`WinVerifyTrust` chain validation + thumbprint pinning); allowlisted publishers get a scoring discount. Trust is only granted on a cryptographically valid chain. |
@@ -61,7 +77,8 @@ tool that overstates itself is worse than one that admits its edges.
 | **API Studio** | Import Postman v2.1 / OpenAPI 3 / Swagger 2 / HAR / curl, or generate a collection from the endpoints this host was **observed** using. Send, assert, chain captures, and grade responses for TLS, security headers, CORS, cookie flags, leaked secrets and PII. Export to Postman / OpenAPI / `.http` / curl / Markdown; report to JSON / JUnit / HTML. |
 | **Control plane** | Localhost-only REST API (`/status`, `/profiles`, `/surface`, `/metrics`, `/rules`, `/attack`, `/events`) with bearer auth, off by default, read-only by default. |
 | **Replay** | Record or hand-write a JSON-Lines signal trace and replay it through a real engine on a simulated clock — deterministic detection tests in milliseconds, no malware required. |
-| **Front-ends** | Console analyst REPL, and a WPF GUI with dashboard, event feed, **API surface** and **ATT&CK coverage** tabs. |
+| **Network map** | Plots every observed destination on a world map, grouped by country, hover-linked to the endpoint list, with **plaintext HTTP called out**. Geolocation is **fully offline** — an EDR that asked a third party where an address is would tell them what you are investigating. |
+| **Front-ends** | Console analyst REPL, and a WPF GUI with dashboard, live event feed, **API surface**, **network map**, **watchlist**, **ATT&CK coverage** and settings — plus tray monitoring, CSV/JSON export and one-click incident reports. |
 
 ## Quick start
 
@@ -195,6 +212,35 @@ Drop it in `rules/detection/`, type `reload`, done. A negative `score` writes an
 instead. The full schema, every operator and field, and the contribution guide are in
 [`rules/detection/README.md`](rules/detection/README.md).
 
+### Or just name the thing
+
+Rules describe *behaviour*. When you already know the *identity* of what you are hunting, the
+**Watchlist** tab (or `watchlist` in `shield.config.json`) is faster:
+
+```jsonc
+"watchlist": {
+  "enabled": true,
+  "entries": [
+    { "match": "name",    "value": "mimikatz", "action": "quarantine", "note": "red-team tooling" },
+    { "match": "hash",    "value": "<sha256>", "action": "quarantine", "note": "IOC from IR-2451" },
+    { "match": "cmdline", "value": "-enc",     "action": "score", "score": 25 },
+    { "match": "path",    "value": "\appdata\local\temp\\", "action": "warn" }
+  ]
+}
+```
+
+Match on **name**, **path**, **hash** or **cmdline** (names and paths take `*`/`?` globs); act
+with **quarantine**, **warn** or **score**. Two properties make it more than a blocklist:
+
+- **A `quarantine` entry outranks a valid Authenticode signature.** If you named the binary by
+  hand, "but it's signed" is not a defence — that is the entire point of naming it.
+- **It cannot be aimed at Windows itself.** An entry resolving to `lsass.exe`, `csrss.exe`,
+  `services.exe`, `svchost.exe` and friends is still *reported*, but containment is refused, so
+  a mistyped rule cannot take down the host it is defending.
+
+Entries are validated individually (a pattern matching everything is rejected outright) and
+**hot-reloaded** — saving arms them in about a second, no restart.
+
 **Test detections without malware.** `Replay/scenarios/*.jsonl` are signal traces replayed
 through a real engine on a simulated clock. Three ship by default, and one of them —
 `benign-developer-day.jsonl` — exists purely to prove the rules *don't* fire on ordinary work.
@@ -209,7 +255,7 @@ That false-positive guard matters as much as the malicious ones.
 Builds the solution, runs the full xUnit suite, validates every rule pack, and replays every
 detection scenario. As of this commit:
 
-- **1,969 tests passing**, 0 skipped
+- **2,096 tests passing**, 0 skipped
 - **0 build warnings**
 - 72 rules loading with 0 validation errors
 - 3/3 replay scenarios meeting their expectations
@@ -249,6 +295,14 @@ last-good config. Scan-engine, telemetry-format and control-API changes take eff
   among many, not a verdict.
 - **DGA scoring has real false positives** on CDN and cloud hostnames. It scores; it does not
   convict.
+- **The network map shows allocation geography, not packet geography.** It resolves the country
+  an address block is *registered* to, from offline RIR data at `/16` resolution — so CDNs,
+  anycast and hosting resellers land in the wrong place, and IPv6 is not mapped at all. Never
+  attribute from a marker. See [`intel/geo/README.md`](intel/geo/README.md).
+- **A watchlist `quarantine` entry is a loaded gun by design.** It contains on sight and ignores
+  a valid signature, so a careless entry will suspend software you rely on. Protected Windows
+  processes are refused outright, but nothing protects you from watchlisting your own EDR agent,
+  your backup client, or your VPN.
 - **Archive quarantine for ETW-detected files.** ETW reports `\Device\HarddiskVolumeN\...` paths
   that `System.IO` can't open directly, so the move-to-vault step no-ops for those (it fails
   safe; suspend + firewall containment still apply). Archives caught by the `FileSystemWatcher`
@@ -286,11 +340,13 @@ ProcessShield.sln              Console + GUI + Tests (VS2022, x64)
 ├─ Hosting/ Configuration/ Native/     composition, service/watchdog, config, P/Invoke
 ├─ Replay/                             offline trace format, harness, and scenarios
 ├─ ConsoleUi/                          analyst REPL + API Studio console
-├─ gui/ProcessShield.Gui/              WPF app (dashboard/events/surface/coverage/settings)
+├─ gui/ProcessShield.Gui/              WPF app (dashboard/events/surface/map/watchlist/coverage)
 ├─ kernel/ShieldFilter/                C file-system minifilter (built with the WDK)
 ├─ rules/detection/                    JSON detection rule packs (+ authoring guide)
 ├─ intel/feeds/                        drop your indicator feeds here
+├─ intel/geo/                          offline IP->country + world outline for the map
 ├─ tools/verify.ps1                    build + test + rules + replay in one command
+├─ tools/build-geo.py                  regenerates intel/geo from public-domain sources
 └─ tests/ProcessShield.Tests/          xUnit suite
 ```
 
