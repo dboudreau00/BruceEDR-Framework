@@ -31,6 +31,8 @@ public sealed class Composition : IDisposable
     public RuleSet Rules { get; private set; } = new(Array.Empty<DetectionRule>(), Array.Empty<RuleValidationError>());
     /// <summary>Indicator feeds currently loaded.</summary>
     public IocFeed Intel { get; private set; } = new();
+    /// <summary>Operator watchlist currently armed. Replaced wholesale on hot reload.</summary>
+    public Watchlist Watchlist { get; private set; } = Watchlist.Empty;
     /// <summary>Observed network/API surface, shared with the engine.</summary>
     public ApiSurfaceInventory Surface { get; }
     /// <summary>Encrypted quarantine store, or null when the operator disabled it.</summary>
@@ -47,6 +49,7 @@ public sealed class Composition : IDisposable
     private readonly IMemoryScanner _scanner;
     private readonly RuleEngineHolder _ruleHolder;
     private readonly IocFeedHolder _intelHolder;
+    private readonly WatchlistHolder _watchHolder;
     private FileSystemWatcher? _configWatcher;
     private MinifilterClient? _minifilter;
     private ControlServer? _control;
@@ -55,7 +58,7 @@ public sealed class Composition : IDisposable
         AuthenticodeVerifier verifier, CompositeSink sink, IMemoryScanner scanner, ShieldHost host,
         ApiSurfaceInventory surface, QuarantineVault? vault, RingBufferSink events,
         NetworkIsolation isolation, RuleEngineHolder ruleHolder, IocFeedHolder intelHolder,
-        ApiSafetyPolicy apiPolicy)
+        WatchlistHolder watchHolder, ApiSafetyPolicy apiPolicy)
     {
         _configPath = configPath;
         Config = config;
@@ -70,6 +73,7 @@ public sealed class Composition : IDisposable
         Isolation = isolation;
         _ruleHolder = ruleHolder;
         _intelHolder = intelHolder;
+        _watchHolder = watchHolder;
         ApiPolicy = apiPolicy;
     }
 
@@ -95,6 +99,10 @@ public sealed class Composition : IDisposable
         var feed = LoadIntel(cfg.Intel, log);
         intelHolder.Set(feed);
 
+        var watchHolder = new WatchlistHolder();
+        var watchlist = LoadWatchlist(cfg.Watchlist, log);
+        watchHolder.Set(watchlist);
+
         var tree = new ProcessTree(clock);
         var beacons = cfg.Detection.EnableBeaconDetection
             ? new BeaconAnalyzer(clock, cfg.Detection.BeaconMinConnections)
@@ -117,7 +125,8 @@ public sealed class Composition : IDisposable
             DgaScore = cfg.Detection.DgaScore,
             EnableDomainAnalysis = cfg.Detection.EnableDomainAnalysis,
             IntelHitScore = cfg.Intel.HitScore,
-            MaxTrackedProcesses = cfg.Detection.MaxTrackedProcesses
+            MaxTrackedProcesses = cfg.Detection.MaxTrackedProcesses,
+            AlertOnEveryWatchlistHit = cfg.Watchlist.AlertOnEveryHit
         };
 
         var deps = new EngineDependencies
@@ -125,8 +134,14 @@ public sealed class Composition : IDisposable
             Clock = clock,
             Tree = tree,
             Beacons = beacons,
-            Rules = ruleHolder.Engine,
-            Intel = cfg.Intel.Enabled ? intelHolder.Feed : null,
+            // Providers, NOT direct references: a reload builds a NEW RuleEngine / IocFeed /
+            // Watchlist, so an engine that captured the object at startup would keep using
+            // the one it was born with and the reload would be a silent no-op.
+            RulesProvider = () => ruleHolder.Engine,
+            // LoadIntel already returns an empty feed when intel.enabled is false, so the
+            // holder alone carries the on/off state across a reload.
+            IntelProvider = () => intelHolder.Feed,
+            WatchlistProvider = () => watchHolder.List,
             Surface = cfg.Api.EnableSurfaceInventory ? surface : null,
             ImageHash = cfg.Intel.Enabled ? hashes.Sha256 : null,
             AnalyzeImage = cfg.Detection.EnablePeAnalysis ? images.Analyze : null
@@ -159,10 +174,11 @@ public sealed class Composition : IDisposable
         var apiPolicy = BuildApiPolicy(cfg.Api.Studio);
 
         var comp = new Composition(configPath, cfg, log, verifier, sink, scanner, host,
-            surface, vault, events, isolation, ruleHolder, intelHolder, apiPolicy)
+            surface, vault, events, isolation, ruleHolder, intelHolder, watchHolder, apiPolicy)
         {
             Rules = ruleSet,
-            Intel = feed
+            Intel = feed,
+            Watchlist = watchlist
         };
 
         host.ExtendedAction = comp.RunExtendedAction;
@@ -192,6 +208,24 @@ public sealed class Composition : IDisposable
         foreach (var e in set.Errors.Where(e => e.IsBlocking).Take(20))
             log.Info($"rules: rejected [{e.RuleId}] {e.Message}");
         return set;
+    }
+
+    /// <summary>
+    /// Compiles the operator watchlist. Rejected entries are logged individually -- an
+    /// operator who mistypes one rule must be told which one, not silently given a shorter
+    /// list than they wrote.
+    /// </summary>
+    private static Watchlist LoadWatchlist(WatchlistConfig w, Logger log)
+    {
+        if (!w.Enabled) return Watchlist.Empty;
+        var list = Watchlist.Compile(w.Entries, m => log.Info("watchlist: " + m));
+        if (list.Count > 0)
+        {
+            int contain = list.Entries.Count(e => e.Action == WatchAction.Quarantine);
+            log.Info($"watchlist: {list.Count} entr{(list.Count == 1 ? "y" : "ies")} armed" +
+                     (contain > 0 ? $", {contain} set to contain on sight" : ""));
+        }
+        return list;
     }
 
     private static IocFeed LoadIntel(IntelConfig i, Logger log)
@@ -440,6 +474,14 @@ public sealed class Composition : IDisposable
             _intelHolder.Set(feed);
             Intel = feed;
 
+            // Same unconditional swap as the rule packs: disabling the watchlist, or
+            // deleting an entry, has to actually disarm it.
+            var watch = LoadWatchlist(next.Watchlist, Log);
+            _watchHolder.Set(watch);
+            Watchlist = watch;
+            if (watch.Count == 0)
+                Log.Info(next.Watchlist.Enabled ? "watchlist: empty" : "watchlist: disabled");
+
             ApiPolicy = BuildApiPolicy(next.Api.Studio);
 
             // The block toggle is the one minifilter setting that reloads live: the client is
@@ -637,6 +679,18 @@ internal sealed class IocFeedHolder
     private volatile IocFeed _feed = new();
     public IocFeed Feed => _feed;
     public void Set(IocFeed feed) => _feed = feed;
+}
+
+/// <summary>
+/// Same atomic-swap treatment for the operator watchlist, so adding "quarantine this
+/// binary on sight" to the config takes effect on the next signal without a restart.
+/// A compiled Watchlist is immutable, so the owner thread reads it without a lock.
+/// </summary>
+internal sealed class WatchlistHolder
+{
+    private volatile Watchlist _list = Watchlist.Empty;
+    public Watchlist List => _list;
+    public void Set(Watchlist list) => _list = list;
 }
 
 /// <summary>

@@ -1,3 +1,4 @@
+using ProcessShield.Analysis;
 using ProcessShield.Api;
 using ProcessShield.Detection;
 
@@ -23,6 +24,31 @@ public sealed class SurfaceRow : ViewModelBase
     public string LastSeen { get; private set; } = "";
     public string ResolvedFrom { get; private set; } = "";
 
+    /// <summary>Where the destination block is registered. Never a network lookup; see GeoIpDatabase.</summary>
+    public GeoLocation Geo { get; private set; } = GeoLocation.Unknown;
+
+    /// <summary>Encrypted transport, inferred from the port. See the caveat on <see cref="Transport"/>.</summary>
+    public bool IsTls => string.Equals(Scheme, "https", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Cleartext HTTP — the case an analyst most wants picked out of a list.</summary>
+    public bool IsPlaintext => string.Equals(Scheme, "http", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Short transport label for the map. Derived from the PORT, so it is a convention,
+    /// not an observation: ProcessShield does not inspect the bytes on the wire, and real
+    /// C2 serves TLS on 8080 and cleartext on 443 whenever it suits.
+    /// </summary>
+    public string Transport => IsTls ? "TLS" : IsPlaintext ? "HTTP" : Scheme.ToUpperInvariant();
+
+    private bool _isHighlighted;
+    /// <summary>Set while the analyst hovers this row, or the map marker it belongs to.</summary>
+    public bool IsHighlighted { get => _isHighlighted; set => Set(ref _isHighlighted, value); }
+
+    /// <summary>Country name, or the reason there isn't one.</summary>
+    public string Location => Geo.IsPrivate ? "Local network"
+                            : Geo.CountryCode.Length > 0 ? Geo.Country
+                            : "Unplaced";
+
     /// <summary>Rendered endpoint, preferring the DNS name when one was correlated.</summary>
     public string Endpoint => Host == Address || string.IsNullOrEmpty(Host)
         ? $"{Address}:{Port}"
@@ -38,13 +64,13 @@ public sealed class SurfaceRow : ViewModelBase
                             : Trusted ? "safe"
                             : "watch";
 
-    public SurfaceRow(SurfaceEndpoint e)
+    public SurfaceRow(SurfaceEndpoint e, GeoIpDatabase? geo = null)
     {
         Key = e.Key;
-        Update(e);
+        Update(e, geo);
     }
 
-    public void Update(SurfaceEndpoint e)
+    public void Update(SurfaceEndpoint e, GeoIpDatabase? geo = null)
     {
         Pid = e.Pid;
         Process = e.ProcessName;
@@ -57,6 +83,7 @@ public sealed class SurfaceRow : ViewModelBase
         Trusted = e.Trusted;
         LastSeen = e.LastSeenUtc.ToLocalTime().ToString("HH:mm:ss");
         ResolvedFrom = string.Join(", ", e.ResolvedFrom);
+        Geo = geo?.Locate(e.Address) ?? GeoLocation.Unknown;
 
         OnPropertyChanged(nameof(Pid));
         OnPropertyChanged(nameof(Process));
@@ -73,6 +100,11 @@ public sealed class SurfaceRow : ViewModelBase
         OnPropertyChanged(nameof(Detail));
         OnPropertyChanged(nameof(Cadence));
         OnPropertyChanged(nameof(Severity));
+        OnPropertyChanged(nameof(Geo));
+        OnPropertyChanged(nameof(IsTls));
+        OnPropertyChanged(nameof(IsPlaintext));
+        OnPropertyChanged(nameof(Transport));
+        OnPropertyChanged(nameof(Location));
     }
 }
 

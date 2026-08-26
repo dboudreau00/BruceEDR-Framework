@@ -20,7 +20,7 @@ public partial class MainWindow : Window
         DataContext = _vm;
 
         RestorePlacement();
-        _vm.SelectedTabIndex = Math.Clamp(_ui.LastTabIndex, 0, 4);
+        _vm.SelectedTabIndex = Math.Clamp(_ui.LastTabIndex, 0, MainViewModel.TabCount - 1);
         _vm.Settings.AttachUiState(_ui);
 
         Loaded += (_, _) =>

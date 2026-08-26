@@ -19,6 +19,8 @@
         <KeyBinding Key="D3" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="2"/>
         <KeyBinding Key="D4" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="3"/>
         <KeyBinding Key="D5" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="4"/>
+        <KeyBinding Key="D6" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="5"/>
+        <KeyBinding Key="D7" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="6"/>
     </Window.InputBindings>
 
     <Grid>
@@ -37,6 +39,12 @@
             </TabItem>
             <TabItem Header="API surface" Style="{StaticResource Nav.Item}">
                 <v:SurfaceView/>
+            </TabItem>
+            <TabItem Header="Network map" Style="{StaticResource Nav.Item}">
+                <v:MapView/>
+            </TabItem>
+            <TabItem Header="Watchlist" Style="{StaticResource Nav.Item}">
+                <v:WatchlistView DataContext="{Binding WatchlistEditor}"/>
             </TabItem>
             <TabItem Header="Coverage" Style="{StaticResource Nav.Item}">
                 <v:CoverageView/>

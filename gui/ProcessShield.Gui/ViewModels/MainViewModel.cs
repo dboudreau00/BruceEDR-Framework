@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
+using ProcessShield.Analysis;
 using ProcessShield.Api;
 using ProcessShield.Core;
 using ProcessShield.Detection;
@@ -29,6 +30,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private int _refreshing;   // guards against overlapping refreshes
     private bool _started;     // Start() is one-shot even if the window reloads
 
+    private GeoIpDatabase _geo = GeoIpDatabase.Empty;
+
     private DateTime _startedUtc;
     private long _lastSignals;          // for the events/sec estimate
     private DateTime _lastSignalsAtUtc;
@@ -39,7 +42,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ObservableCollection<SurfaceRow> Surface { get; } = new();
     /// <summary>ATT&amp;CK techniques the loaded rules cover, and what has been seen.</summary>
     public ObservableCollection<TechniqueRow> Techniques { get; } = new();
+    /// <summary>Observed destinations aggregated by country, for the network map.</summary>
+    public ObservableCollection<MapMarker> Markers { get; } = new();
+    /// <summary>Traffic the map cannot place (local network, IPv6, unallocated space).</summary>
+    public UnplacedGroup Unplaced { get; } = new();
+    /// <summary>Simplified world outline. Empty when the asset is missing; the map still draws.</summary>
+    public WorldMap World { get; private set; } = WorldMap.Empty;
     public SettingsViewModel Settings { get; }
+    /// <summary>Editor for the operator watchlist; writes the same config the engine reloads.</summary>
+    public WatchlistViewModel WatchlistEditor { get; }
 
     /// <summary>Raised for tray balloons: (title, message). Fired on containment and monitor loss.</summary>
     public event Action<string, string>? AlertRaised;
@@ -53,6 +64,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _dispatcher = Dispatcher.CurrentDispatcher;
         _configPath = configPath;
         Settings = new SettingsViewModel(configPath);
+        WatchlistEditor = new WatchlistViewModel(configPath);
 
         ReleaseCommand = new RelayCommand(() => Act(p => _host!.Resume(p)), () => HasSelection && IsRunning);
         SuspendCommand = new RelayCommand(() => Act(p => _host!.Suspend(p)), () => HasSelection && IsRunning);
@@ -71,7 +83,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         SetEventFilterCommand = new RelayCommandP(p => EventFilter = p as string ?? "ALL");
         SelectTabCommand = new RelayCommandP(p =>
         {
-            if (int.TryParse(p as string, out var i)) SelectedTabIndex = Math.Clamp(i, 0, 4);
+            if (int.TryParse(p as string, out var i)) SelectedTabIndex = Math.Clamp(i, 0, TabCount - 1);
         });
 
         // The default collection views are what the XAML binds to, so installing a
@@ -108,6 +120,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             try { Settings.LoadFrom(_composition.Config); }
             catch (Exception ex) { AppLog.Error("settings load", ex); }
 
+            try { WatchlistEditor.LoadFrom(_composition.Config); }
+            catch (Exception ex) { AppLog.Error("watchlist load", ex); }
+
             try
             {
                 // Rule coverage is fixed until a reload, so compute it once here rather
@@ -118,6 +133,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 CoveredTechniqueCount = _ruleCoverage.Count;
             }
             catch (Exception ex) { AppLog.Error("rule coverage", ex); }
+
+            try
+            {
+                // Offline assets only -- the map must never cause a network call. Missing
+                // files degrade to "unplaced" markers rather than failing the view.
+                var geoDir = Path.Combine(AppContext.BaseDirectory, "intel", "geo");
+                _geo = GeoIpDatabase.Load(geoDir, m => AppLog.Info("geo: " + m));
+                World = WorldMap.Load(Path.Combine(geoDir, "world.txt"), m => AppLog.Info("geo: " + m));
+                OnPropertyChanged(nameof(World));
+                GeoReady = _geo.IsLoaded;
+            }
+            catch (Exception ex) { AppLog.Error("geo load", ex); }
 
             if (!IsRunning)
             {
@@ -526,14 +553,105 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             foreach (var e in ordered)
             {
                 var row = Surface.FirstOrDefault(r => r.Key == e.Key);
-                if (row is null) Surface.Add(new SurfaceRow(e));
-                else row.Update(e);
+                if (row is null) Surface.Add(new SurfaceRow(e, _geo));
+                else row.Update(e, _geo);
             }
             for (int i = Surface.Count - 1; i >= 0; i--)
                 if (!ordered.Any(e => e.Key == Surface[i].Key))
                     Surface.RemoveAt(i);
+
+            MergeMarkers();
         }
         catch (Exception ex) { AppLog.Error("merge surface", ex); }
+    }
+
+    /// <summary>
+    /// Folds the observed endpoints into one marker per country. Markers are kept as stable
+    /// objects across refreshes so a hover highlight survives the 1.5 s tick -- rebuilding
+    /// the collection would drop the highlight out from under the analyst's cursor.
+    /// </summary>
+    private void MergeMarkers()
+    {
+        try
+        {
+            var placed = new Dictionary<string, List<SurfaceRow>>(StringComparer.OrdinalIgnoreCase);
+            int local = 0, unknown = 0;
+
+            foreach (var row in Surface)
+            {
+                if (row.Geo.IsPrivate) { local++; continue; }
+                if (row.Geo.CountryCode.Length == 0) { unknown++; continue; }
+
+                if (!placed.TryGetValue(row.Geo.CountryCode, out var bucket))
+                    placed[row.Geo.CountryCode] = bucket = new List<SurfaceRow>();
+                bucket.Add(row);
+            }
+
+            Unplaced.Set(local, unknown);
+
+            foreach (var kv in placed)
+            {
+                var marker = Markers.FirstOrDefault(m => m.CountryCode == kv.Key);
+                if (marker is null)
+                {
+                    var g = kv.Value[0].Geo;
+                    marker = new MapMarker(g.CountryCode, g.Country, g.Latitude, g.Longitude);
+                    Markers.Add(marker);
+                }
+                // Worst-first, so the tooltip's truncated list shows what matters.
+                kv.Value.Sort((a, b) =>
+                {
+                    int s = Rank(b.Severity).CompareTo(Rank(a.Severity));
+                    return s != 0 ? s : b.Connections.CompareTo(a.Connections);
+                });
+                marker.Update(kv.Value);
+            }
+
+            for (int i = Markers.Count - 1; i >= 0; i--)
+                if (!placed.ContainsKey(Markers[i].CountryCode))
+                    Markers.RemoveAt(i);
+
+            MappedCount = placed.Count;
+        }
+        catch (Exception ex) { AppLog.Error("merge markers", ex); }
+    }
+
+    private static int Rank(string severity) => severity switch
+    {
+        "threat" => 2,
+        "watch" => 1,
+        _ => 0,
+    };
+
+    /// <summary>
+    /// Highlights a marker and every endpoint row folded into it (or clears the highlight
+    /// when <paramref name="marker"/> is null). This is the two-way hover link between the
+    /// map and the endpoint list.
+    /// </summary>
+    public void HighlightMarker(MapMarker? marker)
+    {
+        try
+        {
+            foreach (var m in Markers) m.IsHighlighted = ReferenceEquals(m, marker);
+            foreach (var r in Surface)
+                r.IsHighlighted = marker is not null && marker.Endpoints.Contains(r);
+            HoveredMarker = marker;
+        }
+        catch (Exception ex) { AppLog.Error("highlight marker", ex); }
+    }
+
+    /// <summary>Highlights the marker that owns an endpoint row, for hovering the list side.</summary>
+    public void HighlightEndpoint(SurfaceRow? row)
+    {
+        try
+        {
+            if (row is null) { HighlightMarker(null); return; }
+            var marker = Markers.FirstOrDefault(m => m.Endpoints.Contains(row));
+            foreach (var m in Markers) m.IsHighlighted = ReferenceEquals(m, marker);
+            foreach (var r in Surface) r.IsHighlighted = ReferenceEquals(r, row);
+            HoveredMarker = marker;
+        }
+        catch (Exception ex) { AppLog.Error("highlight endpoint", ex); }
     }
 
     private void MergeTechniques(ShieldHost host)
@@ -709,6 +827,31 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public int CountInfo { get => _countInfo; set => Set(ref _countInfo, value); }
     private int _countError;
     public int CountError { get => _countError; set => Set(ref _countError, value); }
+
+    // ---- network map ----
+    private bool _geoReady;
+    /// <summary>False when the offline geo table is missing; the view says so instead of lying.</summary>
+    public bool GeoReady
+    {
+        get => _geoReady;
+        set { if (Set(ref _geoReady, value)) OnPropertyChanged(nameof(GeoMissing)); }
+    }
+    public bool GeoMissing => !_geoReady;
+
+    private int _mappedCount;
+    /// <summary>Distinct countries currently plotted.</summary>
+    public int MappedCount { get => _mappedCount; set => Set(ref _mappedCount, value); }
+
+    private MapMarker? _hoveredMarker;
+    public MapMarker? HoveredMarker
+    {
+        get => _hoveredMarker;
+        set { if (Set(ref _hoveredMarker, value)) OnPropertyChanged(nameof(HasHoveredMarker)); }
+    }
+    public bool HasHoveredMarker => _hoveredMarker is not null;
+
+    /// <summary>Number of nav items, so shortcut clamping and saved state agree with the XAML.</summary>
+    public const int TabCount = 7;
 
     private int _selectedTabIndex;
     public int SelectedTabIndex { get => _selectedTabIndex; set => Set(ref _selectedTabIndex, value); }

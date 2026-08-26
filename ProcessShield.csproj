@@ -70,6 +70,10 @@
     <None Update="rules\**\*.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Replay\scenarios\**\*.jsonl" CopyToOutputDirectory="PreserveNewest" />
     <None Update="intel\feeds\**\*.txt" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Offline geo assets for the network map (public-domain sources; see intel/geo/README.md). -->
+    <None Update="intel\geo\ipv4-country.bin" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="intel\geo\countries.csv" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="intel\geo\world.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

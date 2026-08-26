@@ -32,6 +32,12 @@ public sealed class EngineOptions
 
     /// <summary>Hard ceiling on tracked profiles so a telemetry flood cannot exhaust memory.</summary>
     public int MaxTrackedProcesses { get; init; } = 16384;
+
+    /// <summary>
+    /// Raise an alert for a <c>score</c>-action watchlist hit even when the process never
+    /// crosses a threshold. Operators usually want to know their named binary ran at all.
+    /// </summary>
+    public bool AlertOnEveryWatchlistHit { get; init; } = true;
 }
 
 /// <summary>
@@ -44,14 +50,43 @@ public sealed class EngineDependencies
     public static readonly EngineDependencies Empty = new();
 
     public IClock Clock { get; init; } = SystemClock.Instance;
-    /// <summary>Declarative JSON rules. Null means builtin C# rules only.</summary>
+    /// <summary>
+    /// Declarative JSON rules. Null means builtin C# rules only.
+    ///
+    /// This is a STATIC binding, for tests, the replay harness and any embedding that never
+    /// reloads. A host that hot-reloads config must supply <see cref="RulesProvider"/>
+    /// instead: a compiled RuleEngine is immutable, so a reload builds a new one, and an
+    /// engine holding this reference would keep evaluating the pack it was born with.
+    /// </summary>
     public RuleEngine? Rules { get; init; }
+
+    /// <summary>
+    /// Late-bound rules, re-read on every signal so a config reload actually takes effect.
+    /// Takes precedence over <see cref="Rules"/> when both are set.
+    /// </summary>
+    public Func<RuleEngine?>? RulesProvider { get; init; }
     /// <summary>Process lineage, used for ancestry-aware rules and richer alerts.</summary>
     public ProcessTree? Tree { get; init; }
     /// <summary>C2 cadence analysis over outbound connections.</summary>
     public BeaconAnalyzer? Beacons { get; init; }
-    /// <summary>Operator-supplied indicator feeds.</summary>
+    /// <summary>Operator-supplied indicator feeds. Static binding; see <see cref="IntelProvider"/>.</summary>
     public IocFeed? Intel { get; init; }
+
+    /// <summary>Late-bound indicator feed, so a reloaded feed reaches the engine.</summary>
+    public Func<IocFeed?>? IntelProvider { get; init; }
+
+    /// <summary>Operator-defined process watchlist. Null or empty disables the check entirely.</summary>
+    public Watchlist? Watchlist { get; init; }
+
+    /// <summary>Late-bound watchlist, so an edited watchlist takes effect without a restart.</summary>
+    public Func<Watchlist?>? WatchlistProvider { get; init; }
+
+    /// <summary>Resolves the rules to evaluate right now.</summary>
+    internal RuleEngine? CurrentRules() => RulesProvider is null ? Rules : RulesProvider();
+    /// <summary>Resolves the indicator feed to match against right now.</summary>
+    internal IocFeed? CurrentIntel() => IntelProvider is null ? Intel : IntelProvider();
+    /// <summary>Resolves the watchlist in force right now.</summary>
+    internal Watchlist? CurrentWatchlist() => WatchlistProvider is null ? Watchlist : WatchlistProvider();
     /// <summary>Observed endpoint inventory, fed from network and DNS signals.</summary>
     public ApiSurfaceInventory? Surface { get; init; }
     /// <summary>
@@ -95,6 +130,8 @@ public sealed class DetectionEngine
     private TimeSpan _window;
     private int _trustDiscount;
 
+    private readonly bool _alertOnEveryWatchlistHit;
+
     private readonly Func<int, bool> _isTrusted;
     private readonly EngineOptions _opt;
     private readonly EngineDependencies _deps;
@@ -113,6 +150,7 @@ public sealed class DetectionEngine
         _deps = deps;
         _clock = deps.Clock;
         _isTrusted = isTrusted;
+        _alertOnEveryWatchlistHit = opt.AlertOnEveryWatchlistHit;
         _lastPrune = _clock.UtcNow;
         Apply(opt.WarnThreshold, opt.QuarantineThreshold,
               (int)opt.CorrelationWindow.TotalSeconds, opt.TrustDiscount);
@@ -184,6 +222,7 @@ public sealed class DetectionEngine
             case SignalKind.NamedPipe:      RuleNamedPipe(p, s);    break;
         }
 
+        EvaluateWatchlist(p, s.TimestampUtc);
         EvaluateDeclarativeRules(p, s);
         MatchIndicators(p, s);
         _deps.Surface?.Observe(s);
@@ -457,7 +496,7 @@ public sealed class DetectionEngine
 
     private void EvaluateDeclarativeRules(ThreatProfile p, Signal s)
     {
-        var engine = _deps.Rules;
+        var engine = _deps.CurrentRules();
         if (engine is null) return;
 
         var ctx = new RuleContext
@@ -486,7 +525,7 @@ public sealed class DetectionEngine
 
     private void MatchIndicators(ThreatProfile p, Signal s)
     {
-        var feed = _deps.Intel;
+        var feed = _deps.CurrentIntel();
         if (feed is null || feed.Count == 0) return;
 
         if (s.Kind == SignalKind.DnsQuery && !string.IsNullOrEmpty(s.Domain))
@@ -637,6 +676,66 @@ public sealed class DetectionEngine
                        IReadOnlyList<string> techniques, DateTime nowUtc)
         => p.Add(points, reason, ruleId, techniques, nowUtc);
 
+    // ------------------------------------------------------- operator watchlist
+
+    /// <summary>
+    /// Checks the process identity against the operator watchlist. Runs at most once per
+    /// distinct identity: a process whose ImagePath or hash only becomes known after its
+    /// ProcessStart is re-checked when that happens, but a steady-state process costs one
+    /// string compare per signal, not a list scan.
+    /// </summary>
+    private void EvaluateWatchlist(ThreatProfile p, DateTime nowUtc)
+    {
+        var list = _deps.CurrentWatchlist();
+        if (list is null || list.Count == 0) return;
+        // Quarantine is terminal, so stop looking. A Warn-level hit still re-checks: a
+        // process can match a name entry first and a stricter hash entry once its image
+        // has been hashed, and the stricter one must be allowed to escalate.
+        if (p.ForcedVerdict == Verdict.Quarantine) return;
+
+        // Hashing touches disk, so only resolve it when an entry actually matches on hash.
+        string? hash = null;
+        if (list.NeedsHash && p.ImagePath.Length > 0 && _deps.ImageHash is { } hasher)
+        {
+            try { hash = hasher(p.ImagePath); } catch { hash = null; }
+        }
+
+        string fingerprint = p.ProcessName + "|" + p.ImagePath + "|" + (hash ?? "") + "|" + p.CommandLine.Length;
+        if (string.Equals(fingerprint, p.WatchlistFingerprint, StringComparison.Ordinal)) return;
+        p.WatchlistFingerprint = fingerprint;
+
+        var hit = list.Match(p.ProcessName, p.ImagePath, p.CommandLine, hash);
+        if (hit is null) return;
+
+        p.WatchlistRuleId = hit.Entry.RuleId;
+
+        switch (hit.Action)
+        {
+            case WatchAction.Quarantine:
+                // Deliberately does NOT inflate the score to the quarantine threshold. The
+                // score means "weight of observed evidence"; this containment is operator
+                // POLICY, and ForcedVerdict is what carries it. Faking the score would make
+                // the incident read as though the process had earned it on behaviour, and
+                // would hide the watchlist as the real cause in the alert trigger.
+                Score(p, hit.Entry.Score, hit.Reason, hit.Entry.RuleId, hit.Entry.Techniques, nowUtc);
+                p.ForcedVerdict = Verdict.Quarantine;
+                break;
+
+            case WatchAction.Warn:
+                Score(p, Math.Max(hit.Entry.Score, 0), hit.Reason, hit.Entry.RuleId,
+                      hit.Entry.Techniques, nowUtc);
+                p.ForcedVerdict = Verdict.Warn;
+                break;
+
+            default:
+                Score(p, hit.Entry.Score, hit.Reason, hit.Entry.RuleId, hit.Entry.Techniques, nowUtc);
+                // A Score entry deliberately does NOT force a verdict: it feeds the normal
+                // thresholds, unless the operator asked to hear about every hit.
+                if (_alertOnEveryWatchlistHit) p.ForcedVerdict = Verdict.Warn;
+                break;
+        }
+    }
+
     private DetectionResult? Decide(ThreatProfile p, string trigger, DateTime nowUtc)
     {
         // Authenticode verification is deferred until the score could actually be changed
@@ -680,6 +779,16 @@ public sealed class DetectionEngine
         Verdict v = eff >= _quarantine ? Verdict.Quarantine
                   : eff >= _warn ? Verdict.Warn
                   : Verdict.Allow;
+
+        // An operator watchlist hit is a FLOOR on the verdict, applied after scoring. It has
+        // to sit here rather than in the score so that a forced Quarantine survives the
+        // trusted-publisher discount: when the operator has named the binary by hand, a
+        // valid signature is not evidence of innocence.
+        if (p.ForcedVerdict is { } forced && forced > v)
+        {
+            v = forced;
+            trigger = "Watchlist";
+        }
 
         if (v == Verdict.Allow) return null;
 

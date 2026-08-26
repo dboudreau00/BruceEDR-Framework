@@ -194,6 +194,23 @@ public sealed class ThreatProfile
 
     /// <summary>Stable incident id, assigned the first time this process is flagged.</summary>
     public string IncidentId { get; set; } = "";
+
+    /// <summary>
+    /// Verdict floor set by an operator watchlist hit. Applied in Decide AFTER the score
+    /// has been turned into a verdict, so a forced Quarantine bypasses the trusted-publisher
+    /// discount entirely -- "signed" is not a defence when the operator named the binary.
+    /// </summary>
+    public Verdict? ForcedVerdict { get; set; }
+
+    /// <summary>The watchlist entry that fired, for the alert and the audit trail.</summary>
+    public string WatchlistRuleId { get; set; } = "";
+
+    /// <summary>
+    /// Identity fingerprint (name|path|hash) at the last watchlist evaluation. The engine
+    /// re-checks only when it changes, so a process whose ImagePath arrives after its
+    /// ProcessStart still gets matched, without re-scanning the list on every signal.
+    /// </summary>
+    public string WatchlistFingerprint { get; set; } = "";
     /// <summary>
     /// How many distinct techniques had been reported the last time a verdict was emitted.
     /// Containment fires once, but evidence keeps arriving afterwards; comparing against

@@ -78,7 +78,59 @@ flagged processes with one-click **Release / Suspend / End process**, a live eve
 feed, and a Settings editor that writes `shield.config.json` (threshold and
 allowlist changes apply live).
 
-Analyst conveniences built in:
+### Watchlist — writing your own detections
+
+The **Watchlist** tab is where you name things you have already decided do not belong on
+your estate. Each entry matches on one of four things — process **name**, image **path**,
+image **SHA-256**, or a **command-line** fragment (names and paths accept `*`/`?` globs) —
+and picks one of three actions:
+
+| Action | What happens |
+|---|---|
+| `quarantine` | Contained on sight: suspended and network-blocked the moment it appears |
+| `warn` | Alert only, no containment |
+| `score` | Adds points and lets the normal thresholds decide |
+
+Two things make this more than a blocklist:
+
+- **A `quarantine` entry overrides a trusted signature.** If you name a binary by hand, a
+  valid Authenticode chain does not excuse it — that is the whole point of naming it.
+- **It cannot be aimed at Windows itself.** Entries resolving to a protected system process
+  (`lsass.exe`, `csrss.exe`, `services.exe`, `svchost.exe`, …) are still *reported*, but
+  containment is refused, so a typo in a rule cannot bugcheck the host it is defending.
+
+Entries live in `shield.config.json` under `watchlist` and are **hot-reloaded** — saving in
+the GUI arms them within a second or two, no restart. Invalid entries are rejected
+individually with the reason, and a pattern that would match everything (`*`, `*.exe`) is
+refused outright.
+
+```jsonc
+"watchlist": {
+  "enabled": true,
+  "entries": [
+    { "match": "name",    "value": "mimikatz",  "action": "quarantine", "note": "red-team tooling" },
+    { "match": "hash",    "value": "<sha256>",  "action": "quarantine", "note": "IOC from IR-2451" },
+    { "match": "cmdline", "value": "-enc",      "action": "score", "score": 25 },
+    { "match": "path",    "value": "\\appdata\\local\\temp\\", "action": "warn" }
+  ]
+}
+```
+
+### Network map
+
+The **Network map** plots every observed outbound destination on a world map, grouped by
+country and sized by connection volume. Hovering a marker highlights its endpoints in the
+side list and vice versa; markers are coloured by severity, and a **dashed ring marks a
+destination reached over plaintext HTTP**. Traffic that cannot be placed (local network,
+IPv6, unallocated space) is counted in a tray rather than silently dropped.
+
+Geolocation is **fully offline** — ProcessShield makes no network call to build this view,
+because asking a third party where an address is would tell them exactly which
+infrastructure you are investigating. It resolves the country an address block is
+*registered* to, at `/16` resolution, so CDNs and anycast land in the wrong place. Read
+`intel/geo/README.md` before drawing any conclusion from a marker.
+
+### Analyst conveniences
 
 - **Incident detail** — the selected process shows its ATT&CK technique chips,
   command line, ancestry chain, peak score and reason timeline; **Copy report**

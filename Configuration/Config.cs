@@ -11,6 +11,7 @@ public sealed class ShieldConfig
     public IntelConfig Intel { get; set; } = new();
     public ResponseConfig Response { get; set; } = new();
     public ApiConfig Api { get; set; } = new();
+    public WatchlistConfig Watchlist { get; set; } = new();
 
     public void ClampAndValidate()
     {
@@ -31,6 +32,14 @@ public sealed class ShieldConfig
 
         if (string.IsNullOrWhiteSpace(Telemetry.Format)) Telemetry.Format = "native";
         if (string.IsNullOrWhiteSpace(Response.QuarantineVaultPath)) Response.QuarantineVaultPath = "quarantine";
+
+        foreach (var w in Watchlist.Entries)
+        {
+            if (w is null) continue;
+            // A Score entry is only meaningful with points; clamp so a hand-edited config
+            // cannot make one worth more than the quarantine threshold by accident.
+            w.Score = Math.Clamp(w.Score, 0, 100);
+        }
 
         Api.Control.Port = Math.Clamp(Api.Control.Port, 1024, 65535);
         Api.Studio.MaxRequestsPerSecond = Math.Clamp(Api.Studio.MaxRequestsPerSecond, 0.1, 100.0);
@@ -92,6 +101,44 @@ public sealed class DetectionConfig
 
     /// <summary>Hard cap on tracked process profiles, so telemetry floods cannot exhaust memory.</summary>
     public int MaxTrackedProcesses { get; set; } = 16384;
+}
+
+/// <summary>
+/// Operator-defined "if you see this, act" list. This is the custom-detection surface:
+/// the JSON rule packs describe behaviour, this names specific binaries an operator has
+/// decided do not belong on their estate (red-team tooling, unapproved remote access,
+/// a hash pulled from an incident report).
+/// </summary>
+public sealed class WatchlistConfig
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Emit an alert for a hit even when the action is only <c>score</c> and the process
+    /// never crosses a threshold. Operators generally want to know their named binary ran,
+    /// regardless of whether it earned enough points to be contained.
+    /// </summary>
+    public bool AlertOnEveryHit { get; set; } = true;
+
+    public WatchlistEntryConfig[] Entries { get; set; } = Array.Empty<WatchlistEntryConfig>();
+}
+
+/// <summary>One watchlist rule as it appears in shield.config.json.</summary>
+public sealed class WatchlistEntryConfig
+{
+    /// <summary><c>name</c> | <c>path</c> | <c>hash</c> | <c>cmdline</c>.</summary>
+    public string Match { get; set; } = "name";
+    /// <summary>The process name, path fragment, SHA-256 or command-line fragment to look for.</summary>
+    public string Value { get; set; } = "";
+    /// <summary><c>quarantine</c> | <c>warn</c> | <c>score</c>.</summary>
+    public string Action { get; set; } = "quarantine";
+    /// <summary>Points added when <see cref="Action"/> is <c>score</c>.</summary>
+    public int Score { get; set; } = 50;
+    /// <summary>Why this is on the list. Carried into the alert and the audit log.</summary>
+    public string Note { get; set; } = "";
+    /// <summary>Optional ATT&amp;CK technique ids to attribute to a hit.</summary>
+    public string[] Techniques { get; set; } = Array.Empty<string>();
+    public bool Enabled { get; set; } = true;
 }
 
 public sealed class IntelConfig

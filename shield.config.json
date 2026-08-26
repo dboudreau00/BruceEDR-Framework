@@ -71,6 +71,28 @@
     "syslog": { "enabled": false, "host": "127.0.0.1", "port": 514, "protocol": "udp", "appName": "ProcessShield" },
     "webhook": { "enabled": false, "url": "" }
   },
+  "watchlist": {
+    "enabled": true,
+    "alertOnEveryHit": true,
+    "entries": [
+      {
+        "match": "name",
+        "value": "mimikatz",
+        "action": "quarantine",
+        "note": "credential-dumping tool; never legitimate on a managed endpoint",
+        "techniques": [ "T1003.001" ],
+        "enabled": false
+      },
+      {
+        "match": "cmdline",
+        "value": "-enc",
+        "action": "score",
+        "score": 25,
+        "note": "base64-encoded PowerShell; scores rather than convicts",
+        "enabled": false
+      }
+    ]
+  },
   "service": {
     "serviceName": "ProcessShield",
     "heartbeatPath": "C:\\ProgramData\\ProcessShield\\heartbeat",
