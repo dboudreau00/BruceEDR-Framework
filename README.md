@@ -4,6 +4,8 @@
 
 # BruceEDR
 
+Behavioural Risk Under Correlated Evidence
+
 **An open, hackable Windows EDR framework — behavioural detection, ATT&CK-mapped JSON rules,
 encrypted containment, SIEM-native telemetry, and a built-in API inspector for the endpoints
 your machine actually talks to.**
