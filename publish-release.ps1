@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-  Build, test, and package a self-contained ProcessShield release for Windows x64.
+  Build, test, and package a self-contained BruceEDR release for Windows x64.
 
 .DESCRIPTION
-  Produces artifacts/ProcessShield-<version>-win-x64.zip containing single-file,
-  self-contained ProcessShield.exe (console) and ProcessShield.Gui.exe (desktop),
+  Produces artifacts/BruceEDR-<version>-win-x64.zip containing single-file,
+  self-contained BruceEDR.exe (console) and BruceEDR.Gui.exe (desktop),
   plus the sample config, YARA rules, and docs. No .NET runtime required on the target.
 
 .EXAMPLE
@@ -18,11 +18,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$name = "ProcessShield-v$Version-$Rid"
+$name = "BruceEDR-v$Version-$Rid"
 $artifacts = Join-Path $root "artifacts"
 $stage = Join-Path $artifacts $name
 
-Write-Host "== ProcessShield release $Version ($Rid) ==" -ForegroundColor Cyan
+Write-Host "== BruceEDR release $Version ($Rid) ==" -ForegroundColor Cyan
 
 # Clean prior artifacts
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
@@ -30,9 +30,9 @@ New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 # 1) Gate on a clean build + green tests
 Write-Host "-- build + test" -ForegroundColor Cyan
-dotnet build "$root/ProcessShield.sln" -c Release --nologo
+dotnet build "$root/BruceEDR.sln" -c Release --nologo
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
-dotnet test "$root/tests/ProcessShield.Tests/ProcessShield.Tests.csproj" -c Release --nologo
+dotnet test "$root/tests/BruceEDR.Tests/BruceEDR.Tests.csproj" -c Release --nologo
 if ($LASTEXITCODE -ne 0) { throw "tests failed" }
 
 $common = @(
@@ -47,23 +47,23 @@ $common = @(
 Write-Host "-- publish console" -ForegroundColor Cyan
 $conOut = Join-Path $artifacts "_console"
 if (Test-Path $conOut) { Remove-Item $conOut -Recurse -Force }
-dotnet publish "$root/ProcessShield.csproj" @common -o $conOut
+dotnet publish "$root/BruceEDR.csproj" @common -o $conOut
 if ($LASTEXITCODE -ne 0) { throw "console publish failed" }
 
 # 3) Publish the WPF GUI into a gui/ subfolder
 Write-Host "-- publish gui" -ForegroundColor Cyan
 $guiOut = Join-Path $artifacts "_gui"
 if (Test-Path $guiOut) { Remove-Item $guiOut -Recurse -Force }
-dotnet publish "$root/gui/ProcessShield.Gui/ProcessShield.Gui.csproj" @common -o $guiOut
+dotnet publish "$root/gui/BruceEDR.Gui/BruceEDR.Gui.csproj" @common -o $guiOut
 if ($LASTEXITCODE -ne 0) { throw "gui publish failed" }
 
 # 4) Stage: console exe at the root, gui exe under gui/, plus config/rules/docs
 Write-Host "-- stage" -ForegroundColor Cyan
-Copy-Item (Join-Path $conOut "ProcessShield.exe") $stage -Force
+Copy-Item (Join-Path $conOut "BruceEDR.exe") $stage -Force
 New-Item -ItemType Directory -Force -Path (Join-Path $stage "gui") | Out-Null
-Copy-Item (Join-Path $guiOut "ProcessShield.Gui.exe") (Join-Path $stage "gui") -Force
+Copy-Item (Join-Path $guiOut "BruceEDR.Gui.exe") (Join-Path $stage "gui") -Force
 
-Copy-Item (Join-Path $root "shield.config.json") $stage -Force
+Copy-Item (Join-Path $root "bruce.config.json") $stage -Force
 # rules/ carries both the YARA samples and the JSON detection packs the agent loads at
 # startup; Replay/scenarios and intel/feeds are what make --selftest and the intel feature
 # work out of the box in the shipped layout.
@@ -82,7 +82,7 @@ Copy-Item (Join-Path $root "docs") (Join-Path $stage "docs") -Recurse -Force
 #     exe against the shipped rules and scenarios, so a rule pack that got left out of the
 #     zip fails the build rather than the user's first run.
 Write-Host "-- self-test the staged build" -ForegroundColor Cyan
-& (Join-Path $stage "ProcessShield.exe") --selftest
+& (Join-Path $stage "BruceEDR.exe") --selftest
 if ($LASTEXITCODE -ne 0) { throw "self-test failed against the staged release" }
 
 # 5) Zip

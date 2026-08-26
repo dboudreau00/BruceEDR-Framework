@@ -1,9 +1,9 @@
-using ProcessShield.Analysis;
-using ProcessShield.Api;
-using ProcessShield.Core;
-using ProcessShield.Intel;
+using BruceEDR.Analysis;
+using BruceEDR.Api;
+using BruceEDR.Core;
+using BruceEDR.Intel;
 
-namespace ProcessShield.Detection;
+namespace BruceEDR.Detection;
 
 public sealed class EngineOptions
 {
@@ -33,11 +33,9 @@ public sealed class EngineOptions
     /// <summary>Hard ceiling on tracked profiles so a telemetry flood cannot exhaust memory.</summary>
     public int MaxTrackedProcesses { get; init; } = 16384;
 
-    /// <summary>
-    /// Raise an alert for a <c>score</c>-action watchlist hit even when the process never
-    /// crosses a threshold. Operators usually want to know their named binary ran at all.
-    /// </summary>
-    public bool AlertOnEveryWatchlistHit { get; init; } = true;
+    // NOTE: the watchlist's "alert on every hit" policy deliberately does NOT live here.
+    // EngineOptions is captured once at construction, so a setting parked here could never
+    // be changed by a config reload. It rides on the compiled Watchlist instead.
 }
 
 /// <summary>
@@ -98,7 +96,7 @@ public sealed class EngineDependencies
 
     /// <summary>
     /// Parses a process image (PE sections, entropy, imphash, packer indicators, suspicious
-    /// imports). Reads up to tens of megabytes, so ShieldHost runs it on the response worker
+    /// imports). Reads up to tens of megabytes, so BruceHost runs it on the response worker
     /// and folds the result back in -- never on the detection thread.
     /// </summary>
     public Func<string, FileAnalysis?>? AnalyzeImage { get; init; }
@@ -113,7 +111,7 @@ public sealed class DetectionResult
 
 /// <summary>
 /// Pure detection state machine. Every public method is invoked ONLY from the
-/// single ShieldHost owner thread, so the profile store needs no locking. Ingest
+/// single BruceHost owner thread, so the profile store needs no locking. Ingest
 /// returns zero or more verdicts (a single archive signal can implicate several
 /// processes). Thresholds are hot-updatable via UpdateThresholds (also owner-thread).
 ///
@@ -129,8 +127,6 @@ public sealed class DetectionEngine
     private int _scanAt;
     private TimeSpan _window;
     private int _trustDiscount;
-
-    private readonly bool _alertOnEveryWatchlistHit;
 
     private readonly Func<int, bool> _isTrusted;
     private readonly EngineOptions _opt;
@@ -150,7 +146,6 @@ public sealed class DetectionEngine
         _deps = deps;
         _clock = deps.Clock;
         _isTrusted = isTrusted;
-        _alertOnEveryWatchlistHit = opt.AlertOnEveryWatchlistHit;
         _lastPrune = _clock.UtcNow;
         Apply(opt.WarnThreshold, opt.QuarantineThreshold,
               (int)opt.CorrelationWindow.TotalSeconds, opt.TrustDiscount);
@@ -228,7 +223,7 @@ public sealed class DetectionEngine
         _deps.Surface?.Observe(s);
 
         // NB: the memory scan is NOT run here. It can take up to ~2s per process, which
-        // would stall the single detection thread. ShieldHost claims the scan via
+        // would stall the single detection thread. BruceHost claims the scan via
         // TryClaimMemoryScan and runs it on the response worker, folding results back in
         // through ApplyMemoryHits. See fix for the concurrency-starvation issue.
         var r = Decide(p, s.Kind.ToString(), s.TimestampUtc);
@@ -266,7 +261,7 @@ public sealed class DetectionEngine
     /// the same verdict firing on every subsequent signal. But if the suspend then fails --
     /// access denied, a protected process, a PID that already exited -- leaving the flag set
     /// permanently downgrades that process to log-only: every later Quarantine is swallowed
-    /// and it is never contained again. ShieldHost calls this so a later signal can re-escalate.
+    /// and it is never contained again. BruceHost calls this so a later signal can re-escalate.
     /// </summary>
     public bool MarkContainmentFailed(int pid)
     {
@@ -596,7 +591,7 @@ public sealed class DetectionEngine
     /// <summary>
     /// Owner-thread only. Returns true at most once per process, when its score first
     /// crosses the scan threshold, and marks it claimed so the scan isn't scheduled
-    /// twice. The caller (ShieldHost) runs the actual scan off the detection thread.
+    /// twice. The caller (BruceHost) runs the actual scan off the detection thread.
     /// </summary>
     public bool TryClaimMemoryScan(int pid)
     {
@@ -687,11 +682,26 @@ public sealed class DetectionEngine
     private void EvaluateWatchlist(ThreatProfile p, DateTime nowUtc)
     {
         var list = _deps.CurrentWatchlist();
-        if (list is null || list.Count == 0) return;
-        // Quarantine is terminal, so stop looking. A Warn-level hit still re-checks: a
-        // process can match a name entry first and a stricter hash entry once its image
-        // has been hashed, and the stricter one must be allowed to escalate.
-        if (p.ForcedVerdict == Verdict.Quarantine) return;
+        if (list is null) return;
+
+        // A reload produces a NEW compiled list, so its version is what tells us the operator
+        // changed something. Without this, the identity fingerprint below would short-circuit
+        // every already-running process forever: a process that missed under the old list
+        // would never be re-checked, and "add an entry for the thing I can see running" --
+        // the whole point of the feature -- would silently do nothing until a restart.
+        bool listChanged = p.WatchlistVersion != list.Version;
+        if (listChanged)
+        {
+            p.WatchlistVersion = list.Version;
+            p.WatchlistFingerprint = "";        // force a re-match against the new list
+            // Disarm first. If the operator DELETED or disabled the entry that convicted this
+            // process, the conviction must not survive the reload. Contained stays set (it is
+            // a record of an action already taken); only the forward-looking floor is cleared.
+            p.ForcedVerdict = null;
+            p.WatchlistRuleId = "";
+        }
+
+        if (list.Count == 0) return;
 
         // Hashing touches disk, so only resolve it when an entry actually matches on hash.
         string? hash = null;
@@ -707,31 +717,34 @@ public sealed class DetectionEngine
         var hit = list.Match(p.ProcessName, p.ImagePath, p.CommandLine, hash);
         if (hit is null) return;
 
+        // Quarantine is terminal; nothing weaker may overwrite it.
+        if (p.ForcedVerdict == Verdict.Quarantine) return;
+
         p.WatchlistRuleId = hit.Entry.RuleId;
 
+        // Score means "weight of observed BEHAVIOUR". A watchlist hit is operator POLICY, so
+        // only the explicit `score` action contributes points. warn/quarantine record their
+        // reason at zero and let ForcedVerdict carry the outcome. Adding points here instead
+        // would be invisible escalation: a `warn` entry's default 50 points could combine
+        // with unrelated evidence and contain a process the operator only asked to be told about.
         switch (hit.Action)
         {
             case WatchAction.Quarantine:
-                // Deliberately does NOT inflate the score to the quarantine threshold. The
-                // score means "weight of observed evidence"; this containment is operator
-                // POLICY, and ForcedVerdict is what carries it. Faking the score would make
-                // the incident read as though the process had earned it on behaviour, and
-                // would hide the watchlist as the real cause in the alert trigger.
-                Score(p, hit.Entry.Score, hit.Reason, hit.Entry.RuleId, hit.Entry.Techniques, nowUtc);
+                Score(p, 0, hit.Reason, hit.Entry.RuleId, hit.Entry.Techniques, nowUtc);
                 p.ForcedVerdict = Verdict.Quarantine;
                 break;
 
             case WatchAction.Warn:
-                Score(p, Math.Max(hit.Entry.Score, 0), hit.Reason, hit.Entry.RuleId,
-                      hit.Entry.Techniques, nowUtc);
+                Score(p, 0, hit.Reason, hit.Entry.RuleId, hit.Entry.Techniques, nowUtc);
                 p.ForcedVerdict = Verdict.Warn;
                 break;
 
             default:
                 Score(p, hit.Entry.Score, hit.Reason, hit.Entry.RuleId, hit.Entry.Techniques, nowUtc);
                 // A Score entry deliberately does NOT force a verdict: it feeds the normal
-                // thresholds, unless the operator asked to hear about every hit.
-                if (_alertOnEveryWatchlistHit) p.ForcedVerdict = Verdict.Warn;
+                // thresholds, unless the operator asked to hear about every hit. The policy is
+                // read off the CURRENT list so that changing it reloads like everything else.
+                if (list.AlertOnEveryHit) p.ForcedVerdict = Verdict.Warn;
                 break;
         }
     }
@@ -814,7 +827,7 @@ public sealed class DetectionEngine
             // So: emit an ENRICHMENT event, but only when a genuinely new ATT&CK technique
             // appears. The technique set is finite and monotonic, so this is bounded -- it
             // cannot degenerate into per-signal spam. It is raised as Warn because
-            // ShieldHost treats Warn as log-only, which is exactly the semantics wanted:
+            // BruceHost treats Warn as log-only, which is exactly the semantics wanted:
             // update the incident, do not contain again.
             if (p.Techniques.Count <= p.ReportedTechniques) return null;
             p.ReportedTechniques = p.Techniques.Count;

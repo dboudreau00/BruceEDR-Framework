@@ -3,7 +3,7 @@
     simulate-benign-stealer.ps1
 
     A HARMLESS test harness that reproduces the *shape* of an infostealer's
-    collect -> archive -> exfil sequence so you can watch ProcessShield detect and
+    collect -> archive -> exfil sequence so you can watch BruceEDR detect and
     contain it. It steals nothing and exfiltrates nothing:
 
       1. Creates a DUMMY file on a path that merely CONTAINS the fragment
@@ -12,11 +12,11 @@
       2. Compresses that folder into %TEMP%\ps_loot.zip (an "archive in staging").
       3. Opens (and immediately closes) a TCP connection to 1.1.1.1:443, a public
          DNS resolver, to look like an outbound "exfil" connection.
-      4. Sleeps so ProcessShield has time to suspend THIS PowerShell process, which
+      4. Sleeps so BruceEDR has time to suspend THIS PowerShell process, which
          is the whole point of the demo.
 
-    RUN THIS ONLY IN A DISPOSABLE VM, and start ProcessShield first.
-    When ProcessShield suspends this process, switch to its console and run:
+    RUN THIS ONLY IN A DISPOSABLE VM, and start BruceEDR first.
+    When BruceEDR suspends this process, switch to its console and run:
         list        (see this powershell.exe, contained)
         info 1      (see the reason breakdown)
         resume 1    (release it)  -- or --  kill 1
@@ -49,7 +49,7 @@ try {
 }
 
 Write-Host ''
-Write-Host '[sim] Sequence complete. This process should now be flagged/contained by ProcessShield.' -ForegroundColor Yellow
+Write-Host '[sim] Sequence complete. This process should now be flagged/contained by BruceEDR.' -ForegroundColor Yellow
 Write-Host '[sim] Sleeping 90s so you can observe/resume it. Ctrl+C to stop early.' -ForegroundColor Yellow
 Start-Sleep -Seconds 90
 

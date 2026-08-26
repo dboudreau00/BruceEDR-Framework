@@ -1,4 +1,4 @@
-"""Regenerates ProcessShield's offline geo assets for the Network map view.
+"""Regenerates BruceEDR's offline geo assets for the Network map view.
 
     python tools/build-geo.py intel/geo
 
@@ -9,7 +9,7 @@ redistributable) and Natural Earth 110m admin-0 (public domain / CC0), then writ
     countries.csv      index,iso2,name,lat,lon
     world.txt          simplified equirectangular outlines, one ring per line
 
-Requires network access; nothing else in ProcessShield does. See intel/geo/README.md for
+Requires network access; nothing else in BruceEDR does. See intel/geo/README.md for
 what this data can and cannot be trusted to say.
 """
 import collections, json, os, struct, sys, urllib.request

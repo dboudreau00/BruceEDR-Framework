@@ -1,4 +1,4 @@
-# Writing ProcessShield detection rules
+# Writing BruceEDR detection rules
 
 Detection rules are plain JSON. You do not need to build the project, write C#, or
 understand the engine internals to add one — write the file, drop it in this directory,
@@ -10,7 +10,7 @@ for the threats *you* see. Those should not require a pull request against the e
 
 ```bash
 # validate every rule pack and replay the detection scenarios — no admin needed
-ProcessShield.exe --selftest
+BruceEDR.exe --selftest
 ```
 
 ---
@@ -153,7 +153,7 @@ reasoning:
 }
 ```
 
-Pin the publisher thumbprint in `shield.config.json` too. A rule keyed on a filename alone
+Pin the publisher thumbprint in `bruce.config.json` too. A rule keyed on a filename alone
 is trivially spoofed by dropping a binary with that name.
 
 ---
@@ -183,15 +183,15 @@ through a real detection engine in milliseconds. See
 [`Replay/scenarios/README.md`](../../Replay/scenarios/README.md) for the format.
 
 ```bash
-ProcessShield.exe --selftest                       # validates rules + replays every scenario
+BruceEDR.exe --selftest                       # validates rules + replays every scenario
 ```
 
 From inside the running agent:
 
 ```
-shield> rules curl-to-paste-site      # confirm it loaded and read it back
-shield> replay Replay/scenarios/my-new-case.jsonl
-shield> reload                        # after editing the JSON
+bruce> rules curl-to-paste-site      # confirm it loaded and read it back
+bruce> replay Replay/scenarios/my-new-case.jsonl
+bruce> reload                        # after editing the JSON
 ```
 
 **Every rule contribution should come with a scenario**, and ideally with an addition to

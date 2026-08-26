@@ -6,10 +6,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace ProcessShield.Telemetry;
+namespace BruceEDR.Telemetry;
 
 /// <summary>Structured event forwarded to every configured sink.</summary>
-public sealed record ShieldEvent
+public sealed record BruceEvent
 {
     public string Level { get; init; } = "INFO";          // INFO | ACTION | WARN | ERROR | QUARANTINE
     public string Category { get; init; } = "system";     // detection | response | system | api
@@ -47,7 +47,7 @@ public sealed record ShieldEvent
 
 public interface IEventSink : IDisposable
 {
-    void Emit(ShieldEvent e);
+    void Emit(BruceEvent e);
 }
 
 /// <summary>Fans an event out to many sinks, isolating per-sink failures.</summary>
@@ -56,7 +56,7 @@ public sealed class CompositeSink : IEventSink
     private readonly IEventSink[] _sinks;
     public CompositeSink(IEnumerable<IEventSink> sinks) => _sinks = sinks.ToArray();
 
-    public void Emit(ShieldEvent e)
+    public void Emit(BruceEvent e)
     {
         foreach (var s in _sinks)
         {
@@ -76,7 +76,7 @@ public sealed class CompositeSink : IEventSink
 internal static class Json
 {
     public static readonly JsonSerializerOptions Compact = new() { WriteIndented = false };
-    public static string Event(ShieldEvent e) => JsonSerializer.Serialize(e, Compact);
+    public static string Event(BruceEvent e) => JsonSerializer.Serialize(e, Compact);
 }
 
 /// <summary>
@@ -87,16 +87,16 @@ internal static class Json
 public sealed class RingBufferSink : IEventSink
 {
     private readonly object _gate = new();
-    private readonly ShieldEvent[] _buffer;
+    private readonly BruceEvent[] _buffer;
     private int _next;
     private int _count;
 
     public RingBufferSink(int capacity = 512)
-        => _buffer = new ShieldEvent[Math.Max(16, capacity)];
+        => _buffer = new BruceEvent[Math.Max(16, capacity)];
 
     public int Count { get { lock (_gate) return _count; } }
 
-    public void Emit(ShieldEvent e)
+    public void Emit(BruceEvent e)
     {
         lock (_gate)
         {
@@ -107,12 +107,12 @@ public sealed class RingBufferSink : IEventSink
     }
 
     /// <summary>The most recent events, newest first, capped at <paramref name="limit"/>.</summary>
-    public IReadOnlyList<ShieldEvent> Recent(int limit)
+    public IReadOnlyList<BruceEvent> Recent(int limit)
     {
         lock (_gate)
         {
             int take = Math.Clamp(limit, 0, _count);
-            var list = new List<ShieldEvent>(take);
+            var list = new List<BruceEvent>(take);
             for (int i = 0; i < take; i++)
             {
                 int idx = (_next - 1 - i + _buffer.Length * 2) % _buffer.Length;
@@ -136,7 +136,7 @@ public sealed class JsonlSink : IEventSink
     private readonly string _path;
     public JsonlSink(string path) => _path = path;
 
-    public void Emit(ShieldEvent e)
+    public void Emit(BruceEvent e)
     {
         var line = Json.Event(e);
         lock (_gate)
@@ -151,7 +151,7 @@ public sealed class JsonlSink : IEventSink
 /// <summary>Base for network sinks: never blocks Emit; a worker drains a bounded queue.</summary>
 public abstract class AsyncSinkBase : IEventSink
 {
-    private readonly BlockingCollection<ShieldEvent> _queue = new(boundedCapacity: 4096);
+    private readonly BlockingCollection<BruceEvent> _queue = new(boundedCapacity: 4096);
     private readonly Thread _worker;
     private long _errors;
 
@@ -163,7 +163,7 @@ public abstract class AsyncSinkBase : IEventSink
         _worker.Start();
     }
 
-    public void Emit(ShieldEvent e)
+    public void Emit(BruceEvent e)
     {
         try { if (!_queue.TryAdd(e)) Interlocked.Increment(ref _errors); }
         catch (InvalidOperationException) { /* shutting down */ }
@@ -181,7 +181,7 @@ public abstract class AsyncSinkBase : IEventSink
         catch { /* ignore */ }
     }
 
-    protected abstract void Send(ShieldEvent e);
+    protected abstract void Send(BruceEvent e);
 
     public virtual void Dispose()
     {
@@ -197,7 +197,7 @@ public sealed class SyslogSink : AsyncSinkBase
     private readonly int _port;
     private readonly bool _tcp;
     private readonly string _appName;
-    private readonly Func<ShieldEvent, string> _render;
+    private readonly Func<BruceEvent, string> _render;
     private TcpClient? _tcpClient;
 
     /// <param name="render">
@@ -205,16 +205,16 @@ public sealed class SyslogSink : AsyncSinkBase
     /// native shape. Null keeps the historical compact-JSON payload.
     /// </param>
     public SyslogSink(string host, int port, string protocol, string appName,
-        Func<ShieldEvent, string>? render = null) : base("Syslog")
+        Func<BruceEvent, string>? render = null) : base("Syslog")
     {
         _host = host;
         _port = port;
         _tcp = string.Equals(protocol, "tcp", StringComparison.OrdinalIgnoreCase);
-        _appName = string.IsNullOrWhiteSpace(appName) ? "ProcessShield" : appName;
+        _appName = string.IsNullOrWhiteSpace(appName) ? "BruceEDR" : appName;
         _render = render ?? Json.Event;
     }
 
-    protected override void Send(ShieldEvent e)
+    protected override void Send(BruceEvent e)
     {
         int severity = e.Level switch
         {
@@ -266,10 +266,10 @@ public sealed class WebhookSink : AsyncSinkBase
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
     private readonly string _url;
-    private readonly Func<ShieldEvent, string> _render;
+    private readonly Func<BruceEvent, string> _render;
     private readonly string _contentType;
 
-    public WebhookSink(string url, Func<ShieldEvent, string>? render = null,
+    public WebhookSink(string url, Func<BruceEvent, string>? render = null,
         string contentType = "application/json") : base("Webhook")
     {
         _url = url;
@@ -277,7 +277,7 @@ public sealed class WebhookSink : AsyncSinkBase
         _contentType = contentType;
     }
 
-    protected override void Send(ShieldEvent e)
+    protected override void Send(BruceEvent e)
     {
         using var content = new StringContent(_render(e), Encoding.UTF8, _contentType);
         using var resp = Http.PostAsync(_url, content).GetAwaiter().GetResult();
@@ -305,7 +305,7 @@ public sealed class WebhookSink : AsyncSinkBase
 ///    observed it raises <see cref="IntegrityWarning"/> once -- that alert, or an off-box
 ///    copy of the events, is what survives.
 ///  - The key lives in a sibling "&lt;path&gt;.key" file. Anyone who can READ that key can
-///    re-forge the entire chain. ProcessShield runs elevated, so a SAME-PRIVILEGE
+///    re-forge the entire chain. BruceEDR runs elevated, so a SAME-PRIVILEGE
 ///    attacker still defeats this; protect the audit directory with an admin-only ACL.
 ///  - TRUE tamper-resistance against an equal-privilege adversary requires shipping each
 ///    event off-box to an append-only store (see SyslogSink / WebhookSink) and
@@ -397,7 +397,7 @@ public sealed class AuditLogSink : IEventSink
         }
     }
 
-    public void Emit(ShieldEvent e)
+    public void Emit(BruceEvent e)
     {
         lock (_gate)
         {
@@ -649,7 +649,7 @@ public sealed class AuditLogSink : IEventSink
         public DateTime TimeUtc { get; set; }
         public string PrevHash { get; set; } = "";
         public string Hash { get; set; } = "";
-        public ShieldEvent Event { get; set; } = new();
+        public BruceEvent Event { get; set; } = new();
     }
 
     private sealed class AnchorRecord

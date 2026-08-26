@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace ProcessShield.Api;
+namespace BruceEDR.Api;
 
 // ---------------------------------------------------------------------------
 // Importers: turn a foreign API description into the ApiCollection contract in
@@ -247,7 +247,7 @@ public static class ApiImporters
                 }
 
                 var defaults = new List<ApiKeyValue>();
-                if (Jx.Prop(root, "_processshield", out var ext) && ext.ValueKind == JsonValueKind.Object)
+                if (Jx.Prop(root, "_bruceedr", out var ext) && ext.ValueKind == JsonValueKind.Object)
                     defaults.AddRange(PostmanKeyValues(ext, "defaultHeaders"));
 
                 var rootFolder = PostmanFolder(name, description, items, 0, warnings);
@@ -264,7 +264,7 @@ public static class ApiImporters
                 foreach (var ev in Jx.Arr(root, "event"))
                     if (PostmanScriptLines(ev).Any(l => l.Trim().Length > 0))
                     {
-                        warnings.Add("collection-level scripts were not imported; ProcessShield never executes JavaScript");
+                        warnings.Add("collection-level scripts were not imported; BruceEDR never executes JavaScript");
                         break;
                     }
 
@@ -620,7 +620,7 @@ public static class ApiImporters
             if (listen != "test")
             {
                 if (listen.Length > 0 && lines.Any(l => l.Trim().Length > 0))
-                    warnings.Add($"'{listen}' script on request '{label}' was not imported; ProcessShield never executes JavaScript");
+                    warnings.Add($"'{listen}' script on request '{label}' was not imported; BruceEDR never executes JavaScript");
                 continue;
             }
 
@@ -656,7 +656,7 @@ public static class ApiImporters
             }
 
             if (skipped > 0)
-                warnings.Add($"test script on request '{label}' contains {skipped} statement(s) that were not imported; ProcessShield never executes JavaScript, so only literal pm.response.to.have.status(N) checks are recognised");
+                warnings.Add($"test script on request '{label}' contains {skipped} statement(s) that were not imported; BruceEDR never executes JavaScript, so only literal pm.response.to.have.status(N) checks are recognised");
         }
 
         return found;
@@ -835,7 +835,7 @@ public static class ApiImporters
         }
     }
 
-    /// <summary>Braced OpenAPI path/server parameters become ProcessShield template variables.</summary>
+    /// <summary>Braced OpenAPI path/server parameters become BruceEDR template variables.</summary>
     private static string Templatize(string s) => BracedParam.Replace(s, "{{$1}}");
 
     private static string Oas3Server(JsonElement root, Dictionary<string, string> vars, List<string> warnings)
@@ -1144,7 +1144,7 @@ public static class ApiImporters
             case "oauth2":
             case "openidconnect":
                 SetVar(vars, "token", "");
-                warnings.Add($"security scheme '{schemeName}' needs an OAuth flow, which ProcessShield does not perform; the request sends a bearer {{{{token}}}} you must obtain yourself");
+                warnings.Add($"security scheme '{schemeName}' needs an OAuth flow, which BruceEDR does not perform; the request sends a bearer {{{{token}}}} you must obtain yourself");
                 return new ApiAuth { Kind = ApiAuthKind.Bearer, Token = "{{token}}" };
 
             default:
@@ -1537,7 +1537,7 @@ public static class ApiImporters
                 case "-L": case "--location": follow = true; break;
                 case "-I": case "--head": head = true; break;
                 case "-k": case "--insecure":
-                    notes.Add("curl --insecure was ignored: ProcessShield never disables certificate validation.");
+                    notes.Add("curl --insecure was ignored: BruceEDR never disables certificate validation.");
                     break;
                 case "-G": case "--get":
                     notes.Add("curl -G was ignored: data was left in the body instead of being moved into the query string.");
@@ -1647,7 +1647,7 @@ public static class ApiImporters
         if (url is null) return null;
         if (url.IndexOf("://", StringComparison.Ordinal) < 0)
         {
-            // curl would default to http. ProcessShield defaults to https instead: a silent
+            // curl would default to http. BruceEDR defaults to https instead: a silent
             // downgrade to cleartext is the wrong default for a security tool.
             url = "https://" + url.TrimStart('/');
             notes.Add("the URL had no scheme; https:// was assumed (curl would have used http://).");

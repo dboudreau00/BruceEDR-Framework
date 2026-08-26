@@ -1,8 +1,8 @@
 # Indicator feeds
 
-Drop plain-text indicator files here (`*.txt`, `*.ioc`, `*.csv`) and ProcessShield loads
+Drop plain-text indicator files here (`*.txt`, `*.ioc`, `*.csv`) and BruceEDR loads
 them at startup. A match on a process image hash, a resolved domain or a remote address
-scores the process by `intel.hitScore` from `shield.config.json`.
+scores the process by `intel.hitScore` from `bruce.config.json`.
 
 One indicator per line. The type is detected from the shape of the line, so you do not
 have to declare it:
@@ -27,6 +27,6 @@ Everything after a `;` is a free-text label carried into the alert.
 - CIDR entries are matched by byte-wise prefix comparison, for both IPv4 and IPv6.
 - Lookups are hash-set based, so a feed with a million entries costs the same per event as
   one with ten.
-- These are *your* indicators. ProcessShield ships no third-party feed, because feed
+- These are *your* indicators. BruceEDR ships no third-party feed, because feed
   redistribution terms vary and shipping someone else's list without checking is how open
   source projects acquire licensing problems.

@@ -1,7 +1,7 @@
 using System.Management;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Monitoring;
+namespace BruceEDR.Monitoring;
 
 /// <summary>
 /// Dependency-free fallback used when the ETW kernel session cannot start. Reports

@@ -1,6 +1,6 @@
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Monitoring;
+namespace BruceEDR.Monitoring;
 
 /// <summary>
 /// Watches common staging directories for archive creation. Complements ETW and

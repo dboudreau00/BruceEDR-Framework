@@ -2,9 +2,9 @@ using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Replay;
+namespace BruceEDR.Replay;
 
 /// <summary>
 /// One step of a recorded or hand-written trace. <see cref="At"/> is an offset from

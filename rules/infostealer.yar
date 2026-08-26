@@ -1,5 +1,5 @@
 /*
- * ProcessShield sample infostealer heuristics (DEFENSIVE detection artifacts).
+ * BruceEDR sample infostealer heuristics (DEFENSIVE detection artifacts).
  * These match behavioral references commonly present in stealer memory. Tune and
  * extend with your own threat intel; matches are one signal among many.
  */
@@ -7,7 +7,7 @@
 rule Infostealer_Browser_Credential_Access
 {
     meta:
-        author      = "ProcessShield"
+        author      = "BruceEDR"
         description = "References to browser credential/cookie stores"
         severity    = "high"
     strings:
@@ -24,7 +24,7 @@ rule Infostealer_Browser_Credential_Access
 rule Infostealer_Wallet_Targeting
 {
     meta:
-        author      = "ProcessShield"
+        author      = "BruceEDR"
         description = "References to cryptocurrency wallet artifacts"
         severity    = "high"
     strings:

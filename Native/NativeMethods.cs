@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace ProcessShield.Native;
+namespace BruceEDR.Native;
 
 /// <summary>
 /// Thin P/Invoke surface. Internal so the rest of the assembly can use the nested

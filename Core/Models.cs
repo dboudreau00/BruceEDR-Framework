@@ -1,4 +1,4 @@
-namespace ProcessShield.Core;
+namespace BruceEDR.Core;
 
 public enum Verdict { Allow, Warn, Quarantine }
 
@@ -149,7 +149,7 @@ public sealed record ProfileSnapshot
 
 /// <summary>
 /// Rolling risk state per process. Mutated ONLY by the single owner thread in
-/// ShieldHost, so it needs no internal locking. Attack chains such as
+/// BruceHost, so it needs no internal locking. Attack chains such as
 /// collect -> archive -> exfil accumulate here so the combined score rises even
 /// when each step looks benign alone.
 /// </summary>
@@ -211,6 +211,13 @@ public sealed class ThreatProfile
     /// ProcessStart still gets matched, without re-scanning the list on every signal.
     /// </summary>
     public string WatchlistFingerprint { get; set; } = "";
+
+    /// <summary>
+    /// Version of the compiled watchlist this profile was last evaluated against. A reload
+    /// mints a new version, which is what forces a re-match; comparing process identity alone
+    /// would leave every already-running process pinned to the list it first saw.
+    /// </summary>
+    public int WatchlistVersion { get; set; }
     /// <summary>
     /// How many distinct techniques had been reported the last time a verdict was emitted.
     /// Containment fires once, but evidence keeps arriving afterwards; comparing against

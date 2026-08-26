@@ -2,9 +2,9 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using ProcessShield.Intel;
+using BruceEDR.Intel;
 
-namespace ProcessShield.Api;
+namespace BruceEDR.Api;
 
 // ---------------------------------------------------------------------------
 // Passive security review of one HTTP exchange.

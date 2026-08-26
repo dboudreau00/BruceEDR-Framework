@@ -1,7 +1,7 @@
 using System.Text;
-using static ProcessShield.Native.NativeMethods;
+using static BruceEDR.Native.NativeMethods;
 
-namespace ProcessShield.Memory;
+namespace BruceEDR.Memory;
 
 /// <summary>
 /// Pure, testable substring matcher for the builtin scanner. Matches a set of IOC

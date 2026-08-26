@@ -5,7 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Xml.Linq;
 
-namespace ProcessShield.Api;
+namespace BruceEDR.Api;
 
 // ---------------------------------------------------------------------------
 // Renders an ApiRunResult as JSON, JUnit XML, Markdown, HTML or console text.

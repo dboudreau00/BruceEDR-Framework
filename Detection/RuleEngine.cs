@@ -2,9 +2,9 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Detection;
+namespace BruceEDR.Detection;
 
 /// <summary>One rule firing on one signal, with the evidence that made it fire.</summary>
 public sealed record RuleMatch(DetectionRule Rule, string Explanation);
@@ -12,7 +12,7 @@ public sealed record RuleMatch(DetectionRule Rule, string Explanation);
 /// <summary>
 /// Evaluates JSON-authored <see cref="DetectionRule"/>s against a <see cref="Signal"/>.
 ///
-/// WHY THIS EXISTS: every other detection in ProcessShield is hard-coded C# in
+/// WHY THIS EXISTS: every other detection in BruceEDR is hard-coded C# in
 /// <c>DetectionEngine</c>. That is fine for the core exfil-chain state machine, which needs
 /// cross-signal memory, but it means nobody who does not write C# and rebuild the agent can
 /// contribute a detection. This engine covers the large majority of detections that are

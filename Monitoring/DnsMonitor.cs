@@ -1,8 +1,8 @@
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Session;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Monitoring;
+namespace BruceEDR.Monitoring;
 
 /// <summary>
 /// Reports the DNS names each process resolves, from the
@@ -31,7 +31,7 @@ namespace ProcessShield.Monitoring;
 /// </summary>
 public sealed class DnsMonitor : IDisposable
 {
-    private const string SessionName = "ProcessShield-Dns";
+    private const string SessionName = "BruceEDR-Dns";
 
     /// <summary>Microsoft-Windows-DNS-Client.</summary>
     private static readonly Guid DnsClientProvider = new("1C95126E-7EEA-49A9-A3FE-A378B03DDB4D");
@@ -106,7 +106,7 @@ public sealed class DnsMonitor : IDisposable
             session.Source.Dynamic.All += data => Guard(() => OnEvent(data));
 
             _session = session;
-            _pump = new Thread(PumpEvents) { IsBackground = true, Name = "ProcessShield-ETW-Dns" };
+            _pump = new Thread(PumpEvents) { IsBackground = true, Name = "BruceEDR-ETW-Dns" };
             _pump.Start();
         }
         catch

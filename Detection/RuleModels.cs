@@ -1,9 +1,9 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Detection;
+namespace BruceEDR.Detection;
 
 /// <summary>
 /// Comparison operators a <see cref="RuleCondition"/> may use.

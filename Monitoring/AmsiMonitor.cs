@@ -1,9 +1,9 @@
 using System.Text;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Session;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Monitoring;
+namespace BruceEDR.Monitoring;
 
 /// <summary>
 /// Surfaces script and macro bodies that the Antimalware Scan Interface handed to a
@@ -38,7 +38,7 @@ namespace ProcessShield.Monitoring;
 /// </summary>
 public sealed class AmsiMonitor : IDisposable
 {
-    private const string SessionName = "ProcessShield-Amsi";
+    private const string SessionName = "BruceEDR-Amsi";
 
     /// <summary>Microsoft-Antimalware-Scan-Interface.</summary>
     private static readonly Guid AmsiProvider = new("2A576B87-09A7-520E-C21A-4942F0271D67");
@@ -94,7 +94,7 @@ public sealed class AmsiMonitor : IDisposable
             session.Source.Dynamic.All += data => Guard(() => OnEvent(data));
 
             _session = session;
-            _pump = new Thread(PumpEvents) { IsBackground = true, Name = "ProcessShield-ETW-Amsi" };
+            _pump = new Thread(PumpEvents) { IsBackground = true, Name = "BruceEDR-ETW-Amsi" };
             _pump.Start();
         }
         catch

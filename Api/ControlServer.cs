@@ -3,13 +3,13 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Api;
+namespace BruceEDR.Api;
 
 // ---------------------------------------------------------------------------
 // A loopback-only REST control plane, built on System.Net.HttpListener so it adds
-// no dependency and no web framework. It exists so ProcessShield can be driven by
+// no dependency and no web framework. It exists so BruceEDR can be driven by
 // scripts, by a dashboard, and by API Studio itself -- pointing the tool at its
 // own agent is the shortest possible end-to-end test of both halves.
 //

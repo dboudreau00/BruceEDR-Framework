@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/shield.png" alt="ProcessShield" width="120" />
+<img src="docs/bruce.png" alt="BruceEDR" width="120" />
 
-# ProcessShield
+# BruceEDR
 
 **An open, hackable Windows EDR framework — behavioural detection, ATT&CK-mapped JSON rules,
 encrypted containment, SIEM-native telemetry, and a built-in API inspector for the endpoints
@@ -11,12 +11,12 @@ your machine actually talks to.**
 [![License: MIT](https://img.shields.io/badge/License-MIT-3FA9B8.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0E1621.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-2096%20passing-3FA9B8.svg)](#verifying-a-build)
+[![Tests](https://img.shields.io/badge/tests-2116%20passing-3FA9B8.svg)](#verifying-a-build)
 
 </div>
 
 <div align="center">
-<img src="docs/dashboard.png" alt="ProcessShield dashboard — a contained credential-theft chain with its ATT&CK techniques and reasons" width="880" />
+<img src="docs/dashboard.png" alt="BruceEDR dashboard — a contained credential-theft chain with its ATT&CK techniques and reasons" width="880" />
 </div>
 
 <div align="center">
@@ -36,7 +36,7 @@ your machine actually talks to.**
 
 ---
 
-ProcessShield watches processes through ETW kernel and user-mode sessions, scores the classic
+BruceEDR watches processes through ETW kernel and user-mode sessions, scores the classic
 **collect → archive → exfil** chain alongside persistence, credential access, C2 beaconing and
 DNS abuse, and contains what crosses the line — **suspend-first**, then an injection-safe
 firewall block and an **encrypted quarantine vault**, with optional host isolation and forensic
@@ -87,16 +87,16 @@ tool that overstates itself is worse than one that admits its edges.
 
 ```bash
 # Build everything
-dotnet build ProcessShield.sln -c Release
+dotnet build BruceEDR.sln -c Release
 
 # Validate rules + replay every detection scenario -- no admin needed
-dotnet run --project ProcessShield.csproj -c Release -- --selftest
+dotnet run --project BruceEDR.csproj -c Release -- --selftest
 
 # Console agent (from an elevated terminal)
-dotnet run --project ProcessShield.csproj -c Release
+dotnet run --project BruceEDR.csproj -c Release
 
 # WPF desktop GUI
-dotnet run --project gui/ProcessShield.Gui -c Release
+dotnet run --project gui/BruceEDR.Gui -c Release
 ```
 
 New here? [`GETTING_STARTED.md`](GETTING_STARTED.md) has step-by-step Visual Studio instructions
@@ -105,7 +105,7 @@ plus a safe detection-simulation script.
 Optional YARA engine (adds the dnYara dependency; the default build uses the builtin scanner):
 
 ```bash
-dotnet build ProcessShield.csproj -c Release -p:EnableYara=true
+dotnet build BruceEDR.csproj -c Release -p:EnableYara=true
 ```
 
 ### Run as a Windows Service
@@ -113,10 +113,10 @@ dotnet build ProcessShield.csproj -c Release -p:EnableYara=true
 Publish a self-contained exe so the service `binPath` is the app itself, not `dotnet.exe`:
 
 ```bash
-dotnet publish ProcessShield.csproj -c Release -r win-x64 --self-contained true
+dotnet publish BruceEDR.csproj -c Release -r win-x64 --self-contained true
 # then, from the publish folder, as Administrator:
-ProcessShield.exe --install      # install + start the service (+ watchdog task)
-ProcessShield.exe --uninstall    # stop + remove
+BruceEDR.exe --install      # install + start the service (+ watchdog task)
+BruceEDR.exe --uninstall    # stop + remove
 ```
 
 ## Analyst console
@@ -130,7 +130,7 @@ suspend N      re-suspend entry N
 kill N         terminate entry N (asks for confirmation)
 stats          engine / queue counters
 metrics        Prometheus exposition of the same counters
-reload         re-read shield.config.json (including rules and intel feeds)
+reload         re-read bruce.config.json (including rules and intel feeds)
 audit          verify the tamper-evident audit log
 
 attack         MITRE ATT&CK coverage vs. what has been observed
@@ -147,23 +147,23 @@ replay <file>  replay a detection scenario against a throwaway engine
 
 ## API Studio
 
-Most API clients start from a spec you already have. ProcessShield can start from **what the
+Most API clients start from a spec you already have. BruceEDR can start from **what the
 machine is actually doing**:
 
 ```
-shield> surface                       # every endpoint observed, with beacon scoring
-shield> api surface                   # turn those endpoints into a collection
-shield> api send 3                    # send it, then grade the response
-shield> api run                       # run the whole collection with assertions
-shield> api report html out/api.html
+bruce> surface                       # every endpoint observed, with beacon scoring
+bruce> api surface                   # turn those endpoints into a collection
+bruce> api send 3                    # send it, then grade the response
+bruce> api run                       # run the whole collection with assertions
+bruce> api report html out/api.html
 ```
 
 Or bring your own:
 
 ```
-shield> api import ./openapi.json     # Postman v2.1 / OpenAPI 3 / Swagger 2 / HAR all auto-detected
-shield> api env set token abc123
-shield> api export curl 2
+bruce> api import ./openapi.json     # Postman v2.1 / OpenAPI 3 / Swagger 2 / HAR all auto-detected
+bruce> api env set token abc123
+bruce> api export curl 2
 ```
 
 Grading is **passive**. It draws conclusions only from a response you already requested against
@@ -171,7 +171,7 @@ your own endpoint — it never crafts attack payloads, brute-forces, enumerates 
 to bypass anything. Findings map to the OWASP API Security Top 10 where one genuinely applies.
 
 **API Studio is locked down by default.** Nothing can be sent until you allowlist a host in
-`shield.config.json`; POST/PUT/PATCH/DELETE and plain `http://` are refused unless you turn them
+`bruce.config.json`; POST/PUT/PATCH/DELETE and plain `http://` are refused unless you turn them
 on, requests are rate-limited, and responses are size-capped. An EDR that shipped an
 unrestricted HTTP client reachable from its console would be a liability, not a feature.
 
@@ -215,7 +215,7 @@ instead. The full schema, every operator and field, and the contribution guide a
 ### Or just name the thing
 
 Rules describe *behaviour*. When you already know the *identity* of what you are hunting, the
-**Watchlist** tab (or `watchlist` in `shield.config.json`) is faster:
+**Watchlist** tab (or `watchlist` in `bruce.config.json`) is faster:
 
 ```jsonc
 "watchlist": {
@@ -255,7 +255,7 @@ That false-positive guard matters as much as the malicious ones.
 Builds the solution, runs the full xUnit suite, validates every rule pack, and replays every
 detection scenario. As of this commit:
 
-- **2,096 tests passing**, 0 skipped
+- **2,116 tests passing**, 0 skipped
 - **0 build warnings**
 - 72 rules loading with 0 validation errors
 - 3/3 replay scenarios meeting their expectations
@@ -264,7 +264,7 @@ The suite is hermetic: no network, no admin, no real malware. API Studio's HTTP 
 end-to-end against a loopback socket server (query encoding, auth, redirect chains, body
 truncation, chained token captures, secret redaction) rather than only against mocks.
 
-## Configuration — `shield.config.json`
+## Configuration — `bruce.config.json`
 
 Thresholds, allowlist (publishers + pinned thumbprints), detection rules path, score decay,
 beaconing, intel feeds, response playbook and vault, telemetry format and sinks, the control
@@ -321,7 +321,7 @@ last-good config. Scan-engine, telemetry-format and control-API changes take eff
 
 ## Kernel minifilter
 
-See [`kernel/ShieldFilter/README.md`](kernel/ShieldFilter/README.md) for building with the WDK,
+See [`kernel/BruceFilter/README.md`](kernel/BruceFilter/README.md) for building with the WDK,
 lab test-signing, and loading. The agent connects via `MinifilterClient` and pushes policy; if
 the driver isn't installed, kernel enforcement is simply unavailable and user-mode detection
 continues.
@@ -329,8 +329,8 @@ continues.
 ## Repository layout
 
 ```
-ProcessShield.sln              Console + GUI + Tests (VS2022, x64)
-├─ Program.cs, ProcessShield.csproj    console front-end + core library
+BruceEDR.sln              Console + GUI + Tests (VS2022, x64)
+├─ Program.cs, BruceEDR.csproj    console front-end + core library
 ├─ Monitoring/                         ETW kernel, DNS, AMSI, registry, process-access, WMI
 ├─ Detection/                          scoring actor, JSON rule engine, ATT&CK, beacons, DGA
 ├─ Response/                           containment, encrypted vault, playbooks, isolation, triage
@@ -340,14 +340,14 @@ ProcessShield.sln              Console + GUI + Tests (VS2022, x64)
 ├─ Hosting/ Configuration/ Native/     composition, service/watchdog, config, P/Invoke
 ├─ Replay/                             offline trace format, harness, and scenarios
 ├─ ConsoleUi/                          analyst REPL + API Studio console
-├─ gui/ProcessShield.Gui/              WPF app (dashboard/events/surface/map/watchlist/coverage)
-├─ kernel/ShieldFilter/                C file-system minifilter (built with the WDK)
+├─ gui/BruceEDR.Gui/              WPF app (dashboard/events/surface/map/watchlist/coverage)
+├─ kernel/BruceFilter/                C file-system minifilter (built with the WDK)
 ├─ rules/detection/                    JSON detection rule packs (+ authoring guide)
 ├─ intel/feeds/                        drop your indicator feeds here
 ├─ intel/geo/                          offline IP->country + world outline for the map
 ├─ tools/verify.ps1                    build + test + rules + replay in one command
 ├─ tools/build-geo.py                  regenerates intel/geo from public-domain sources
-└─ tests/ProcessShield.Tests/          xUnit suite
+└─ tests/BruceEDR.Tests/          xUnit suite
 ```
 
 ## Contributing

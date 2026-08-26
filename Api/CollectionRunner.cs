@@ -1,6 +1,6 @@
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Api;
+namespace BruceEDR.Api;
 
 // ---------------------------------------------------------------------------
 // Runs a whole collection: resolve variables, send, assert, capture, analyze.

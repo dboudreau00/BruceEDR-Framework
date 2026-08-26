@@ -4,14 +4,14 @@ using System.Security.Principal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
-using ProcessShield.ConsoleUi;
-using ProcessShield.Configuration;
-using ProcessShield.Hosting;
+using BruceEDR.ConsoleUi;
+using BruceEDR.Configuration;
+using BruceEDR.Hosting;
 
 // ----------------------------------------------------------- startup guards
 if (!OperatingSystem.IsWindows())
 {
-    Console.Error.WriteLine("ProcessShield targets Windows only.");
+    Console.Error.WriteLine("BruceEDR targets Windows only.");
     return 1;
 }
 if (!Environment.Is64BitProcess)
@@ -33,7 +33,7 @@ if (HasFlag(args, "--help") || HasFlag(args, "-h"))
 // scenario. Needs no elevation and starts no monitor, so it is safe in CI and is the
 // inner loop for anyone authoring a rule.
 if (HasFlag(args, "--selftest"))
-    return ProcessShield.Hosting.SelfTest.Run(
+    return BruceEDR.Hosting.SelfTest.Run(
         OptionValue(args, "--rules"),
         OptionValue(args, "--scenarios"));
 
@@ -66,7 +66,7 @@ if (WindowsServiceHelpers.IsWindowsService())
         .ConfigureServices(services =>
         {
             services.AddSingleton(new WorkerOptions(configPath));
-            services.AddHostedService<ShieldWorker>();
+            services.AddHostedService<BruceWorker>();
         })
         .Build()
         .Run();
@@ -78,15 +78,15 @@ if (WindowsServiceHelpers.IsWindowsService())
 // so the app doesn't just flash a console and vanish.
 if (!IsElevated())
 {
-    Console.WriteLine("ProcessShield needs administrator rights (ETW, process access, quarantine).");
+    Console.WriteLine("BruceEDR needs administrator rights (ETW, process access, quarantine).");
     Console.WriteLine("Requesting elevation - please accept the UAC prompt...");
     if (RelaunchElevated(args))
         return 0;   // an elevated instance is starting in a new window
 
     Console.Error.WriteLine();
     Console.Error.WriteLine("Elevation was declined or unavailable.");
-    Console.Error.WriteLine("Start ProcessShield from an elevated terminal, or right-click");
-    Console.Error.WriteLine("ProcessShield.exe -> \"Run as administrator\".");
+    Console.Error.WriteLine("Start BruceEDR from an elevated terminal, or right-click");
+    Console.Error.WriteLine("BruceEDR.exe -> \"Run as administrator\".");
     WaitForKeyIfOwnConsole();
     return 1;
 }
@@ -122,7 +122,7 @@ try
         return 2;
     }
 
-    composition.Log.Info($"ProcessShield active (console mode). Monitors: {composition.Host.ActiveMonitors}.");
+    composition.Log.Info($"BruceEDR active (console mode). Monitors: {composition.Host.ActiveMonitors}.");
     composition.Log.Info($"Config: {configPath}");
     composition.Log.Info("Type 'help' for commands, 'quit' to exit.");
 
@@ -151,7 +151,7 @@ static bool HasFlag(string[] args, string flag)
     => args.Any(a => string.Equals(a, flag, StringComparison.OrdinalIgnoreCase));
 
 static string ResolveConfigPath(string[] args)
-    => OptionValue(args, "--config") ?? Path.Combine(AppContext.BaseDirectory, "shield.config.json");
+    => OptionValue(args, "--config") ?? Path.Combine(AppContext.BaseDirectory, "bruce.config.json");
 
 /// <summary>Value that follows <paramref name="name"/>, or null when the flag is absent.</summary>
 static string? OptionValue(string[] args, string name)
@@ -242,16 +242,16 @@ static bool ConsoleOwnedBySelf()
 static void PrintUsage()
 {
     Console.WriteLine(
-        "ProcessShield - user-mode behavioral shield\n" +
+        "BruceEDR - user-mode behavioural EDR agent\n" +
         "Usage:\n" +
-        "  ProcessShield.exe                    run interactively with the analyst console\n" +
-        "  ProcessShield.exe --install          install + start the Windows Service (+ watchdog task)\n" +
-        "  ProcessShield.exe --uninstall        stop + remove the service and watchdog task\n" +
-        "  ProcessShield.exe --watchdog         run the heartbeat watchdog (used by the scheduled task)\n" +
-        "  ProcessShield.exe --selftest         validate rule packs + replay detection scenarios (no admin)\n" +
+        "  BruceEDR.exe                    run interactively with the analyst console\n" +
+        "  BruceEDR.exe --install          install + start the Windows Service (+ watchdog task)\n" +
+        "  BruceEDR.exe --uninstall        stop + remove the service and watchdog task\n" +
+        "  BruceEDR.exe --watchdog         run the heartbeat watchdog (used by the scheduled task)\n" +
+        "  BruceEDR.exe --selftest         validate rule packs + replay detection scenarios (no admin)\n" +
         "      --rules <dir>                    override the detection rule directory\n" +
         "      --scenarios <dir>                override the replay scenario directory\n" +
-        "  ProcessShield.exe --config <path>    use a specific shield.config.json\n" +
+        "  BruceEDR.exe --config <path>    use a specific bruce.config.json\n" +
         "  (started by the SCM)                 runs as a Windows Service automatically\n");
 }
 

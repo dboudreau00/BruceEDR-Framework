@@ -1,4 +1,4 @@
-namespace ProcessShield.Core;
+namespace BruceEDR.Core;
 
 /// <summary>
 /// Immutable snapshot of one process as the tree knows it. Handed out by every query so
@@ -348,7 +348,7 @@ public sealed class ProcessTree
         => string.IsNullOrEmpty(n.Name) ? "pid:" + n.Pid.ToString() : n.Name;
 
     /// <summary>
-    /// Coerce to UTC. Unspecified is treated as already-UTC because every ProcessShield
+    /// Coerce to UTC. Unspecified is treated as already-UTC because every BruceEDR
     /// monitor emits UTC; a Local value is converted so a caller passing wall-clock time
     /// does not shift the whole tree by the machine's offset and break retention.
     /// </summary>

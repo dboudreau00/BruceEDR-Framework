@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace ProcessShield.Analysis;
+namespace BruceEDR.Analysis;
 
 /// <summary>
 /// Byte-distribution statistics used by the PE analyzer and the secret scanner.

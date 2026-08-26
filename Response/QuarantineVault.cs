@@ -3,9 +3,9 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Response;
+namespace BruceEDR.Response;
 
 /// <summary>
 /// One item held in the quarantine vault. The plaintext never appears here — only

@@ -1,12 +1,12 @@
 using System.Net;
 using System.Text;
 
-namespace ProcessShield.Api;
+namespace BruceEDR.Api;
 
 // ---------------------------------------------------------------------------
 // Shared data contract for API Studio: the request/collection model, the
 // response record, assertions, findings and the safety policy. Everything else
-// in ProcessShield.Api (importers, exporters, the client, the runner, the
+// in BruceEDR.Api (importers, exporters, the client, the runner, the
 // security analyzer, the surface inventory and the control server) is written
 // against these types.
 //

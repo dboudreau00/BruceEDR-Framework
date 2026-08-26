@@ -5,9 +5,9 @@ using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Api;
+namespace BruceEDR.Api;
 
 // ---------------------------------------------------------------------------
 // The outbound half of API Studio: turn an ApiRequest plus a variable bag into
@@ -149,7 +149,7 @@ public sealed class ApiClient : IApiClient
         if (refusal is not null)
             return Fail(started, sw, "blocked by API safety policy: " + refusal, uri.AbsoluteUri);
 
-        string boundary = "----ProcessShieldBoundary" + Guid.NewGuid().ToString("n");
+        string boundary = "----BruceEDRBoundary" + Guid.NewGuid().ToString("n");
         if (!TryBuildBody(resolved, boundary, out byte[]? payload, out string bodyContentType, out string bodyError))
             return Fail(started, sw, bodyError, uri.AbsoluteUri);
 

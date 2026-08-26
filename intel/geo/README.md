@@ -42,7 +42,7 @@ Attribution by IP geography alone is not sound, and the map is a triage aid, not
 An EDR agent must never ask a third-party geo-IP service where an address is. Doing so
 would tell that service — in real time — exactly which infrastructure a defender is
 investigating. That is a far worse problem than an occasionally misplaced dot, so the
-lookup is a local table and **ProcessShield makes no network call to build this view**.
+lookup is a local table and **BruceEDR makes no network call to build this view**.
 
 ## Regenerating
 

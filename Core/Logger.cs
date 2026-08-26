@@ -1,7 +1,7 @@
-using ProcessShield.Detection;
-using ProcessShield.Telemetry;
+using BruceEDR.Detection;
+using BruceEDR.Telemetry;
 
-namespace ProcessShield.Core;
+namespace BruceEDR.Core;
 
 /// <summary>
 /// Thread-safe console writer plus a fan-out to a structured event sink (JSONL,
@@ -30,7 +30,7 @@ public sealed class Logger
     public void Info(string message)
     {
         WriteLine(ConsoleColor.Gray, "[*] " + message);
-        Emit(new ShieldEvent { Level = "INFO", Category = "system", Message = message });
+        Emit(new BruceEvent { Level = "INFO", Category = "system", Message = message });
     }
 
     /// <summary>Console-only echo for interactive analyst-console output. Not forwarded.</summary>
@@ -39,14 +39,14 @@ public sealed class Logger
     public void Action(string message)
     {
         WriteLine(ConsoleColor.Cyan, "    -> " + message);
-        Emit(new ShieldEvent { Level = "ACTION", Category = "response", Message = message });
+        Emit(new BruceEvent { Level = "ACTION", Category = "response", Message = message });
     }
 
     public void Error(string context, Exception ex)
     {
         string message = $"{context}: {ex.GetType().Name}: {ex.Message}";
         WriteLine(ConsoleColor.Magenta, "[ERR] " + message);
-        Emit(new ShieldEvent { Level = "ERROR", Category = "system", Message = message });
+        Emit(new BruceEvent { Level = "ERROR", Category = "system", Message = message });
     }
 
     public void Warn(DetectionResult d)
@@ -69,10 +69,10 @@ public sealed class Logger
         Emit(ToEvent("QUARANTINE", d));
     }
 
-    private static ShieldEvent ToEvent(string level, DetectionResult d)
+    private static BruceEvent ToEvent(string level, DetectionResult d)
     {
         var s = d.Snapshot;
-        return new ShieldEvent
+        return new BruceEvent
         {
             Level = level,
             Category = "detection",
@@ -88,7 +88,7 @@ public sealed class Logger
 
     // Deliberately swallows everything and never calls back into Info/Error: a sink that
     // throws on every event would otherwise recurse forever now that errors are forwarded.
-    private void Emit(ShieldEvent e)
+    private void Emit(BruceEvent e)
     {
         var sink = _sink;
         if (sink is null) return;

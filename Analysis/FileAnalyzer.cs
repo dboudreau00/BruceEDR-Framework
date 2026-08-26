@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace ProcessShield.Analysis;
+namespace BruceEDR.Analysis;
 
 /// <summary>One parsed PE section header, plus the entropy of its on-disk bytes.</summary>
 public sealed record PeSection
@@ -91,7 +91,7 @@ public sealed record FileAnalysis
     ///
     /// This says a signature BLOB is attached. It says nothing about whether the
     /// signature is valid, covers the file's bytes, or chains to a trusted root --
-    /// use <c>ProcessShield.Security.AuthenticodeVerifier</c> for that. A tampered
+    /// use <c>BruceEDR.Security.AuthenticodeVerifier</c> for that. A tampered
     /// binary keeps its (now-invalid) certificate table and still reports true here.
     /// </summary>
     public bool HasDigitalSignatureDirectory { get; init; }
@@ -741,7 +741,7 @@ public static class FileAnalyzer
     ///
     /// The weights are judgement, not measurement. The score exists to ORDER a queue of
     /// files for a human, and a legitimately packed installer will score highly by
-    /// design. Nothing in ProcessShield should act on this number alone.
+    /// design. Nothing in BruceEDR should act on this number alone.
     /// </summary>
     private static int Score(PeInfo pe, double overallEntropy, int packerCount, int suspiciousCount)
     {

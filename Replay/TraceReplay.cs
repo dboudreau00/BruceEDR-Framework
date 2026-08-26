@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Replay;
+namespace BruceEDR.Replay;
 
 /// <summary>
 /// One verdict observed during a replay, flattened to primitives.

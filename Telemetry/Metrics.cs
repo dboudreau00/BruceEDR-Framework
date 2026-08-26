@@ -1,12 +1,12 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Telemetry;
+namespace BruceEDR.Telemetry;
 
 /// <summary>
-/// Immutable point-in-time reading of <see cref="ShieldMetrics"/>.
+/// Immutable point-in-time reading of <see cref="BruceMetrics"/>.
 ///
 /// A snapshot is taken under no lock, so counters are individually consistent but not
 /// mutually consistent: <c>Signals</c> may already include an event whose detection has
@@ -67,7 +67,7 @@ public sealed record MetricsSnapshot
 /// WHY this exists: an EDR that has silently stopped ingesting is worse than no EDR,
 /// because it still looks installed. Exposing signal/drop counts, detection rates,
 /// response success and detection latency in Prometheus text format means an existing
-/// monitoring stack can alarm on "ProcessShield stopped seeing events" without anyone
+/// monitoring stack can alarm on "BruceEDR stopped seeing events" without anyone
 /// writing a bespoke health check.
 ///
 /// Every member is safe to call from any thread. Counters use <see cref="Interlocked"/>,
@@ -75,7 +75,7 @@ public sealed record MetricsSnapshot
 /// reservoir is a fixed-size ring written with atomic double exchanges. Nothing here
 /// ever throws or blocks: metrics collection must never be able to break detection.
 /// </summary>
-public sealed class ShieldMetrics
+public sealed class BruceMetrics
 {
     /// <summary>
     /// Number of latency samples retained. A power of two, sized so a busy agent keeps
@@ -106,7 +106,7 @@ public sealed class ShieldMetrics
     /// <paramref name="clock"/> is injected so <see cref="Snapshot"/> is deterministic in
     /// tests and in replay; it defaults to the real clock.
     /// </summary>
-    public ShieldMetrics(IClock? clock = null)
+    public BruceMetrics(IClock? clock = null)
     {
         _clock = clock ?? SystemClock.Instance;
         for (int i = 0; i < _latencyMs.Length; i++) _latencyMs[i] = double.NaN;
@@ -210,62 +210,62 @@ public sealed class ShieldMetrics
         var snap = Snapshot();
         var blocks = new List<(string Name, string Text)>(8 + snap.Gauges.Count);
 
-        blocks.Add(("processshield_signals_total", Counter(
-            "processshield_signals_total",
+        blocks.Add(("bruceedr_signals_total", Counter(
+            "bruceedr_signals_total",
             "Telemetry signals accepted from the monitors since start.",
             snap.Signals)));
 
-        blocks.Add(("processshield_signals_dropped_total", Counter(
-            "processshield_signals_dropped_total",
+        blocks.Add(("bruceedr_signals_dropped_total", Counter(
+            "bruceedr_signals_dropped_total",
             "Telemetry signals discarded because a bounded queue was full.",
             snap.Dropped)));
 
-        blocks.Add(("processshield_detections_total", Block(
-            "processshield_detections_total",
+        blocks.Add(("bruceedr_detections_total", Block(
+            "bruceedr_detections_total",
             "Detections raised, by verdict level.",
             "counter",
             new[]
             {
-                Line("processshield_detections_total", "level", "quarantine", snap.Quarantines),
-                Line("processshield_detections_total", "level", "warn", snap.Warns)
+                Line("bruceedr_detections_total", "level", "quarantine", snap.Quarantines),
+                Line("bruceedr_detections_total", "level", "warn", snap.Warns)
             })));
 
-        blocks.Add(("processshield_responses_total", Block(
-            "processshield_responses_total",
+        blocks.Add(("bruceedr_responses_total", Block(
+            "bruceedr_responses_total",
             "Response actions attempted, by outcome.",
             "counter",
             new[]
             {
-                Line("processshield_responses_total", "result", "failed", snap.ResponsesFailed),
-                Line("processshield_responses_total", "result", "ok", snap.ResponsesOk)
+                Line("bruceedr_responses_total", "result", "failed", snap.ResponsesFailed),
+                Line("bruceedr_responses_total", "result", "ok", snap.ResponsesOk)
             })));
 
-        blocks.Add(("processshield_detection_latency_ms", Block(
-            "processshield_detection_latency_ms",
+        blocks.Add(("bruceedr_detection_latency_ms", Block(
+            "bruceedr_detection_latency_ms",
             "Detection latency in milliseconds. Quantiles are approximated over a sliding " +
             "reservoir of the last " + ReservoirSize.ToString(CultureInfo.InvariantCulture) +
             " observations, not over all samples.",
             "summary",
             new[]
             {
-                Line("processshield_detection_latency_ms", "quantile", "0.5", snap.LatencyP50Ms),
-                Line("processshield_detection_latency_ms", "quantile", "0.95", snap.LatencyP95Ms),
-                Line("processshield_detection_latency_ms", "quantile", "0.99", snap.LatencyP99Ms),
-                "processshield_detection_latency_ms_count " + Num(snap.LatencySamples),
-                "processshield_detection_latency_ms_sum " + Num(snap.LatencySumMs)
+                Line("bruceedr_detection_latency_ms", "quantile", "0.5", snap.LatencyP50Ms),
+                Line("bruceedr_detection_latency_ms", "quantile", "0.95", snap.LatencyP95Ms),
+                Line("bruceedr_detection_latency_ms", "quantile", "0.99", snap.LatencyP99Ms),
+                "bruceedr_detection_latency_ms_count " + Num(snap.LatencySamples),
+                "bruceedr_detection_latency_ms_sum " + Num(snap.LatencySumMs)
             })));
 
         // Seeded with the built-in names (and the summary's derived suffixes) so a gauge
         // can never shadow a core metric or emit a second block under the same name.
         var emitted = new HashSet<string>(StringComparer.Ordinal)
         {
-            "processshield_signals_total",
-            "processshield_signals_dropped_total",
-            "processshield_detections_total",
-            "processshield_responses_total",
-            "processshield_detection_latency_ms",
-            "processshield_detection_latency_ms_count",
-            "processshield_detection_latency_ms_sum"
+            "bruceedr_signals_total",
+            "bruceedr_signals_dropped_total",
+            "bruceedr_detections_total",
+            "bruceedr_responses_total",
+            "bruceedr_detection_latency_ms",
+            "bruceedr_detection_latency_ms_count",
+            "bruceedr_detection_latency_ms_sum"
         };
 
         foreach (var kv in snap.Gauges)
@@ -281,7 +281,7 @@ public sealed class ShieldMetrics
             // well turned a single backslash into four.
             blocks.Add((metric, Block(
                 metric,
-                "Gauge '" + kv.Key + "' reported by ProcessShield.",
+                "Gauge '" + kv.Key + "' reported by BruceEDR.",
                 "gauge",
                 new[] { metric + " " + Num(kv.Value) })));
         }
@@ -366,7 +366,7 @@ public sealed class ShieldMetrics
 
     /// <summary>
     /// Maps a free-form gauge name onto the Prometheus name grammar
-    /// (<c>[a-zA-Z_:][a-zA-Z0-9_:]*</c>) under the shared <c>processshield_</c> prefix.
+    /// (<c>[a-zA-Z_:][a-zA-Z0-9_:]*</c>) under the shared <c>bruceedr_</c> prefix.
     /// Returns an empty string when nothing usable survives.
     /// </summary>
     private static string GaugeMetricName(string raw)
@@ -383,8 +383,8 @@ public sealed class ShieldMetrics
 
         string body = sb.ToString().Trim('_');
         if (body.Length == 0) return "";
-        return body.StartsWith("processshield_", StringComparison.Ordinal)
+        return body.StartsWith("bruceedr_", StringComparison.Ordinal)
             ? body
-            : "processshield_" + body;
+            : "bruceedr_" + body;
     }
 }

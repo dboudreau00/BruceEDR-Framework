@@ -1,14 +1,14 @@
 using System.Globalization;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Detection;
+namespace BruceEDR.Detection;
 
 /// <summary>
 /// The result of testing one (process, destination) pair for beacon-like cadence.
 /// </summary>
 /// <remarks>
 /// Every numeric field is finite and JSON-safe on purpose: these verdicts are
-/// serialised into <c>ShieldEvent</c> and the API, and <c>System.Text.Json</c>
+/// serialised into <c>BruceEvent</c> and the API, and <c>System.Text.Json</c>
 /// throws on <c>NaN</c>/<c>Infinity</c> by default. <see cref="JitterRatio"/> is
 /// therefore clamped rather than allowed to diverge.
 /// </remarks>
@@ -426,7 +426,7 @@ public sealed class BeaconAnalyzer
 
     /// <summary>
     /// Coerces any incoming DateTime to UTC ticks. Unspecified kind is treated as
-    /// already-UTC because every ProcessShield monitor produces UTC; a Local value is
+    /// already-UTC because every BruceEDR monitor produces UTC; a Local value is
     /// converted so a caller that passes wall-clock time does not silently shift the
     /// whole series by the UTC offset.
     /// </summary>

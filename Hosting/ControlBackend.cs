@@ -1,10 +1,10 @@
 using System.Text.Json;
-using ProcessShield.Api;
-using ProcessShield.Core;
-using ProcessShield.Detection;
-using ProcessShield.Telemetry;
+using BruceEDR.Api;
+using BruceEDR.Core;
+using BruceEDR.Detection;
+using BruceEDR.Telemetry;
 
-namespace ProcessShield.Hosting;
+namespace BruceEDR.Hosting;
 
 /// <summary>
 /// Bridges the HTTP control plane to the running agent. Every method returns
@@ -12,7 +12,7 @@ namespace ProcessShield.Hosting;
 /// transport and authorisation only and makes the whole routing table testable against a
 /// fake backend.
 ///
-/// Reads that touch engine-owned state go through ShieldHost's owner-thread query
+/// Reads that touch engine-owned state go through BruceHost's owner-thread query
 /// mechanism, so an HTTP handler thread never races the detection loop.
 /// </summary>
 internal sealed class ControlBackend : IControlBackend
@@ -32,7 +32,7 @@ internal sealed class ControlBackend : IControlBackend
         var m = host.Metrics.Snapshot();
         return JsonSerializer.Serialize(new
         {
-            product = "ProcessShield",
+            product = "BruceEDR",
             version = AgentVersion,
             startedUtc = _startedUtc,
             uptimeSeconds = (int)(DateTime.UtcNow - _startedUtc).TotalSeconds,

@@ -1,8 +1,8 @@
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Session;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Monitoring;
+namespace BruceEDR.Monitoring;
 
 /// <summary>
 /// Reports one process opening a handle to another, from the
@@ -34,7 +34,7 @@ namespace ProcessShield.Monitoring;
 /// </summary>
 public sealed class ProcessAccessMonitor : IDisposable
 {
-    private const string SessionName = "ProcessShield-ProcAccess";
+    private const string SessionName = "BruceEDR-ProcAccess";
 
     /// <summary>Microsoft-Windows-Kernel-Audit-API-Calls.</summary>
     private static readonly Guid AuditApiProvider = new("E02A841C-75A3-4FA7-AFC8-AE09CF9B7F23");
@@ -113,7 +113,7 @@ public sealed class ProcessAccessMonitor : IDisposable
             session.Source.Dynamic.All += data => Guard(() => OnEvent(data));
 
             _session = session;
-            _pump = new Thread(PumpEvents) { IsBackground = true, Name = "ProcessShield-ETW-ProcAccess" };
+            _pump = new Thread(PumpEvents) { IsBackground = true, Name = "BruceEDR-ETW-ProcAccess" };
             _pump.Start();
         }
         catch

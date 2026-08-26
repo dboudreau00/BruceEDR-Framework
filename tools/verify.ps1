@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   Run this before opening a pull request and before believing any claim that
-  ProcessShield "works". It exercises the parts that can be checked without
+  BruceEDR "works". It exercises the parts that can be checked without
   Administrator rights or a live ETW session:
 
     1. dotnet build   -- the whole solution, warnings as information
@@ -13,7 +13,7 @@
     3. rules          -- every shipped JSON detection pack parses and validates
     4. replay         -- every scenario under Replay/scenarios meets its expectations
 
-  Steps 3 and 4 run through the built console (`ProcessShield.exe --selftest`), which
+  Steps 3 and 4 run through the built console (`BruceEDR.exe --selftest`), which
   needs no elevation because it never starts a monitor.
 
 .PARAMETER SkipTests
@@ -52,10 +52,10 @@ function Step($name, $block) {
     }
 }
 
-Write-Host "ProcessShield verify -- $Configuration" -ForegroundColor White
+Write-Host "BruceEDR verify -- $Configuration" -ForegroundColor White
 
 Step "build" {
-    dotnet build "$root/ProcessShield.sln" -c $Configuration --nologo
+    dotnet build "$root/BruceEDR.sln" -c $Configuration --nologo
     if ($LASTEXITCODE -ne 0) { throw "dotnet build exited $LASTEXITCODE" }
 }
 
@@ -66,15 +66,15 @@ if (-not $SkipTests) {
         # reads bin/Release/... With --no-build those are different binaries, so this step
         # would silently run a stale DLL and report green for code that is not on disk.
         # That trap has already produced one false pass in this repo.
-        dotnet test "$root/tests/ProcessShield.Tests/ProcessShield.Tests.csproj" `
+        dotnet test "$root/tests/BruceEDR.Tests/BruceEDR.Tests.csproj" `
             -c $Configuration --nologo
         if ($LASTEXITCODE -ne 0) { throw "dotnet test exited $LASTEXITCODE" }
     }
 }
 
-$exe = Join-Path $root "bin/x64/$Configuration/net8.0-windows/ProcessShield.exe"
+$exe = Join-Path $root "bin/x64/$Configuration/net8.0-windows/BruceEDR.exe"
 if (-not (Test-Path $exe)) {
-    $exe = Join-Path $root "bin/$Configuration/net8.0-windows/ProcessShield.exe"
+    $exe = Join-Path $root "bin/$Configuration/net8.0-windows/BruceEDR.exe"
 }
 
 if (Test-Path $exe) {

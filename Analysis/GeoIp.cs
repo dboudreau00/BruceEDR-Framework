@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 
-namespace ProcessShield.Analysis;
+namespace BruceEDR.Analysis;
 
 /// <summary>Where an endpoint appears to be, plus how much that claim is worth.</summary>
 public sealed record GeoLocation
@@ -194,8 +194,20 @@ public sealed class GeoIpDatabase
         if (IPAddress.IsLoopback(ip)) return true;
 
         if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            // An IPv4-mapped address (::ffff:10.0.0.1) is an IPv4 address wearing a v6 coat;
+            // classify it by the address it actually carries, or internal hosts reached that
+            // way would be treated as public and plotted on a world map.
+            if (ip.IsIPv4MappedToIPv6) return IsPrivate(ip.MapToIPv4());
+
+            // fc00::/7 is the v6 equivalent of RFC1918 and is NOT covered by IsIPv6SiteLocal,
+            // which only tests the deprecated fec0::/10 range.
+            var v6 = ip.GetAddressBytes();
+            if ((v6[0] & 0xFE) == 0xFC) return true;
+
             return ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast
                 || ip.Equals(IPAddress.IPv6Any) || ip.Equals(IPAddress.IPv6None);
+        }
 
         if (ip.AddressFamily != AddressFamily.InterNetwork) return false;
 

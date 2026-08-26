@@ -7,9 +7,9 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Response;
+namespace BruceEDR.Response;
 
 /// <summary>Outcome of one triage collection.</summary>
 public sealed record TriageResult
@@ -80,7 +80,7 @@ public sealed class TriageCollector
         }
 
         string stagingDir = Path.Combine(Path.GetTempPath(),
-            "ProcessShield-triage-" + Guid.NewGuid().ToString("n"));
+            "BruceEDR-triage-" + Guid.NewGuid().ToString("n"));
 
         try
         {
@@ -403,7 +403,7 @@ public sealed class TriageCollector
     {
         var manifest = new
         {
-            tool = "ProcessShield TriageCollector",
+            tool = "BruceEDR TriageCollector",
             format = 1,
             pid,
             collectedUtc = nowUtc.ToString("O", CultureInfo.InvariantCulture),

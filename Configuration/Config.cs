@@ -1,8 +1,8 @@
 using System.Text.Json;
 
-namespace ProcessShield.Configuration;
+namespace BruceEDR.Configuration;
 
-public sealed class ShieldConfig
+public sealed class BruceConfig
 {
     public DetectionConfig Detection { get; set; } = new();
     public AllowlistConfig Allowlist { get; set; } = new();
@@ -28,7 +28,7 @@ public sealed class ShieldConfig
 
         Service.HeartbeatIntervalSeconds = Math.Max(1, Service.HeartbeatIntervalSeconds);
         Service.WatchdogStaleSeconds = Math.Max(Service.HeartbeatIntervalSeconds * 3, Service.WatchdogStaleSeconds);
-        if (string.IsNullOrWhiteSpace(Service.ServiceName)) Service.ServiceName = "ProcessShield";
+        if (string.IsNullOrWhiteSpace(Service.ServiceName)) Service.ServiceName = "BruceEDR";
 
         if (string.IsNullOrWhiteSpace(Telemetry.Format)) Telemetry.Format = "native";
         if (string.IsNullOrWhiteSpace(Response.QuarantineVaultPath)) Response.QuarantineVaultPath = "quarantine";
@@ -123,7 +123,7 @@ public sealed class WatchlistConfig
     public WatchlistEntryConfig[] Entries { get; set; } = Array.Empty<WatchlistEntryConfig>();
 }
 
-/// <summary>One watchlist rule as it appears in shield.config.json.</summary>
+/// <summary>One watchlist rule as it appears in bruce.config.json.</summary>
 public sealed class WatchlistEntryConfig
 {
     /// <summary><c>name</c> | <c>path</c> | <c>hash</c> | <c>cmdline</c>.</summary>
@@ -233,7 +233,7 @@ public sealed class SyslogConfig
     public string Host { get; set; } = "127.0.0.1";
     public int Port { get; set; } = 514;
     public string Protocol { get; set; } = "udp";   // "udp" | "tcp"
-    public string AppName { get; set; } = "ProcessShield";
+    public string AppName { get; set; } = "BruceEDR";
 }
 
 public sealed class WebhookConfig
@@ -244,10 +244,10 @@ public sealed class WebhookConfig
 
 public sealed class ServiceConfig
 {
-    public string ServiceName { get; set; } = "ProcessShield";
+    public string ServiceName { get; set; } = "BruceEDR";
     public string HeartbeatPath { get; set; } =
         Path.Combine(Environment.GetEnvironmentVariable("ProgramData") ?? @"C:\ProgramData",
-                     "ProcessShield", "heartbeat");
+                     "BruceEDR", "heartbeat");
     public int HeartbeatIntervalSeconds { get; set; } = 5;
     public int WatchdogStaleSeconds { get; set; } = 30;
 }
@@ -262,26 +262,26 @@ public static class ConfigLoader
         WriteIndented = true
     };
 
-    public static ShieldConfig Load(string path, Action<string>? warn = null)
+    public static BruceConfig Load(string path, Action<string>? warn = null)
     {
         try
         {
             if (!File.Exists(path))
             {
                 warn?.Invoke($"config '{path}' not found; using defaults");
-                var def = new ShieldConfig();
+                var def = new BruceConfig();
                 def.ClampAndValidate();
                 return def;
             }
             var json = File.ReadAllText(path);
-            var cfg = JsonSerializer.Deserialize<ShieldConfig>(json, Options) ?? new ShieldConfig();
+            var cfg = JsonSerializer.Deserialize<BruceConfig>(json, Options) ?? new BruceConfig();
             cfg.ClampAndValidate();
             return cfg;
         }
         catch (Exception ex)
         {
             warn?.Invoke($"config load failed ({ex.Message}); using defaults");
-            var def = new ShieldConfig();
+            var def = new BruceConfig();
             def.ClampAndValidate();
             return def;
         }
@@ -293,22 +293,22 @@ public static class ConfigLoader
     /// so the caller can KEEP its current tuned posture/allowlist instead of silently
     /// reverting to defaults. Use Load (not this) for first-time startup.
     /// </summary>
-    public static bool TryLoad(string path, out ShieldConfig config, Action<string>? warn = null)
+    public static bool TryLoad(string path, out BruceConfig config, Action<string>? warn = null)
     {
         try
         {
             if (!File.Exists(path))
             {
                 warn?.Invoke($"config '{path}' missing on reload; keeping current config");
-                config = new ShieldConfig();
+                config = new BruceConfig();
                 return false;
             }
             var json = File.ReadAllText(path);
-            var cfg = JsonSerializer.Deserialize<ShieldConfig>(json, Options);
+            var cfg = JsonSerializer.Deserialize<BruceConfig>(json, Options);
             if (cfg is null)
             {
                 warn?.Invoke("config reload parsed to null; keeping current config");
-                config = new ShieldConfig();
+                config = new BruceConfig();
                 return false;
             }
             cfg.ClampAndValidate();
@@ -318,26 +318,26 @@ public static class ConfigLoader
         catch (Exception ex)
         {
             warn?.Invoke($"config reload parse failed ({ex.Message}); keeping current config");
-            config = new ShieldConfig();
+            config = new BruceConfig();
             return false;
         }
     }
 
     public static void WriteTemplate(string path)
     {
-        try { File.WriteAllText(path, JsonSerializer.Serialize(new ShieldConfig(), Options)); }
+        try { File.WriteAllText(path, JsonSerializer.Serialize(new BruceConfig(), Options)); }
         catch { /* best effort */ }
     }
 
     /// <summary>Persist a config to disk (used by the GUI settings editor). Throws on failure.</summary>
-    public static void Save(ShieldConfig config, string path)
+    public static void Save(BruceConfig config, string path)
     {
         config.ClampAndValidate();
         File.WriteAllText(path, JsonSerializer.Serialize(config, Options));
     }
 
     /// <summary>Debounced hot-reload watcher. Returns the watcher so the caller can dispose it.</summary>
-    public static FileSystemWatcher? Watch(string path, Action<ShieldConfig> onReload, Action<string>? warn = null)
+    public static FileSystemWatcher? Watch(string path, Action<BruceConfig> onReload, Action<string>? warn = null)
     {
         try
         {

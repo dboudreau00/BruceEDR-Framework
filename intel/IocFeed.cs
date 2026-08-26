@@ -3,7 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
 
-namespace ProcessShield.Intel;
+namespace BruceEDR.Intel;
 
 /// <summary>Kind of indicator a feed line described.</summary>
 public enum IocType
@@ -36,7 +36,7 @@ public sealed record IocHit(IocType Type, string Indicator, string Label, string
 /// An operator-editable indicator set loaded from plain text files.
 ///
 /// WHY PLAIN TEXT: every commercial and community feed can be flattened to one
-/// indicator per line, so an operator can wire ProcessShield to their own intel with
+/// indicator per line, so an operator can wire BruceEDR to their own intel with
 /// <c>curl</c> and a cron job instead of an integration. Format per line, with the type
 /// auto-detected so no column headers are needed:
 /// <code>

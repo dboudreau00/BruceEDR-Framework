@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Response;
+namespace BruceEDR.Response;
 
 /// <summary>Current isolation posture as this agent believes it to be.</summary>
 public sealed record IsolationState
@@ -58,7 +58,7 @@ public sealed record IsolationState
 public sealed class NetworkIsolation
 {
     /// <summary>Every rule this class creates starts with this, so cleanup is unambiguous.</summary>
-    public const string RuleNamePrefix = "ProcessShield Isolation";
+    public const string RuleNamePrefix = "BruceEDR Isolation";
 
     internal const string AllowOutRuleName = RuleNamePrefix + " Allow Out";
     internal const string AllowInRuleName = RuleNamePrefix + " Allow In";

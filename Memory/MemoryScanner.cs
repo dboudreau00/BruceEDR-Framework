@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using ProcessShield.Detection;
-using static ProcessShield.Native.NativeMethods;
+using BruceEDR.Detection;
+using static BruceEDR.Native.NativeMethods;
 
-namespace ProcessShield.Memory;
+namespace BruceEDR.Memory;
 
 /// <summary>
 /// Builtin point-in-time scanner: walks committed, readable memory and matches IOC

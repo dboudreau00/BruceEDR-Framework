@@ -1,8 +1,8 @@
 using Microsoft.Diagnostics.Tracing.Parsers;
 using Microsoft.Diagnostics.Tracing.Session;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Monitoring;
+namespace BruceEDR.Monitoring;
 
 /// <summary>
 /// Primary telemetry source: one real-time kernel session yielding PID-attributed
@@ -17,7 +17,7 @@ namespace ProcessShield.Monitoring;
 /// </summary>
 public sealed class EtwMonitor : IDisposable
 {
-    private const string SessionName = "ProcessShield-Kernel";
+    private const string SessionName = "BruceEDR-Kernel";
 
     private readonly Action<Signal> _emit;
     private readonly Logger _log;
@@ -90,7 +90,7 @@ public sealed class EtwMonitor : IDisposable
             }));
 
             _session = session;
-            _pump = new Thread(PumpEvents) { IsBackground = true, Name = "ProcessShield-ETW" };
+            _pump = new Thread(PumpEvents) { IsBackground = true, Name = "BruceEDR-ETW" };
             _pump.Start();
         }
         catch

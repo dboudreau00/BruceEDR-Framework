@@ -1,4 +1,4 @@
-namespace ProcessShield.Core;
+namespace BruceEDR.Core;
 
 /// <summary>
 /// Injectable time source. The detection engine, beacon analyzer and score-decay

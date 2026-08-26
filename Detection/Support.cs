@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace ProcessShield.Detection;
+namespace BruceEDR.Detection;
 
 /// <summary>Pluggable memory-scan backend (builtin substring or YARA).</summary>
 public interface IMemoryScanner

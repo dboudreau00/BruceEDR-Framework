@@ -1,7 +1,7 @@
-namespace ProcessShield.Detection;
+namespace BruceEDR.Detection;
 
 /// <summary>
-/// One MITRE ATT&amp;CK technique. Only the fields ProcessShield actually needs are
+/// One MITRE ATT&amp;CK technique. Only the fields BruceEDR actually needs are
 /// modelled — the id is the contract, the rest is presentation.
 /// </summary>
 public sealed record AttackTechnique
@@ -13,7 +13,7 @@ public sealed record AttackTechnique
 }
 
 /// <summary>
-/// Static MITRE ATT&amp;CK (Enterprise) reference for the techniques ProcessShield's
+/// Static MITRE ATT&amp;CK (Enterprise) reference for the techniques BruceEDR's
 /// rules can emit. Detection rules cite technique ids; this table turns an id into a
 /// name + tactic for alerts, the ATT&amp;CK coverage report and the GUI.
 ///

@@ -1,15 +1,15 @@
 using System.Globalization;
 using System.Text;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Api;
+namespace BruceEDR.Api;
 
 // ---------------------------------------------------------------------------
 // The EDR-native half of API Studio.
 //
 // A generic HTTP client makes you type a URL in. An EDR already knows which
 // URLs matter, because it watched the machine contact them. This file turns the
-// NetworkConnect + DnsQuery telemetry ProcessShield already collects into an
+// NetworkConnect + DnsQuery telemetry BruceEDR already collects into an
 // inventory of the network/API surface the box actually uses, so the analyst
 // starts from observed behaviour and only then inspects an endpoint.
 //
@@ -92,7 +92,7 @@ public sealed record SurfaceEndpoint
 /// <see cref="SignalKind.DnsQuery"/>.
 ///
 /// NOT THREAD-SAFE, by design. Like <see cref="ThreatProfile"/> and the rest of the
-/// detection state it is mutated only by the single owner thread in ShieldHost, so it
+/// detection state it is mutated only by the single owner thread in BruceHost, so it
 /// carries no locks. Call <see cref="All"/> to obtain immutable snapshots for other
 /// threads (the console, the GUI, the control server).
 ///
@@ -367,7 +367,7 @@ public sealed class ApiSurfaceInventory
         {
             Name = string.IsNullOrWhiteSpace(name) ? "Discovered API surface" : name.Trim(),
             Description =
-                "Generated from ProcessShield network telemetry: one GET per distinct scheme/host/port " +
+                "Generated from BruceEDR network telemetry: one GET per distinct scheme/host/port " +
                 "that a monitored process was observed contacting. Nothing here has been requested yet — " +
                 "sending these probes contacts the hosts, which is observable by whoever owns them, and " +
                 "the run-time safety policy must still allow each host. Ports imply the scheme, so a " +
@@ -675,7 +675,7 @@ public sealed class ApiSurfaceInventory
     private static string Describe(Group g)
     {
         var sb = new StringBuilder();
-        sb.Append("Discovered from ProcessShield network telemetry: ")
+        sb.Append("Discovered from BruceEDR network telemetry: ")
           .Append(g.Connections.ToString(CultureInfo.InvariantCulture))
           .Append(g.Connections == 1 ? " connection from " : " connections from ");
 

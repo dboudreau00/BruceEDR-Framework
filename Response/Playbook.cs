@@ -1,8 +1,8 @@
 using System.Text;
 using System.Text.Json;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Response;
+namespace BruceEDR.Response;
 
 /// <summary>
 /// One step a playbook can order. The playbook only DECIDES; executing an action is

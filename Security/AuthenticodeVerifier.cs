@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
-using ProcessShield.Configuration;
+using BruceEDR.Configuration;
 
-namespace ProcessShield.Security;
+namespace BruceEDR.Security;
 
 /// <summary>
 /// Full Authenticode verification: validates the signature chain with

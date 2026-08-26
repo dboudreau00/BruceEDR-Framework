@@ -1,9 +1,9 @@
 #if YARA_ENABLED
 using dnYara;
 #endif
-using ProcessShield.Detection;
+using BruceEDR.Detection;
 
-namespace ProcessShield.Memory;
+namespace BruceEDR.Memory;
 
 /// <summary>
 /// YARA-backed memory scanner. The real implementation is compiled in ONLY when the

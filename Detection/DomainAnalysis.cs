@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Net;
 
-namespace ProcessShield.Detection;
+namespace BruceEDR.Detection;
 
 /// <summary>
 /// Everything the heuristics concluded about one DNS name. All ratios are in 0..1 and
@@ -139,7 +139,7 @@ public static class DomainAnalysis
 
     /// <summary>
     /// Hand-maintained subset of the Public Suffix List: the two-label suffixes common
-    /// enough to matter for registrable-domain extraction. ProcessShield does NOT ship a
+    /// enough to matter for registrable-domain extraction. BruceEDR does NOT ship a
     /// full PSL copy, because keeping one current means either a download (forbidden in a
     /// sensor) or a stale blob that quietly rots. The cost is real: exotic suffixes such
     /// as <c>pvt.k12.ma.us</c> or <c>compute.amazonaws.com</c> resolve to a shorter

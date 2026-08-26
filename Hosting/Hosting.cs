@@ -1,31 +1,31 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Hosting;
-using ProcessShield.Analysis;
-using ProcessShield.Api;
-using ProcessShield.Configuration;
-using ProcessShield.Core;
-using ProcessShield.Detection;
-using ProcessShield.Driver;
-using ProcessShield.Intel;
-using ProcessShield.Memory;
-using ProcessShield.Response;
-using ProcessShield.Security;
-using ProcessShield.Telemetry;
+using BruceEDR.Analysis;
+using BruceEDR.Api;
+using BruceEDR.Configuration;
+using BruceEDR.Core;
+using BruceEDR.Detection;
+using BruceEDR.Driver;
+using BruceEDR.Intel;
+using BruceEDR.Memory;
+using BruceEDR.Response;
+using BruceEDR.Security;
+using BruceEDR.Telemetry;
 
-namespace ProcessShield.Hosting;
+namespace BruceEDR.Hosting;
 
 public sealed record WorkerOptions(string ConfigPath);
 
 /// <summary>
-/// Composition root: builds every component from a ShieldConfig and wires hot
+/// Composition root: builds every component from a BruceConfig and wires hot
 /// reload. Used by both the interactive console mode and the Windows Service.
 /// </summary>
 public sealed class Composition : IDisposable
 {
-    public ShieldHost Host { get; }
+    public BruceHost Host { get; }
     public Logger Log { get; }
-    public ShieldConfig Config { get; private set; }
+    public BruceConfig Config { get; private set; }
 
     /// <summary>Declarative rules currently loaded. Replaced wholesale on hot reload.</summary>
     public RuleSet Rules { get; private set; } = new(Array.Empty<DetectionRule>(), Array.Empty<RuleValidationError>());
@@ -54,8 +54,8 @@ public sealed class Composition : IDisposable
     private MinifilterClient? _minifilter;
     private ControlServer? _control;
 
-    private Composition(string configPath, ShieldConfig config, Logger log,
-        AuthenticodeVerifier verifier, CompositeSink sink, IMemoryScanner scanner, ShieldHost host,
+    private Composition(string configPath, BruceConfig config, Logger log,
+        AuthenticodeVerifier verifier, CompositeSink sink, IMemoryScanner scanner, BruceHost host,
         ApiSurfaceInventory surface, QuarantineVault? vault, RingBufferSink events,
         NetworkIsolation isolation, RuleEngineHolder ruleHolder, IocFeedHolder intelHolder,
         WatchlistHolder watchHolder, ApiSafetyPolicy apiPolicy)
@@ -125,8 +125,7 @@ public sealed class Composition : IDisposable
             DgaScore = cfg.Detection.DgaScore,
             EnableDomainAnalysis = cfg.Detection.EnableDomainAnalysis,
             IntelHitScore = cfg.Intel.HitScore,
-            MaxTrackedProcesses = cfg.Detection.MaxTrackedProcesses,
-            AlertOnEveryWatchlistHit = cfg.Watchlist.AlertOnEveryHit
+            MaxTrackedProcesses = cfg.Detection.MaxTrackedProcesses
         };
 
         var deps = new EngineDependencies
@@ -143,7 +142,12 @@ public sealed class Composition : IDisposable
             IntelProvider = () => intelHolder.Feed,
             WatchlistProvider = () => watchHolder.List,
             Surface = cfg.Api.EnableSurfaceInventory ? surface : null,
-            ImageHash = cfg.Intel.Enabled ? hashes.Sha256 : null,
+            // Wired unconditionally. This hasher serves BOTH indicator feeds and watchlist
+            // hash entries; gating it on intel.enabled made every watchlist SHA-256 entry
+            // silently inert while the log still reported it as armed. It is lazy and cached,
+            // and MatchIndicators returns early on an empty feed, so an always-on hasher costs
+            // nothing when intel is off.
+            ImageHash = hashes.Sha256,
             AnalyzeImage = cfg.Detection.EnablePeAnalysis ? images.Analyze : null
         };
 
@@ -160,16 +164,16 @@ public sealed class Composition : IDisposable
         var engine = new DetectionEngine(options, response.IsTrusted, deps);
         var playbook = LoadPlaybook(cfg.Response, log);
 
-        var hostOptions = new ShieldHostOptions
+        var hostOptions = new BruceHostOptions
         {
             AutoKill = cfg.Detection.AutoKill,
             EnableExtendedMonitors = cfg.Detection.EnableExtendedMonitors,
             Tree = tree,
             Surface = cfg.Api.EnableSurfaceInventory ? surface : null,
             Playbook = playbook,
-            Metrics = new ShieldMetrics(clock)
+            Metrics = new BruceMetrics(clock)
         };
-        var host = new ShieldHost(engine, response, scanner, log, hostOptions);
+        var host = new BruceHost(engine, response, scanner, log, hostOptions);
 
         var apiPolicy = BuildApiPolicy(cfg.Api.Studio);
 
@@ -218,7 +222,7 @@ public sealed class Composition : IDisposable
     private static Watchlist LoadWatchlist(WatchlistConfig w, Logger log)
     {
         if (!w.Enabled) return Watchlist.Empty;
-        var list = Watchlist.Compile(w.Entries, m => log.Info("watchlist: " + m));
+        var list = Watchlist.Compile(w.Entries, m => log.Info("watchlist: " + m), w.AlertOnEveryHit);
         if (list.Count > 0)
         {
             int contain = list.Entries.Count(e => e.Action == WatchAction.Quarantine);
@@ -241,7 +245,7 @@ public sealed class Composition : IDisposable
     /// logs which directory was chosen so an operator can see what is actually armed.
     ///
     /// Unlike <see cref="SelfTest.Resolve"/> this never ascends to parent directories. From
-    /// an installed location such as C:\Program Files\ProcessShield\ an upward walk reaches
+    /// an installed location such as C:\Program Files\BruceEDR\ an upward walk reaches
     /// the drive root and other user-writable places, so a standard user could plant a
     /// rules\detection folder that the SYSTEM-level agent would then load and enforce as
     /// detection policy. SelfTest keeps the walk deliberately: it is an explicit, offline,
@@ -330,7 +334,7 @@ public sealed class Composition : IDisposable
         return Path.IsPathRooted(path) ? path : Path.Combine(AppContext.BaseDirectory, path);
     }
 
-    private void StartControlServer(ShieldConfig cfg)
+    private void StartControlServer(BruceConfig cfg)
     {
         var c = cfg.Api.Control;
         if (!c.Enabled) return;
@@ -352,11 +356,11 @@ public sealed class Composition : IDisposable
         catch (Exception ex) { Log.Error("control server", ex); }
     }
 
-    // Best-effort kernel enforcement. If the ShieldFilter driver isn't installed the
+    // Best-effort kernel enforcement. If the BruceFilter driver isn't installed the
     // connect fails quietly and user-mode detection continues on its own. The client is
     // retained for the process lifetime so ApplyKernelBlocking can re-send the block
     // toggle on a config reload; the sensitive-path list below is sent only here.
-    private void ConnectMinifilter(ShieldConfig cfg)
+    private void ConnectMinifilter(BruceConfig cfg)
     {
         try
         {
@@ -382,7 +386,7 @@ public sealed class Composition : IDisposable
     private static CompositeSink BuildSink(TelemetryConfig t, Logger log, IEventSink? extra,
         RingBufferSink events)
     {
-        // The wire format applies to the file/syslog/webhook sinks so ProcessShield can be
+        // The wire format applies to the file/syslog/webhook sinks so BruceEDR can be
         // a drop-in producer for an existing SIEM. The audit chain deliberately keeps the
         // native shape: its HMACs are computed over that canonical form, and switching the
         // schema would silently invalidate every previously written chain.
@@ -447,7 +451,7 @@ public sealed class Composition : IDisposable
     }
 
     /// <summary>Apply the hot-reloadable subset (posture + allowlist + rules + intel).</summary>
-    private void Apply(ShieldConfig next)
+    private void Apply(BruceConfig next)
     {
         try
         {
@@ -540,7 +544,7 @@ public sealed class Composition : IDisposable
     /// safety policy, detection.kernelBlocking, telemetry.enableMetrics, the isolation
     /// allowlist and triage output path) is deliberately absent.
     /// </summary>
-    private static List<string> RestartRequiredChanges(ShieldConfig old, ShieldConfig next)
+    private static List<string> RestartRequiredChanges(BruceConfig old, BruceConfig next)
     {
         var changed = new List<string>();
 
@@ -562,6 +566,11 @@ public sealed class Composition : IDisposable
         Number("detection.beaconScore", od.BeaconScore, nd.BeaconScore);
         Number("detection.dgaScore", od.DgaScore, nd.DgaScore);
         Flag("detection.enableScoreDecay", od.EnableScoreDecay, nd.EnableScoreDecay);
+        // Both are consumed once while EngineOptions/EngineDependencies are built, so a
+        // reload cannot change them. Naming them here is the whole contract of this method:
+        // an operator must never be left believing a reload applied an edit it ignored.
+        Flag("detection.enablePeAnalysis", od.EnablePeAnalysis, nd.EnablePeAnalysis);
+        Flag("detection.enableDomainAnalysis", od.EnableDomainAnalysis, nd.EnableDomainAnalysis);
         Number("detection.scoreDecayPoints", od.ScoreDecayPoints, nd.ScoreDecayPoints);
         Number("detection.scoreDecayIntervalSeconds", od.ScoreDecayIntervalSeconds, nd.ScoreDecayIntervalSeconds);
         Number("detection.maxTrackedProcesses", od.MaxTrackedProcesses, nd.MaxTrackedProcesses);
@@ -774,13 +783,13 @@ internal sealed class ImageHashCache
 }
 
 /// <summary>Windows Service worker: runs the agent and writes a heartbeat the watchdog reads.</summary>
-public sealed class ShieldWorker : BackgroundService
+public sealed class BruceWorker : BackgroundService
 {
     private readonly WorkerOptions _options;
     private readonly IHostApplicationLifetime _lifetime;
     private Composition? _composition;
 
-    public ShieldWorker(WorkerOptions options, IHostApplicationLifetime lifetime)
+    public BruceWorker(WorkerOptions options, IHostApplicationLifetime lifetime)
     {
         _options = options;
         _lifetime = lifetime;
@@ -883,9 +892,9 @@ public static class Watchdog
 /// <summary>Install/uninstall/start the Windows Service and its watchdog task via sc.exe / schtasks.</summary>
 public static class ServiceControl
 {
-    private const string WatchdogTask = "ProcessShieldWatchdog";
+    private const string WatchdogTask = "BruceEDRWatchdog";
 
-    public static int Install(ShieldConfig cfg)
+    public static int Install(BruceConfig cfg)
     {
         string exe = Environment.ProcessPath ?? "";
         string fileName = Path.GetFileName(exe).ToLowerInvariant();
@@ -894,17 +903,17 @@ public static class ServiceControl
             Console.Error.WriteLine(
                 "Install requires a self-contained executable. Publish first:\n" +
                 "  dotnet publish -c Release -r win-x64 --self-contained true\n" +
-                "then run \"ProcessShield.exe --install\" from the publish folder.");
+                "then run \"BruceEDR.exe --install\" from the publish folder.");
             return 1;
         }
 
         string svc = cfg.Service.ServiceName;
         int rc = 0;
         // Quote the binPath value so the stored ImagePath is quoted (CWE-428). An
-        // unquoted "C:\Program Files\...\ProcessShield.exe" lets a local user drop
+        // unquoted "C:\Program Files\...\BruceEDR.exe" lets a local user drop
         // C:\Program.exe and get it run as LocalSystem. sc.exe never adds quotes itself.
-        rc |= Sc("create", svc, "binPath=", $"\"{exe}\"", "start=", "auto", "DisplayName=", "ProcessShield EDR");
-        Sc("description", svc, "User-mode behavioral shield for RAT / infostealer IOCs");
+        rc |= Sc("create", svc, "binPath=", $"\"{exe}\"", "start=", "auto", "DisplayName=", "BruceEDR EDR");
+        Sc("description", svc, "User-mode behavioural EDR agent for RAT / infostealer IOCs");
         Sc("failure", svc, "reset=", "86400", "actions=", "restart/5000/restart/5000/restart/5000");
 
         // Register the watchdog as a SYSTEM scheduled task that starts at boot.
@@ -916,7 +925,7 @@ public static class ServiceControl
         return rc;
     }
 
-    public static int Uninstall(ShieldConfig cfg)
+    public static int Uninstall(BruceConfig cfg)
     {
         string svc = cfg.Service.ServiceName;
         Sc("stop", svc);

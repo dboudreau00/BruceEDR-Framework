@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to ProcessShield. This project follows [Semantic Versioning](https://semver.org/).
+All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
 ## [2.0.0] — 2026-08-11
 
@@ -47,7 +47,7 @@ Source grew from roughly 5,000 to roughly 28,500 lines, alongside 15,000 lines o
 
 **Integration**
 - Elastic Common Schema, OCSF 1.1 and CEF output formats, so an existing SIEM ingests
-  ProcessShield without a custom parser.
+  BruceEDR without a custom parser.
 - Prometheus metrics.
 - Localhost-only REST control plane with bearer auth — disabled by default, read-only by
   default, and refuses to bind to a non-loopback address.
@@ -91,7 +91,7 @@ Source grew from roughly 5,000 to roughly 28,500 lines, alongside 15,000 lines o
   the one guarantee the log exists to provide. Removed and untracked.
 - **`tests/Tests.cs` on `main` did not compile.** It constructed `DetectionEngine` with a
   memory scanner as the second argument, but that parameter was removed when scanning moved to
-  `ShieldHost`. `dotnet test` failed on a clean clone.
+  `BruceHost`. `dotnet test` failed on a clean clone.
 - `obj/` build artifacts were committed; now untracked.
 - Prometheus `# HELP` text double-escaped backslashes in gauge names.
 

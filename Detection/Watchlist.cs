@@ -1,7 +1,7 @@
 using System.Text;
-using ProcessShield.Configuration;
+using BruceEDR.Configuration;
 
-namespace ProcessShield.Detection;
+namespace BruceEDR.Detection;
 
 /// <summary>How a watchlist entry identifies a process.</summary>
 public enum WatchMatchKind
@@ -16,7 +16,7 @@ public enum WatchMatchKind
     CommandLine,
 }
 
-/// <summary>What ProcessShield does when a watchlist entry matches.</summary>
+/// <summary>What BruceEDR does when a watchlist entry matches.</summary>
 public enum WatchAction
 {
     /// <summary>Add points and let the normal thresholds decide. The gentlest option.</summary>
@@ -74,9 +74,26 @@ public sealed class Watchlist
 {
     public static readonly Watchlist Empty = new(Array.Empty<WatchlistEntry>());
 
+    private static int _nextVersion;
+
     private readonly WatchlistEntry[] _entries;
     /// <summary>True when any entry matches on hash, so the engine only pays for hashing then.</summary>
     public bool NeedsHash { get; }
+
+    /// <summary>
+    /// Identity of this compiled list, unique per instance. The engine caches which list it
+    /// last evaluated a process against; without a version, a process that missed under the
+    /// OLD list would never be re-checked against a newly loaded one, and a hot reload would
+    /// silently fail to arm for everything already running.
+    /// </summary>
+    public int Version { get; }
+
+    /// <summary>
+    /// Report a <c>score</c>-action hit even when the process never crosses a threshold.
+    /// Lives on the compiled list (not on the engine's start-up options) so that changing it
+    /// takes effect on reload rather than at the next restart.
+    /// </summary>
+    public bool AlertOnEveryHit { get; private init; } = true;
 
     public IReadOnlyList<WatchlistEntry> Entries => _entries;
     public int Count => _entries.Length;
@@ -85,6 +102,7 @@ public sealed class Watchlist
     {
         _entries = entries;
         NeedsHash = entries.Any(e => e.Kind == WatchMatchKind.Hash);
+        Version = Interlocked.Increment(ref _nextVersion);
     }
 
     /// <summary>
@@ -104,6 +122,16 @@ public sealed class Watchlist
         };
 
     /// <summary>
+    /// The same set put through <see cref="NormaliseName"/>, which is what lookups actually
+    /// compare against. This matters: NormaliseName appends ".exe" to any name without a dot,
+    /// so the five extension-less kernel processes above ("System", "Registry", "Memory
+    /// Compression", ...) could never be found in the raw set and the guard silently did not
+    /// cover them.
+    /// </summary>
+    private static readonly HashSet<string> ProtectedNormalised =
+        ProtectedProcesses.Select(NormaliseName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Patterns so broad they would match most of the machine. Refused outright rather than
     /// compiled, because "quarantine *" is never what an operator meant to type.
     /// </summary>
@@ -114,7 +142,8 @@ public sealed class Watchlist
     /// Compiles operator config into a validated watchlist. Bad entries are reported through
     /// <paramref name="onError"/> and skipped -- one typo must not discard the whole list.
     /// </summary>
-    public static Watchlist Compile(IEnumerable<WatchlistEntryConfig>? config, Action<string>? onError = null)
+    public static Watchlist Compile(IEnumerable<WatchlistEntryConfig>? config, Action<string>? onError = null,
+                                    bool alertOnEveryHit = true)
     {
         if (config is null) return Empty;
 
@@ -181,7 +210,11 @@ public sealed class Watchlist
             });
         }
 
-        return list.Count == 0 ? Empty : new Watchlist(list.ToArray());
+        // An empty list still gets a fresh instance when the policy differs, so the engine
+        // sees a version change and re-evaluates.
+        return list.Count == 0 && alertOnEveryHit
+            ? Empty
+            : new Watchlist(list.ToArray()) { AlertOnEveryHit = alertOnEveryHit };
     }
 
     /// <summary>
@@ -221,7 +254,7 @@ public sealed class Watchlist
 
     /// <summary>True when the name is a Windows process that must never be contained.</summary>
     public static bool IsProtected(string processName)
-        => ProtectedProcesses.Contains(NormaliseName(processName));
+        => ProtectedNormalised.Contains(NormaliseName(processName));
 
     private static bool Matches(WatchlistEntry e, string subject)
         => e.IsGlob

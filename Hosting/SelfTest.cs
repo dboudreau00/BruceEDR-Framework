@@ -1,16 +1,16 @@
-using ProcessShield.Core;
-using ProcessShield.Detection;
-using ProcessShield.Replay;
+using BruceEDR.Core;
+using BruceEDR.Detection;
+using BruceEDR.Replay;
 
-namespace ProcessShield.Hosting;
+namespace BruceEDR.Hosting;
 
 /// <summary>
-/// Everything ProcessShield can verify about itself without Administrator rights, a live
+/// Everything BruceEDR can verify about itself without Administrator rights, a live
 /// ETW session or a real threat: the shipped detection rule packs parse and validate, and
 /// every replay scenario still produces the verdicts it is supposed to.
 ///
 /// This is what <c>tools/verify.ps1</c> and CI run, and it is the loop a rule author uses
-/// while iterating: edit a JSON rule, run <c>ProcessShield.exe --selftest</c>, see whether
+/// while iterating: edit a JSON rule, run <c>BruceEDR.exe --selftest</c>, see whether
 /// the malicious scenarios still fire and the benign one still stays quiet.
 /// </summary>
 public static class SelfTest
@@ -32,7 +32,7 @@ public static class SelfTest
         int failures = 0;
         bool allow = allowEmpty || CommandLineAllowsEmpty();
 
-        w.WriteLine("ProcessShield self-test");
+        w.WriteLine("BruceEDR self-test");
         w.WriteLine("=======================");
         w.WriteLine();
 

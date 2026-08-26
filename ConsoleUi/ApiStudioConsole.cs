@@ -1,19 +1,19 @@
 using System.Text;
-using ProcessShield.Api;
-using ProcessShield.Core;
-using ProcessShield.Hosting;
+using BruceEDR.Api;
+using BruceEDR.Core;
+using BruceEDR.Hosting;
 
-namespace ProcessShield.ConsoleUi;
+namespace BruceEDR.ConsoleUi;
 
 /// <summary>
 /// The analyst-facing half of API Studio: import a collection (Postman / OpenAPI / HAR /
-/// curl), or build one straight from the endpoints ProcessShield actually observed this
+/// curl), or build one straight from the endpoints BruceEDR actually observed this
 /// machine talking to, then send, assert, grade and export.
 ///
 /// Everything here is gated by <see cref="ApiSafetyPolicy"/>. Out of the box that policy
 /// allows loopback only and refuses state-changing verbs, because an EDR shipping an
 /// unrestricted HTTP client that anyone with console access can point anywhere would be a
-/// liability rather than a feature. Widening it is a deliberate edit to shield.config.json.
+/// liability rather than a feature. Widening it is a deliberate edit to bruce.config.json.
 /// </summary>
 public sealed class ApiStudioConsole
 {
@@ -374,7 +374,7 @@ public sealed class ApiStudioConsole
     private void PrintPolicy()
     {
         var p = Policy;
-        Write("API Studio safety policy (edit api.studio in shield.config.json):");
+        Write("API Studio safety policy (edit api.studio in bruce.config.json):");
         Write("  allowed hosts        : " + (p.AllowedHosts.Count == 0 ? "(none -- nothing can be sent)" : string.Join(", ", p.AllowedHosts)));
         Write("  mutating methods     : " + (p.AllowMutatingMethods ? "allowed" : "blocked (POST/PUT/PATCH/DELETE)"));
         Write("  plain http           : " + (p.AllowInsecureHttp ? "allowed" : "blocked outside loopback"));

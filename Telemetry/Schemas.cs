@@ -5,14 +5,14 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using Attack = ProcessShield.Detection.AttackCatalog;
+using Attack = BruceEDR.Detection.AttackCatalog;
 
-namespace ProcessShield.Telemetry;
+namespace BruceEDR.Telemetry;
 
 /// <summary>
-/// Renders one <see cref="ShieldEvent"/> into a single line of some wire schema.
+/// Renders one <see cref="BruceEvent"/> into a single line of some wire schema.
 ///
-/// WHY: ProcessShield's native JSON is convenient for ProcessShield and useless to
+/// WHY: BruceEDR's native JSON is convenient for BruceEDR and useless to
 /// everyone else -- every SIEM would need a bespoke parser before the first alert is
 /// searchable. Implementations of this interface let the same sink pipeline emit
 /// Elastic Common Schema, OCSF or ArcSight CEF instead, which is the difference
@@ -30,13 +30,13 @@ public interface IEventFormatter
     string Name { get; }
 
     /// <summary>Renders the event as one line. Never throws; never returns null.</summary>
-    string Format(ShieldEvent e);
+    string Format(BruceEvent e);
 }
 
 /// <summary>
 /// Shared, allocation-conscious helpers for the formatters.
 ///
-/// Every accessor here is defensive on purpose. A <see cref="ShieldEvent"/> can reach a
+/// Every accessor here is defensive on purpose. A <see cref="BruceEvent"/> can reach a
 /// formatter after a JSON round-trip (audit-log replay, an API POST, a saved capture),
 /// and <c>{"Reasons":null}</c> deserializes to a null list even though the record
 /// declares a non-nullable default. Formatters must survive that rather than take the
@@ -77,10 +77,10 @@ internal static class SchemaUtil
     }
 
     /// <summary>Normalised level token: trimmed and upper-cased.</summary>
-    internal static string Level(ShieldEvent e) => S(e.Level).Trim().ToUpperInvariant();
+    internal static string Level(BruceEvent e) => S(e.Level).Trim().ToUpperInvariant();
 
     /// <summary>Normalised category token: trimmed and lower-cased.</summary>
-    internal static string Category(ShieldEvent e) => S(e.Category).Trim().ToLowerInvariant();
+    internal static string Category(BruceEvent e) => S(e.Category).Trim().ToLowerInvariant();
 
     /// <summary>
     /// Interprets a <see cref="DateTime"/> as UTC. An Unspecified kind is *assumed* UTC
@@ -172,7 +172,7 @@ internal static class SchemaUtil
     /// <summary>One-line human summary, used wherever a schema requires a message but the
     /// event carries none. An empty <c>message</c> column is the fastest way to make an
     /// analyst distrust a new data source.</summary>
-    internal static string Summary(ShieldEvent e)
+    internal static string Summary(BruceEvent e)
     {
         var sb = new StringBuilder(64);
         string lvl = Level(e);
@@ -186,7 +186,7 @@ internal static class SchemaUtil
     }
 
     /// <summary>The event's message, or a synthesised summary when it has none.</summary>
-    internal static string MessageOf(ShieldEvent e)
+    internal static string MessageOf(BruceEvent e)
     {
         string m = S(e.Message);
         return m.Length > 0 ? m : Summary(e);
@@ -195,14 +195,14 @@ internal static class SchemaUtil
     /// <summary>
     /// Stable 128-bit content id, hex encoded.
     ///
-    /// LIMITATION, stated plainly: <see cref="ShieldEvent"/> has no unique identifier, so
+    /// LIMITATION, stated plainly: <see cref="BruceEvent"/> has no unique identifier, so
     /// this is derived from the event's canonical JSON. Two byte-identical events
     /// therefore share an id. That is deliberate -- it makes re-ingesting the same log
     /// file idempotent in the SIEM -- but it means a genuinely repeated, identical event
     /// (same tick, same fields) collapses to one document. TimeUtc has 100 ns resolution,
     /// so in practice only a replayed file collides.
     /// </summary>
-    internal static string EventId(ShieldEvent e)
+    internal static string EventId(BruceEvent e)
     {
         string canonical;
         try { canonical = Json.Event(e); }
@@ -292,7 +292,7 @@ internal static class SchemaUtil
 }
 
 /// <summary>
-/// ProcessShield's own JSON shape. This is the historical format: the audit chain and
+/// BruceEDR's own JSON shape. This is the historical format: the audit chain and
 /// the API Studio replay both assume it, so it stays the default and stays byte-identical
 /// to what <see cref="JsonlSink"/> writes.
 /// </summary>
@@ -300,7 +300,7 @@ public sealed class NativeFormatter : IEventFormatter
 {
     public string Name => "native";
 
-    public string Format(ShieldEvent e)
+    public string Format(BruceEvent e)
     {
         if (e is null) return "{}";
         try { return Json.Event(e); }
@@ -318,8 +318,8 @@ public sealed class NativeFormatter : IEventFormatter
 /// nested objects, not dotted keys -- dotted keys work on ingest but break
 /// <c>copy_to</c> and runtime fields).
 ///
-/// Fields ProcessShield carries that ECS has no home for (the reason lines, the staged
-/// archive list, the ancestry) are preserved under a <c>processshield</c> custom
+/// Fields BruceEDR carries that ECS has no home for (the reason lines, the staged
+/// archive list, the ancestry) are preserved under a <c>bruceedr</c> custom
 /// namespace rather than dropped or crammed into an ECS field with different semantics.
 /// </summary>
 public sealed class EcsFormatter : IEventFormatter
@@ -327,7 +327,7 @@ public sealed class EcsFormatter : IEventFormatter
     /// <summary>The ECS release this mapping was written against.</summary>
     public const string EcsVersion = "8.11.0";
 
-    private static readonly ShieldEvent Fallback = new() { TimeUtc = default };
+    private static readonly BruceEvent Fallback = new() { TimeUtc = default };
 
     private readonly string _hostName;
 
@@ -340,13 +340,13 @@ public sealed class EcsFormatter : IEventFormatter
 
     public string Name => "ecs";
 
-    public string Format(ShieldEvent e)
+    public string Format(BruceEvent e)
     {
         var ev = e ?? Fallback;
         return SchemaUtil.WriteObject(w => Write(w, ev));
     }
 
-    private void Write(Utf8JsonWriter w, ShieldEvent e)
+    private void Write(Utf8JsonWriter w, BruceEvent e)
     {
         string level = SchemaUtil.Level(e);
         string category = SchemaUtil.Category(e);
@@ -371,8 +371,8 @@ public sealed class EcsFormatter : IEventFormatter
         w.WriteString("action", Action(e, level, category));
         w.WriteNumber("severity", Severity(level));
         w.WriteNumber("risk_score", e.Score);
-        w.WriteString("dataset", "processshield.detection");
-        w.WriteString("module", "processshield");
+        w.WriteString("dataset", "bruceedr.detection");
+        w.WriteString("module", "bruceedr");
         w.WriteString("provider", EventFormatters.ProductName);
         w.WriteString("id", SchemaUtil.EventId(e));
         if (reasons.Count > 0) w.WriteString("reason", string.Join("; ", reasons));
@@ -422,7 +422,7 @@ public sealed class EcsFormatter : IEventFormatter
 
         if (ruleIds.Count > 0)
         {
-            // ProcessShield rule ids are human-readable slugs ("lolbin-unusual-parent"),
+            // BruceEDR rule ids are human-readable slugs ("lolbin-unusual-parent"),
             // so the id doubles as the name. Emitting a separate prettified name would be
             // inventing data the agent does not have.
             w.WriteStartObject("rule");
@@ -468,7 +468,7 @@ public sealed class EcsFormatter : IEventFormatter
             archives.Count > 0 || ancestry.Count > 0 || endpoints.Count > 0 ||
             SchemaUtil.S(e.Trigger).Length > 0)
         {
-            w.WriteStartObject("processshield");
+            w.WriteStartObject("bruceedr");
             if (level.Length > 0) w.WriteString("level", level);
             if (category.Length > 0) w.WriteString("category", category);
             string trigger = SchemaUtil.S(e.Trigger);
@@ -481,7 +481,7 @@ public sealed class EcsFormatter : IEventFormatter
         }
     }
 
-    private static void WriteProcess(Utf8JsonWriter w, ShieldEvent e)
+    private static void WriteProcess(Utf8JsonWriter w, BruceEvent e)
     {
         string name = SchemaUtil.S(e.Process);
         string image = SchemaUtil.S(e.Image);
@@ -511,7 +511,7 @@ public sealed class EcsFormatter : IEventFormatter
     }
 
     private void WriteRelated(
-        Utf8JsonWriter w, ShieldEvent e,
+        Utf8JsonWriter w, BruceEvent e,
         IReadOnlyList<string> endpoints, IReadOnlyList<string> domains, string user)
     {
         // related.* is what makes "show me everything about this IP" work in Elastic
@@ -545,7 +545,7 @@ public sealed class EcsFormatter : IEventFormatter
 
     /// <summary>ECS constrains event.category to a closed vocabulary, so the agent's own
     /// category token is translated and the raw value is kept under
-    /// <c>processshield.category</c>.</summary>
+    /// <c>bruceedr.category</c>.</summary>
     private static string[] Categories(string level, string category) => category switch
     {
         "detection" => level == "QUARANTINE"
@@ -561,7 +561,7 @@ public sealed class EcsFormatter : IEventFormatter
     private static string[] Types(string level, string category) =>
         category == "response" || level == "ACTION" ? new[] { "change" } : new[] { "info" };
 
-    private static string Action(ShieldEvent e, string level, string category)
+    private static string Action(BruceEvent e, string level, string category)
     {
         string slug = SchemaUtil.Slug(e.Trigger);
         if (slug.Length > 0) return slug;
@@ -571,7 +571,7 @@ public sealed class EcsFormatter : IEventFormatter
 
     /// <summary>
     /// ECS defines event.severity as "the numeric severity according to your source" and
-    /// fixes no scale, so this is a ProcessShield-local ordinal, documented here so a
+    /// fixes no scale, so this is a BruceEDR-local ordinal, documented here so a
     /// dashboard author does not have to guess: 1 informational, 3 an action we took,
     /// 5 a warning, 8 a quarantine, 0 an unrecognised level.
     /// </summary>
@@ -588,7 +588,7 @@ public sealed class EcsFormatter : IEventFormatter
 /// <summary>
 /// OCSF 1.1 Detection Finding (class_uid 2004).
 ///
-/// HONEST SCOPE NOTE: every ShieldEvent is emitted as a Detection Finding, including
+/// HONEST SCOPE NOTE: every BruceEvent is emitted as a Detection Finding, including
 /// purely informational system events. Splitting the stream across several OCSF classes
 /// would give a more faithful model but would fragment the mapping and force consumers
 /// to handle three shapes from one file; instead the finding's <c>severity_id</c> and
@@ -616,7 +616,7 @@ public sealed class OcsfFormatter : IEventFormatter
     private const int ActivityId = 1;      // Create
     private const int TypeUid = ClassUid * 100 + ActivityId;
 
-    private static readonly ShieldEvent Fallback = new() { TimeUtc = default };
+    private static readonly BruceEvent Fallback = new() { TimeUtc = default };
 
     private readonly string _hostName;
 
@@ -627,13 +627,13 @@ public sealed class OcsfFormatter : IEventFormatter
 
     public string Name => "ocsf";
 
-    public string Format(ShieldEvent e)
+    public string Format(BruceEvent e)
     {
         var ev = e ?? Fallback;
         return SchemaUtil.WriteObject(w => Write(w, ev));
     }
 
-    private void Write(Utf8JsonWriter w, ShieldEvent e)
+    private void Write(Utf8JsonWriter w, BruceEvent e)
     {
         string level = SchemaUtil.Level(e);
         string category = SchemaUtil.Category(e);
@@ -726,7 +726,7 @@ public sealed class OcsfFormatter : IEventFormatter
         w.WriteEndObject();
     }
 
-    private static void WriteProcess(Utf8JsonWriter w, ShieldEvent e)
+    private static void WriteProcess(Utf8JsonWriter w, BruceEvent e)
     {
         string name = SchemaUtil.S(e.Process);
         string image = SchemaUtil.S(e.Image);
@@ -778,7 +778,7 @@ public sealed class OcsfFormatter : IEventFormatter
     }
 
     private static void WriteObservables(
-        Utf8JsonWriter w, ShieldEvent e,
+        Utf8JsonWriter w, BruceEvent e,
         IReadOnlyList<string> endpoints, IReadOnlyList<string> domains)
     {
         // OCSF observable type ids: 1 Hostname, 2 IP Address, 8 Hash, 9 Process Name.
@@ -816,18 +816,18 @@ public sealed class OcsfFormatter : IEventFormatter
         w.WriteEndArray();
     }
 
-    private static string Title(ShieldEvent e, string level)
+    private static string Title(BruceEvent e, string level)
     {
         string trigger = SchemaUtil.S(e.Trigger);
         if (trigger.Length > 0) return trigger;
         string proc = SchemaUtil.S(e.Process);
         if (proc.Length > 0) return (level.Length > 0 ? level : "EVENT") + " on " + proc;
-        return level.Length > 0 ? level : "ProcessShield event";
+        return level.Length > 0 ? level : "BruceEDR event";
     }
 
     /// <summary>
     /// OCSF 1.1 severity scale is 0 Unknown, 1 Informational, 2 Low, 3 Medium, 4 High,
-    /// 5 Critical, 6 Fatal. ProcessShield never emits 6: nothing this agent observes is
+    /// 5 Critical, 6 Fatal. BruceEDR never emits 6: nothing this agent observes is
     /// a fatal condition of the monitored system itself.
     /// </summary>
     private static int SeverityId(string level) => level switch
@@ -888,7 +888,7 @@ public sealed class OcsfFormatter : IEventFormatter
 /// </summary>
 public sealed class CefFormatter : IEventFormatter
 {
-    private static readonly ShieldEvent Fallback = new() { TimeUtc = default };
+    private static readonly BruceEvent Fallback = new() { TimeUtc = default };
 
     private readonly string _hostName;
 
@@ -899,7 +899,7 @@ public sealed class CefFormatter : IEventFormatter
 
     public string Name => "cef";
 
-    public string Format(ShieldEvent e)
+    public string Format(BruceEvent e)
     {
         var ev = e ?? Fallback;
         string level = SchemaUtil.Level(ev);
@@ -1007,17 +1007,17 @@ public sealed class CefFormatter : IEventFormatter
         return sb.ToString();
     }
 
-    private static string SignatureId(ShieldEvent e, IReadOnlyList<string> ruleIds)
+    private static string SignatureId(BruceEvent e, IReadOnlyList<string> ruleIds)
     {
         if (ruleIds.Count > 0) return ruleIds[0];
         string slug = SchemaUtil.Slug(e.Trigger);
         if (slug.Length > 0) return slug;
         string category = SchemaUtil.Category(e);
-        return category.Length > 0 ? category : "processshield";
+        return category.Length > 0 ? category : "bruceedr";
     }
 
     /// <summary>The CEF header's Name field: the shortest description of what happened.</summary>
-    private static string HeaderName(ShieldEvent e)
+    private static string HeaderName(BruceEvent e)
     {
         string trigger = SchemaUtil.S(e.Trigger);
         if (trigger.Length > 0) return trigger;
@@ -1040,7 +1040,7 @@ public sealed class CefFormatter : IEventFormatter
 }
 
 /// <summary>
-/// Registry of the wire schemas ProcessShield can emit. Configuration refers to a
+/// Registry of the wire schemas BruceEDR can emit. Configuration refers to a
 /// formatter by name, so this is the one place that maps a config string to an
 /// implementation.
 /// </summary>
@@ -1055,10 +1055,10 @@ public static class EventFormatters
     public const string AgentVersion = "2.0.0";
 
     /// <summary>Product name as it should appear in a SIEM's source list.</summary>
-    public const string ProductName = "ProcessShield";
+    public const string ProductName = "BruceEDR";
 
     /// <summary>Vendor name. The project has no vendor, so it names itself.</summary>
-    public const string VendorName = "ProcessShield";
+    public const string VendorName = "BruceEDR";
 
     private static readonly NativeFormatter NativeInstance = new();
     private static readonly EcsFormatter EcsInstance = new();
@@ -1088,7 +1088,7 @@ public static class EventFormatters
             case "native":
             case "json":
             case "jsonl":
-            case "processshield":
+            case "bruceedr":
                 formatter = NativeInstance;
                 return true;
             case "ecs":
@@ -1114,7 +1114,7 @@ public static class EventFormatters
 /// <summary>
 /// Appends each event to a file as one formatted line, in whichever schema the
 /// formatter implements. This is what lets an operator point Filebeat, the Splunk
-/// universal forwarder or an OCSF loader straight at a ProcessShield file without any
+/// universal forwarder or an OCSF loader straight at a BruceEDR file without any
 /// parsing configuration.
 ///
 /// Failures are counted, never thrown: a full disk or a revoked ACL must not take down
@@ -1154,7 +1154,7 @@ public sealed class FormattingSink : IEventSink
     /// <summary>Count of events that could not be formatted or written.</summary>
     public long Errors => Interlocked.Read(ref _errors);
 
-    public void Emit(ShieldEvent e)
+    public void Emit(BruceEvent e)
     {
         string line;
         try { line = _formatter.Format(e); }

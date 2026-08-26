@@ -1,9 +1,9 @@
 using Microsoft.Diagnostics.Tracing.Parsers;
 using Microsoft.Diagnostics.Tracing.Parsers.Kernel;
 using Microsoft.Diagnostics.Tracing.Session;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Monitoring;
+namespace BruceEDR.Monitoring;
 
 /// <summary>
 /// Watches registry writes for persistence and defence-evasion changes, using the
@@ -35,7 +35,7 @@ namespace ProcessShield.Monitoring;
 /// </summary>
 public sealed class RegistryMonitor : IDisposable
 {
-    private const string SessionName = "ProcessShield-Registry";
+    private const string SessionName = "BruceEDR-Registry";
 
     /// <summary>
     /// Installers and even Explorer rewrite the same value repeatedly. Five seconds of
@@ -111,7 +111,7 @@ public sealed class RegistryMonitor : IDisposable
             k.RegistryDelete += d => Guard(() => OnRegistry(d, "delete-key"));
 
             _session = session;
-            _pump = new Thread(PumpEvents) { IsBackground = true, Name = "ProcessShield-ETW-Registry" };
+            _pump = new Thread(PumpEvents) { IsBackground = true, Name = "BruceEDR-ETW-Registry" };
             _pump.Start();
         }
         catch

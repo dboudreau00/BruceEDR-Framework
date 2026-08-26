@@ -2,7 +2,7 @@ using System.Buffers;
 using System.Text;
 using System.Text.Json;
 
-namespace ProcessShield.Api;
+namespace BruceEDR.Api;
 
 // ---------------------------------------------------------------------------
 // Exporters: render an ApiCollection into the formats people hand to other
@@ -94,8 +94,8 @@ public static class ApiExporters
             {
                 // Postman has no collection-level header concept. This extension block is
                 // ignored by Postman and read back by ApiImporters.FromPostman, so a
-                // ProcessShield round trip keeps them and other tools simply lose them.
-                w.WriteStartObject("_processshield");
+                // BruceEDR round trip keeps them and other tools simply lose them.
+                w.WriteStartObject("_bruceedr");
                 w.WriteStartArray("defaultHeaders");
                 foreach (var h in collection.DefaultHeaders) WritePostmanKeyValue(w, h, redact: true);
                 w.WriteEndArray();
@@ -358,7 +358,7 @@ public static class ApiExporters
             {
                 // Emitted as a comment: generating JavaScript for the other assertion
                 // kinds would mean shipping a second, silently divergent implementation.
-                lines.Add("// ProcessShield assertion not expressible in Postman: " + EscapeJsComment(a.DisplayName));
+                lines.Add("// BruceEDR assertion not expressible in Postman: " + EscapeJsComment(a.DisplayName));
             }
         }
         if (lines.Count == 0) return;
@@ -676,7 +676,7 @@ public static class ApiExporters
         var expected = r.Assertions.FirstOrDefault(a => a.Kind == AssertionKind.StatusEquals);
         string code = expected is not null && int.TryParse(expected.Expected, out int c) ? c.ToString() : "200";
         w.WriteStartObject(code);
-        w.WriteString("description", "Response observed by ProcessShield API Studio");
+        w.WriteString("description", "Response observed by BruceEDR API Studio");
         w.WriteEndObject();
         w.WriteEndObject();
 
@@ -876,7 +876,7 @@ public static class ApiExporters
 
     /// <summary>
     /// Writes the .http / REST Client format understood by the VS Code REST Client
-    /// extension and by JetBrains IDEs. It shares ProcessShield's {{variable}} syntax,
+    /// extension and by JetBrains IDEs. It shares BruceEDR's {{variable}} syntax,
     /// so collection variables become @name assignments and the requests need no rewriting.
     /// </summary>
     public static string ToHttpFile(ApiCollection collection)
@@ -887,7 +887,7 @@ public static class ApiExporters
         Line("# " + collection.Name);
         if (collection.Description.Length > 0)
             foreach (var l in SplitLines(collection.Description)) Line("# " + l);
-        Line("# Exported by ProcessShield API Studio. Credentials are replaced with " + RedactedPlaceholder + ".");
+        Line("# Exported by BruceEDR API Studio. Credentials are replaced with " + RedactedPlaceholder + ".");
         Line("# Request bodies are exported verbatim and may still contain sensitive data.");
         Line();
 

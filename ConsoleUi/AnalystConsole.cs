@@ -1,10 +1,10 @@
-using ProcessShield.Core;
-using ProcessShield.Detection;
-using ProcessShield.Hosting;
-using ProcessShield.Replay;
-using ProcessShield.Response;
+using BruceEDR.Core;
+using BruceEDR.Detection;
+using BruceEDR.Hosting;
+using BruceEDR.Replay;
+using BruceEDR.Response;
 
-namespace ProcessShield.ConsoleUi;
+namespace BruceEDR.ConsoleUi;
 
 /// <summary>
 /// Interactive analyst REPL. Lists contained/flagged processes and resumes /
@@ -13,7 +13,7 @@ namespace ProcessShield.ConsoleUi;
 /// </summary>
 public sealed class AnalystConsole
 {
-    private readonly ShieldHost _host;
+    private readonly BruceHost _host;
     private readonly Logger _log;
     private readonly Action? _reloadConfig;
     private readonly Func<string>? _verifyAudit;
@@ -21,7 +21,7 @@ public sealed class AnalystConsole
     private readonly ApiStudioConsole? _api;
     private List<int> _listing = new();
 
-    public AnalystConsole(ShieldHost host, Logger log,
+    public AnalystConsole(BruceHost host, Logger log,
         Action? reloadConfig = null, Func<string>? verifyAudit = null,
         Composition? composition = null)
     {
@@ -38,7 +38,7 @@ public sealed class AnalystConsole
         PrintHelp();
         while (true)
         {
-            Console.Write("shield> ");
+            Console.Write("bruce> ");
             string? line;
             try { line = Console.ReadLine(); }
             catch { break; }
@@ -376,7 +376,7 @@ public sealed class AnalystConsole
     private void PrintHelp()
     {
         _log.Raw(
-            "\n  ProcessShield analyst console\n" +
+            "\n  BruceEDR analyst console\n" +
             "  ---------------------------------------------------------------\n" +
             "  list [all]   show contained (or all flagged) processes\n" +
             "  info N       full reason breakdown for entry N\n" +
@@ -386,7 +386,7 @@ public sealed class AnalystConsole
             "  tree N       process ancestry for entry N\n" +
             "  stats        engine / queue counters\n" +
             "  metrics      Prometheus exposition of the same counters\n" +
-            "  reload       re-read shield.config.json (incl. rules and intel feeds)\n" +
+            "  reload       re-read bruce.config.json (incl. rules and intel feeds)\n" +
             "  audit        verify the tamper-evident audit log\n" +
             "\n" +
             "  attack       MITRE ATT&CK coverage vs. what has been observed\n" +

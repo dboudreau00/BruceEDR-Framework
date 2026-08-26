@@ -3,9 +3,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Session;
-using ProcessShield.Core;
+using BruceEDR.Core;
 
-namespace ProcessShield.Monitoring;
+namespace BruceEDR.Monitoring;
 
 /// <summary>
 /// Pure transformations shared by the ETW monitors (registry, DNS, AMSI, process

@@ -1,4 +1,4 @@
-# ProcessShield - Build, Install & Beta-Test Guide
+# BruceEDR - Build, Install & Beta-Test Guide
 
 This walks you from source to a running beta, using **Visual Studio 2022**. CLI
 equivalents are given where useful. Read section 0 first.
@@ -7,7 +7,7 @@ equivalents are given where useful. Read section 0 first.
 
 ## 0. Safety first (read this)
 
-ProcessShield **suspends and can kill processes, adds Windows Firewall rules, and
+BruceEDR **suspends and can kill processes, adds Windows Firewall rules, and
 moves files to quarantine**. Do **not** run it on a machine you care about.
 
 - Use a **disposable Windows 10/11 x64 VM** (Hyper-V, VMware, or VirtualBox).
@@ -34,24 +34,24 @@ opt-in (sections 7 and 9).
 
 ## 2. Get the code onto the VM
 
-1. Copy `ProcessShield.zip` into the VM and unzip it. You'll get a `ProcessShield\`
-   folder containing **`ProcessShield.sln`**.
+1. Copy `BruceEDR.zip` into the VM and unzip it. You'll get a `BruceEDR\`
+   folder containing **`BruceEDR.sln`**.
 2. Folder map:
-   - `ProcessShield.csproj` - the agent (app)
-   - `tests\ProcessShield.Tests\` - the xUnit test project
-   - `kernel\ShieldFilter\` - the C minifilter (built separately with the WDK)
+   - `BruceEDR.csproj` - the agent (app)
+   - `tests\BruceEDR.Tests\` - the xUnit test project
+   - `kernel\BruceFilter\` - the C minifilter (built separately with the WDK)
    - `rules\` - sample YARA rules, and `rules\detection\` - the JSON detection packs
    - `Replay\scenarios\` - detection scenarios replayed by `--selftest`
    - `intel\feeds\` - drop your indicator feeds here
    - `tools\simulate-benign-stealer.ps1` - the safe detection demo
    - `tools\verify.ps1` - build + tests + rules + replay in one command
-   - `shield.config.json` - configuration
+   - `bruce.config.json` - configuration
 
 ---
 
 ## 3. Build in Visual Studio
 
-1. **Double-click `ProcessShield.sln`** to open it in Visual Studio 2022.
+1. **Double-click `BruceEDR.sln`** to open it in Visual Studio 2022.
 2. Wait for **NuGet restore** (watch the status bar). If it doesn't start
    automatically: right-click the solution in Solution Explorer -> **Restore
    NuGet Packages**. (First restore needs internet: it pulls TraceEvent,
@@ -61,21 +61,21 @@ opt-in (sections 7 and 9).
 4. **Build -> Build Solution** (`Ctrl+Shift+B`). You should get
    **`Build: 2 succeeded, 0 failed`**.
 
-**Output:** `bin\x64\Release\net8.0-windows\ProcessShield.exe` (plus its DLLs).
+**Output:** `bin\x64\Release\net8.0-windows\BruceEDR.exe` (plus its DLLs).
 
 > CLI equivalent:
 > ```
-> dotnet build ProcessShield.csproj -c Release
+> dotnet build BruceEDR.csproj -c Release
 > ```
 
 ---
 
-## Desktop GUI (ProcessShield.Gui)
+## Desktop GUI (BruceEDR.Gui)
 
 Besides the console, the solution includes a **WPF desktop app** — a dark
 instrument-panel dashboard. It shows current posture, a live table of contained and
 flagged processes with one-click **Release / Suspend / End process**, a live event
-feed, and a Settings editor that writes `shield.config.json` (threshold and
+feed, and a Settings editor that writes `bruce.config.json` (threshold and
 allowlist changes apply live).
 
 ### Watchlist — writing your own detections
@@ -99,7 +99,7 @@ Two things make this more than a blocklist:
   (`lsass.exe`, `csrss.exe`, `services.exe`, `svchost.exe`, …) are still *reported*, but
   containment is refused, so a typo in a rule cannot bugcheck the host it is defending.
 
-Entries live in `shield.config.json` under `watchlist` and are **hot-reloaded** — saving in
+Entries live in `bruce.config.json` under `watchlist` and are **hot-reloaded** — saving in
 the GUI arms them within a second or two, no restart. Invalid entries are rejected
 individually with the reason, and a pattern that would match everything (`*`, `*.exe`) is
 refused outright.
@@ -124,7 +124,7 @@ side list and vice versa; markers are coloured by severity, and a **dashed ring 
 destination reached over plaintext HTTP**. Traffic that cannot be placed (local network,
 IPv6, unallocated space) is counted in a tray rather than silently dropped.
 
-Geolocation is **fully offline** — ProcessShield makes no network call to build this view,
+Geolocation is **fully offline** — BruceEDR makes no network call to build this view,
 because asking a third party where an address is would tell them exactly which
 infrastructure you are investigating. It resolves the country an address block is
 *registered* to, at `/16` resolution, so CDNs and anycast land in the wrong place. Read
@@ -150,11 +150,11 @@ infrastructure you are investigating. It resolves the country an address block i
   refreshes, `Ctrl+1…5` switch views.
 
 Build the solution (section 3), then run it either way:
-- **Visual Studio:** right-click **ProcessShield.Gui** in Solution Explorer ->
+- **Visual Studio:** right-click **BruceEDR.Gui** in Solution Explorer ->
   **Set as Startup Project**, then **Debug -> Start** (F5). It requests administrator
   rights through its manifest, so a UAC prompt appears automatically.
-- **Or** run `ProcessShield.Gui.exe` from
-  `gui\ProcessShield.Gui\bin\x64\Release\net8.0-windows\`.
+- **Or** run `BruceEDR.Gui.exe` from
+  `gui\BruceEDR.Gui\bin\x64\Release\net8.0-windows\`.
 
 It drives the same engine as the console — use whichever you prefer. The
 detection walkthrough below works with either front-end.
@@ -173,7 +173,7 @@ detection walkthrough below works with either front-end.
 
 > CLI equivalent — or just run everything at once:
 > ```
-> dotnet test tests\ProcessShield.Tests\ProcessShield.Tests.csproj -c Release
+> dotnet test tests\BruceEDR.Tests\BruceEDR.Tests.csproj -c Release
 > .\tools\verify.ps1        # build + tests + rule validation + scenario replay
 > ```
 
@@ -183,7 +183,7 @@ This is the fastest way to know the detection content is healthy, and it is the 
 use when writing rules:
 
 ```
-ProcessShield.exe --selftest
+BruceEDR.exe --selftest
 ```
 
 It validates every JSON rule pack (reporting rule count and ATT&CK coverage) and replays
@@ -196,7 +196,7 @@ clock. It starts no monitors and needs no elevation, so it is safe to run anywhe
 
 The agent **requires elevation**. Double-clicking the `.exe` now pops a **UAC
 prompt** and relaunches itself elevated (accept it, and an elevated console opens
-at the `shield>` prompt). If anything fails at startup the window stays open with
+at the `bruce>` prompt). If anything fails at startup the window stays open with
 the error and a "Press Enter to close" pause, so it won't just vanish anymore.
 
 For the cleanest experience, run it from an elevated terminal. Pick one:
@@ -205,22 +205,22 @@ For the cleanest experience, run it from an elevated terminal. Pick one:
 1. Open **Windows Terminal** or **cmd** via right-click -> **Run as administrator**.
 2. `cd` into the build output folder, e.g.:
    ```
-   cd C:\path\to\ProcessShield\bin\x64\Release\net8.0-windows
+   cd C:\path\to\BruceEDR\bin\x64\Release\net8.0-windows
    ```
 3. Run:
    ```
-   ProcessShield.exe
+   BruceEDR.exe
    ```
 
 **Option B - from Visual Studio:** right-click Visual Studio -> **Run as
-administrator**, reopen the solution, make `ProcessShield` the startup project,
+administrator**, reopen the solution, make `BruceEDR` the startup project,
 then **Debug -> Start Without Debugging** (`Ctrl+F5`). If VS is *not* elevated the
 app prints `Run as Administrator` and exits by design - use Option A.
 
 You should see it start the ETW monitor and print the prompt:
 ```
-[*] ProcessShield active (console mode). Monitors: ETW(process,image,file,network), FileStaging.
-shield>
+[*] BruceEDR active (console mode). Monitors: ETW(process,image,file,network), FileStaging.
+bruce>
 ```
 
 **Console commands:** `list` / `list all`, `info N`, `tree N`, `resume N`, `suspend N`,
@@ -243,16 +243,16 @@ powershell -ExecutionPolicy Bypass -File .\tools\simulate-benign-stealer.ps1
 It reproduces the **collect -> archive -> exfil** shape without stealing anything:
 it writes a dummy file on a path containing `\Google\Chrome\User Data\...\Login
 Data` under `%TEMP%`, zips it into `%TEMP%`, and opens/closes a TCP connection to
-`1.1.1.1:443`. That crosses the quarantine threshold, so ProcessShield will
+`1.1.1.1:443`. That crosses the quarantine threshold, so BruceEDR will
 **suspend that PowerShell process**.
 
-Now switch to the ProcessShield console:
+Now switch to the BruceEDR console:
 ```
-shield> list
+bruce> list
   #   PID     SCORE  STATE                NAME
   1   7364    90     contained            powershell.exe
-shield> info 1        # see the full [+points] reason breakdown
-shield> resume 1      # release it  (or:  kill 1)
+bruce> info 1        # see the full [+points] reason breakdown
+bruce> resume 1      # release it  (or:  kill 1)
 ```
 
 The simulator sleeps ~90s so you can observe and resume it, then cleans up its
@@ -270,13 +270,13 @@ YARA is **off by default** so the standard build has no third-party native/API
 dependency. To enable it:
 
 ```
-dotnet build ProcessShield.csproj -c Release -p:EnableYara=true
+dotnet build BruceEDR.csproj -c Release -p:EnableYara=true
 ```
 (In Visual Studio, open **Tools -> Command Line -> Developer PowerShell** and run
 the same command, or add `<EnableYara>true</EnableYara>` to a
 `Directory.Build.props` at the repo root.)
 
-Then set `"memoryScanEngine": "yara"` in `shield.config.json`. If the installed
+Then set `"memoryScanEngine": "yara"` in `bruce.config.json`. If the installed
 dnYara build doesn't match, the agent logs a warning and falls back to the builtin
 scanner automatically - it won't crash.
 
@@ -289,24 +289,24 @@ itself (not `dotnet.exe`).
 
 1. Publish self-contained:
    ```
-   dotnet publish ProcessShield.csproj -c Release -r win-x64 --self-contained true -o publish
+   dotnet publish BruceEDR.csproj -c Release -r win-x64 --self-contained true -o publish
    ```
    (VS: right-click the project -> **Publish** -> Folder -> target `win-x64`,
    deployment mode **Self-contained**.)
 2. From an **elevated** prompt in the `publish` folder:
    ```
-   ProcessShield.exe --install
+   BruceEDR.exe --install
    ```
-   This registers and starts the `ProcessShield` service (with auto-restart
+   This registers and starts the `BruceEDR` service (with auto-restart
    recovery) plus a SYSTEM **watchdog** scheduled task.
 3. Verify:
    ```
-   sc query ProcessShield
+   sc query BruceEDR
    ```
    Events stream to the configured `incidents.jsonl` and `audit.log`.
 4. Remove it when done:
    ```
-   ProcessShield.exe --uninstall
+   BruceEDR.exe --uninstall
    ```
 
 > Tamper note: the watchdog + service recovery restart the agent if it crashes or
@@ -321,18 +321,18 @@ Real inline prevention. Built **separately** with the WDK.
 
 1. Install the **WDK** matching your VS 2022.
 2. In VS: **New Project -> "Filter Driver: Filesystem Mini-Filter"**. Add
-   `kernel\ShieldFilter\ShieldFilter.c`, `.h`, and `.inf` to it. Build **x64 /
-   Release** to produce `ShieldFilter.sys`.
+   `kernel\BruceFilter\BruceFilter.c`, `.h`, and `.inf` to it. Build **x64 /
+   Release** to produce `BruceFilter.sys`.
 3. In the VM, enable test signing and reboot:
    ```
    bcdedit /set testsigning on
    ```
-   Then install + load (see full steps in `kernel\ShieldFilter\README.md`):
+   Then install + load (see full steps in `kernel\BruceFilter\README.md`):
    ```
-   RUNDLL32.EXE SETUPAPI.DLL,InstallHinfSection DefaultInstall 128 .\ShieldFilter.inf
-   fltmc load ShieldFilter
+   RUNDLL32.EXE SETUPAPI.DLL,InstallHinfSection DefaultInstall 128 .\BruceFilter.inf
+   fltmc load BruceFilter
    ```
-4. The agent's `MinifilterClient` auto-connects to `\ShieldFilterPort` and pushes
+4. The agent's `MinifilterClient` auto-connects to `\BruceFilterPort` and pushes
    policy on startup.
 
 > Keep `"kernelBlocking": false` unless you've extended the driver with a
@@ -343,7 +343,7 @@ Real inline prevention. Built **separately** with the WDK.
 
 ---
 
-## 10. Configuration (`shield.config.json`)
+## 10. Configuration (`bruce.config.json`)
 
 Key settings:
 - `detection.warnThreshold` / `quarantineThreshold` - scoring cutoffs.
@@ -375,17 +375,17 @@ Scan-engine, telemetry-format and control-API changes take effect on restart.
 ### 10b. Writing your own detections
 
 Rules are JSON and need no rebuild. Copy one out of `rules\detection\`, edit it, and type
-`reload` at the `shield>` prompt. The schema, every field and operator, and the
+`reload` at the `bruce>` prompt. The schema, every field and operator, and the
 contribution guide are in `rules\detection\README.md`. Test with a replay scenario rather
 than with live malware — see `Replay\scenarios\README.md`.
 
 ### 10c. API Studio
 
 ```
-shield> surface              # what this machine has actually been connecting to
-shield> api surface          # turn that into an inspectable collection
-shield> api send 1           # send it and grade the response
-shield> api help             # everything else
+bruce> surface              # what this machine has actually been connecting to
+bruce> api surface          # turn that into an inspectable collection
+bruce> api send 1           # send it and grade the response
+bruce> api help             # everything else
 ```
 
 It refuses to send anywhere until you allowlist a host in `api.studio.allowedHosts`, and
@@ -403,7 +403,7 @@ refuses POST/PUT/PATCH/DELETE until you set `allowMutatingMethods`. That is deli
   - **Honest scope:** the key lives on disk next to the log. This defeats an attacker who
     has only a copy of the log, or who cannot read the key — so **protect the audit
     directory with an admin-only ACL**. It does *not* defeat a same-privilege attacker who
-    can read the key (ProcessShield runs elevated, so a same-integrity RAT can re-forge the
+    can read the key (BruceEDR runs elevated, so a same-integrity RAT can re-forge the
     chain). For proof against an equal-privilege adversary, forward every event off-box to
     an append-only SIEM (enable the `syslog`/`webhook` sinks) and reconcile against that
     remote head — the local chain is evidence, not a guarantee, once the host is owned.
@@ -422,7 +422,7 @@ refuses POST/PUT/PATCH/DELETE until you set `allowMutatingMethods`. That is deli
 | `--install` says it needs a self-contained exe | You ran it from a framework-dependent build; publish self-contained first (section 8). |
 | YARA build errors | Only happens with `-p:EnableYara=true`; the default build doesn't reference dnYara. |
 | Nothing detects during the sim | Confirm the agent started ETW (not WMI) and that you ran the sim **after** the agent. |
-| GUI shows a red banner, a warning dialog, or won't start | It logs to `%LOCALAPPDATA%\ProcessShield\gui.log` — open that for the exact error. The banner usually means "not running as Administrator." |
+| GUI shows a red banner, a warning dialog, or won't start | It logs to `%LOCALAPPDATA%\BruceEDR\gui.log` — open that for the exact error. The banner usually means "not running as Administrator." |
 | `rules: '...' not found; running with builtin detections only` | The `rules/detection` folder didn't reach the output directory. Rebuild, or point `detection.rulesPath` at an absolute path. |
 | The **API surface** tab is empty | It needs the DNS/network ETW monitors, which need elevation, plus some actual traffic. Check `stats` shows `DNS` among the active monitors. |
 | `api send` says *blocked by API safety policy* | By design. Add the host to `api.studio.allowedHosts`, and set `allowMutatingMethods` if you need a non-GET. |

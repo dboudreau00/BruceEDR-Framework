@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using ProcessShield.Core;
-using ProcessShield.Security;
-using static ProcessShield.Native.NativeMethods;
+using BruceEDR.Core;
+using BruceEDR.Security;
+using static BruceEDR.Native.NativeMethods;
 
-namespace ProcessShield.Response;
+namespace BruceEDR.Response;
 
 /// <summary>
 /// Executes containment. Raw process actions are static and return a typed
@@ -113,7 +113,7 @@ public sealed class ResponseManager
     /// by one character leaves the binary blocked forever.
     /// </summary>
     public static string OutboundBlockRuleName(int pid, string imagePath)
-        => FirewallRuleName.Sanitize($"ProcessShield Block {Path.GetFileName(imagePath)} {pid}");
+        => FirewallRuleName.Sanitize($"BruceEDR Block {Path.GetFileName(imagePath)} {pid}");
 
     /// <summary>
     /// Removes the outbound block rule this class installs for a contained binary, so

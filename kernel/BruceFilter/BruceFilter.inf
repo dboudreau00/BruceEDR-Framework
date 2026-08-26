@@ -1,0 +1,58 @@
+;
+; BruceFilter.inf - install information for the BruceEDR minifilter.
+; Altitude 385201 is a PLACEHOLDER in the "FSFilter Activity Monitor" range;
+; production drivers must request a unique altitude from Microsoft.
+;
+[Version]
+Signature   = "$Windows NT$"
+Class       = "ActivityMonitor"
+ClassGuid   = {b86dff51-a31d-4f19-8d95-4e5b0d1f5f42}
+Provider    = %ProviderString%
+DriverVer   =
+CatalogFile = BruceFilter.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir           = 12
+BruceFilter.DriverFiles = 12            ;%windir%\system32\drivers
+
+[DefaultInstall.NTamd64]
+OptionDesc = %ServiceDescription%
+CopyFiles  = BruceFilter.DriverFiles
+
+[DefaultInstall.NTamd64.Services]
+AddService = %ServiceName%,,BruceFilter.Service
+
+[DefaultUninstall.NTamd64]
+LegacyUninstall = 1
+DelFiles        = BruceFilter.DriverFiles
+
+[DefaultUninstall.NTamd64.Services]
+DelService = %ServiceName%,0x200        ;SPSVCINST_STOPSERVICE
+
+[BruceFilter.Service]
+DisplayName    = %ServiceName%
+Description    = %ServiceDescription%
+ServiceBinary  = %12%\BruceFilter.sys
+Dependencies   = FltMgr
+ServiceType    = 2                       ;SERVICE_FILE_SYSTEM_DRIVER
+StartType      = 3                       ;SERVICE_DEMAND_START
+ErrorControl   = 1                       ;SERVICE_ERROR_NORMAL
+LoadOrderGroup = "FSFilter Activity Monitor"
+AddReg         = BruceFilter.AddRegistry
+
+[BruceFilter.AddRegistry]
+HKR,"Instances","DefaultInstance",0x00000000,%Instance1.Name%
+HKR,"Instances\"%Instance1.Name%,"Altitude",0x00000000,%Instance1.Altitude%
+HKR,"Instances\"%Instance1.Name%,"Flags",0x00010001,%Instance1.Flags%
+
+[BruceFilter.DriverFiles]
+BruceFilter.sys
+
+[Strings]
+ProviderString     = "BruceEDR"
+ServiceName        = "BruceFilter"
+ServiceDescription = "BruceEDR minifilter"
+Instance1.Name     = "BruceFilter Instance"
+Instance1.Altitude = "385201"
+Instance1.Flags    = 0x0

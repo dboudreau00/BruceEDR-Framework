@@ -1,11 +1,11 @@
 /*
- * ProcessShield sample RAT / remote-control heuristics (DEFENSIVE artifacts).
+ * BruceEDR sample RAT / remote-control heuristics (DEFENSIVE artifacts).
  */
 
 rule RAT_Input_Capture
 {
     meta:
-        author      = "ProcessShield"
+        author      = "BruceEDR"
         description = "Keylogging / input-capture API references"
         severity    = "medium"
     strings:
@@ -20,7 +20,7 @@ rule RAT_Input_Capture
 rule RAT_Remote_Control_Markers
 {
     meta:
-        author      = "ProcessShield"
+        author      = "BruceEDR"
         description = "Common remote-control / reverse-shell markers"
         severity    = "medium"
     strings:

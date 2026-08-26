@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace ProcessShield.Analysis;
+namespace BruceEDR.Analysis;
 
 /// <summary>
 /// Simplified world landmass outlines in lon/lat degrees, for drawing an equirectangular
