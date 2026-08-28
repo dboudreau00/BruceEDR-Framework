@@ -72,6 +72,9 @@ New-Item -ItemType Directory -Force -Path (Join-Path $stage "Replay") | Out-Null
 Copy-Item (Join-Path $root "Replay/scenarios") (Join-Path $stage "Replay/scenarios") -Recurse -Force
 New-Item -ItemType Directory -Force -Path (Join-Path $stage "intel") | Out-Null
 Copy-Item (Join-Path $root "intel/feeds") (Join-Path $stage "intel/feeds") -Recurse -Force
+# intel/geo is what the GUI's Network map resolves addresses against. Without it the tab
+# degrades to "map data missing" -- shipping the feature but not its data.
+Copy-Item (Join-Path $root "intel/geo") (Join-Path $stage "intel/geo") -Recurse -Force
 
 foreach ($doc in "README.md","LICENSE","GETTING_STARTED.md") {
     Copy-Item (Join-Path $root $doc) $stage -Force

@@ -2,6 +2,64 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.0.0] — 2026-08-26
+
+Renamed to **BruceEDR**, plus operator-authored detections, an offline network map,
+and a rebuilt desktop UI.
+
+### Breaking
+
+- **The project is renamed.** Namespaces (`ProcessShield.*` → `BruceEDR.*`), assemblies,
+  the solution and project files, and the minifilter (`ShieldFilter` → `BruceFilter`).
+- **The config file is now `bruce.config.json`** (was `shield.config.json`). Rename your
+  existing file; the schema is unchanged apart from the additions below.
+- **Prometheus metrics use the `bruceedr_` prefix** (was `processshield_`). Update any
+  dashboards or alert rules that match on the old names.
+- **Default service and ETW session names follow the product name**, and per-user state
+  moves to `%LOCALAPPDATA%\BruceEDR`.
+
+### Added
+
+- **Watchlist** — name a process, path, SHA-256 or command line and contain it on sight,
+  warn, or score it. A `quarantine` entry deliberately outranks a valid Authenticode
+  signature; entries resolving to protected Windows processes are reported but never
+  contained. Hot-reloaded, with a GUI editor.
+- **Network map** — every observed destination plotted by country, hover-linked to the
+  endpoint list, with plaintext HTTP called out. Geolocation is fully offline (RIR
+  delegation data at /16 resolution); nothing is asked of a third party.
+- **Desktop UI rebuilt** — new theme, live telemetry status bar, filterable event feed with
+  CSV/JSON export, ATT&CK coverage grouped by tactic, incident reports to the clipboard,
+  tray monitoring, and persisted window state.
+- `BruceHost.StatsSnapshot()` for structured counters.
+
+### Fixed
+
+Twelve defects found by an adversarial review of the new code, several of them fail-open
+in the containment path:
+
+- Watchlist hot reload never reached an already-running process: a per-process identity
+  fingerprint short-circuited before the new list was consulted, so adding an entry for
+  something you could see running did nothing until a restart.
+- Removing or disabling an entry left the conviction latched, because the forced verdict
+  was never cleared.
+- SHA-256 entries were inert whenever `intel.enabled` was false — the hasher was wired
+  behind that flag while the log still reported the entry as armed.
+- A `warn` entry silently added its default 50 points and could tip a process into
+  containment the operator never asked for. Only `score` entries contribute points now.
+- The protected-process guard could not see `System`, `Registry`, `Idle` or
+  `MemCompression`, so a containment entry naming them would not have been downgraded.
+- `watchlist.alertOnEveryHit` was ignored on reload and missing from the restart-required
+  report; it now rides on the compiled list and reloads with it.
+- The Settings and Watchlist editors each wrote a whole stale config snapshot, silently
+  reverting each other's saves.
+- Saving the watchlist dropped the ATT&CK techniques of every entry.
+- `IsPrivate` missed IPv6 unique-local (`fc00::/7`) and IPv4-mapped private space, which
+  would have plotted internal hosts on a world map.
+- The endpoint header counted every endpoint while the map and table showed only the
+  first 300; the cap is now reported rather than silent.
+- Row hover was dead in four list views (an inline `Background` outranks a style trigger).
+- The release package shipped the map feature without its data.
+
 ## [2.0.0] — 2026-08-11
 
 The framework release. v1 was a behavioural agent with hardcoded detections; v2 turns it
