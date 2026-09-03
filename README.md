@@ -53,13 +53,6 @@ observed traffic.
 
 ## ⚠️ Honest scope
 
-This is a **hardened prototype plus real integration layers** — not a shippable commercial EDR.
-It runs, detects, and contains on a real machine, and its detection logic is regression-tested
-offline on every build. But two capabilities are gated behind Microsoft programs and cannot be
-delivered as loadable artifacts here (see [External gates](#external-gates)), the new ETW
-monitors have not been soak-tested against a live fleet, and no third party has audited any of
-it. Use it for labs, research, detection engineering, and learning.
-
 Where a technique is evadable, the code says so in a comment. That is deliberate — a security
 tool that overstates itself is worse than one that admits its edges.
 
