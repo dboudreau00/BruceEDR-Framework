@@ -119,6 +119,10 @@ public sealed class Watchlist
             "ntoskrnl.exe", "smss.exe", "csrss.exe", "wininit.exe", "winlogon.exe",
             "services.exe", "lsass.exe", "lsaiso.exe", "svchost.exe", "dwm.exe",
             "fontdrvhost.exe", "sihost.exe", "logonui.exe", "ctfmon.exe",
+            // The shell. Freezing any of these takes the desktop with it.
+            "explorer.exe", "searchhost.exe", "startmenuexperiencehost.exe", "runtimebroker.exe",
+            // The security stack. An EDR that can be pointed at the AV is a weapon.
+            "msmpeng.exe", "nissrv.exe", "securityhealthservice.exe", "mssense.exe", "sgrmbroker.exe",
         };
 
     /// <summary>
@@ -135,8 +139,39 @@ public sealed class Watchlist
     /// Patterns so broad they would match most of the machine. Refused outright rather than
     /// compiled, because "quarantine *" is never what an operator meant to type.
     /// </summary>
-    private static bool IsTooBroad(string pattern)
-        => pattern is "*" or "*.*" or "*.exe" or "?" or "" || pattern.Trim('*', '?', '.').Length == 0;
+    private static bool IsTooBroad(WatchMatchKind kind, string pattern)
+    {
+        if (pattern.Length == 0) return true;
+
+        // What the pattern actually pins down once wildcards and dots are gone. "*exe"
+        // leaves "exe", which matches every executable; "*" leaves nothing.
+        string literal = pattern.Replace("*", "").Replace("?", "").Trim('.');
+        if (literal.Length == 0) return true;
+        if (literal is "exe" or "dll" or "com" or "scr" or "bat" or "cmd" or "ps1") return true;
+
+        bool glob = pattern.Contains('*') || pattern.Contains('?');
+        switch (kind)
+        {
+            case WatchMatchKind.Name:
+                // An exact name is as narrow as it gets; a glob needs some real substance.
+                return glob && literal.Length < 3;
+
+            case WatchMatchKind.Path:
+                // Substring/glob over full paths. A fragment with no separator or extension
+                // ("windows", "c:") is a word, not a location, and matches everything under it.
+                if (literal.Length < 4) return true;
+                return !(pattern.Contains('\\') || pattern.Contains('/') || pattern.Contains('.'));
+
+            case WatchMatchKind.CommandLine:
+                // Switch-style patterns ("-nop") are matched on token boundaries so they can
+                // be short; anything else is a raw substring and needs some length.
+                bool isSwitch = pattern[0] is '-' or '/';
+                return isSwitch ? literal.TrimStart('-', '/').Length < 2 : literal.Length < 4;
+
+            default:
+                return false;
+        }
+    }
 
     /// <summary>
     /// Compiles operator config into a validated watchlist. Bad entries are reported through
@@ -179,9 +214,10 @@ public sealed class Watchlist
                 onError?.Invoke($"watchlist entry '{raw}' skipped: not a SHA-256 hex digest");
                 continue;
             }
-            if (kind != WatchMatchKind.Hash && IsTooBroad(pattern))
+            if (kind != WatchMatchKind.Hash && IsTooBroad(kind, pattern))
             {
-                onError?.Invoke($"watchlist entry '{raw}' skipped: pattern matches everything");
+                onError?.Invoke($"watchlist entry '{raw}' skipped: pattern is too broad " +
+                                "(it matches everything, or most of the machine)");
                 continue;
             }
 
@@ -257,11 +293,15 @@ public sealed class Watchlist
         => ProtectedNormalised.Contains(NormaliseName(processName));
 
     private static bool Matches(WatchlistEntry e, string subject)
-        => e.IsGlob
-            ? Glob(e.Pattern, subject)
-            : e.Kind == WatchMatchKind.Name
-                ? string.Equals(subject, e.Pattern, StringComparison.Ordinal)
-                : subject.Contains(e.Pattern, StringComparison.Ordinal);
+    {
+        if (e.IsGlob) return Glob(e.Pattern, subject);
+        return e.Kind switch
+        {
+            WatchMatchKind.Name => string.Equals(subject, e.Pattern, StringComparison.Ordinal),
+            WatchMatchKind.CommandLine => DetectionEngine.CommandLineContains(subject, e.Pattern),
+            _ => subject.Contains(e.Pattern, StringComparison.Ordinal),
+        };
+    }
 
     private static string Describe(WatchlistEntry e, bool downgraded)
     {

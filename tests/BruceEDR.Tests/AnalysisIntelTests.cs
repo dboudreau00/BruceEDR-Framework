@@ -1056,7 +1056,7 @@ public class IntelIocFeedTests : IDisposable
     [InlineData("10.0.0.0/8", "11.0.0.0", false)]
     [InlineData("192.168.1.128/25", "192.168.1.200", true)]
     [InlineData("192.168.1.128/25", "192.168.1.127", false)]
-    [InlineData("0.0.0.0/0", "8.8.8.8", true)]
+    [InlineData("0.0.0.0/0", "8.8.8.8", false)]      // /0 is "everything" and is refused at load
     [InlineData("198.51.100.42/32", "198.51.100.42", true)]
     [InlineData("198.51.100.42/32", "198.51.100.43", false)]
     public void Cidr_Prefix_Boundaries_Are_Exact(string cidr, string probe, bool expected)
@@ -1069,7 +1069,7 @@ public class IntelIocFeedTests : IDisposable
     [InlineData("2001:db8::/32", "2001:db8:1234:5678::1", true)]
     [InlineData("2001:db8::/32", "2001:db9::1", false)]
     [InlineData("fe80::/10", "fe80::abcd", true)]
-    [InlineData("::/0", "2606:4700::1111", true)]
+    [InlineData("::/0", "2606:4700::1111", false)]   // refused at load, so nothing matches
     public void Ipv6_Cidr_Containment_Works_Byte_Wise(string cidr, string probe, bool expected)
     {
         var f = Feed(cidr);

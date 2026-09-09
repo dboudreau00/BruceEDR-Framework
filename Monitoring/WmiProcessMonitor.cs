@@ -30,6 +30,36 @@ public sealed class WmiProcessMonitor : IDisposable
         _watcher = new ManagementEventWatcher(query);
         _watcher.EventArrived += OnArrived;
         _watcher.Start();
+
+        // Deletions too, so the fallback source also drives pid lifecycle.
+        var stopQuery = new WqlEventQuery(
+            "__InstanceDeletionEvent",
+            TimeSpan.FromMilliseconds(500),
+            "TargetInstance ISA 'Win32_Process'");
+        _stopWatcher = new ManagementEventWatcher(stopQuery);
+        _stopWatcher.EventArrived += OnStopped;
+        _stopWatcher.Start();
+    }
+
+    private ManagementEventWatcher? _stopWatcher;
+
+    private void OnStopped(object sender, EventArrivedEventArgs e)
+    {
+        try
+        {
+            using var ev = e.NewEvent;
+            using var target = (ManagementBaseObject)ev["TargetInstance"];
+            _emit(new Signal
+            {
+                Kind = SignalKind.ProcessStop,
+                Pid = ToInt(target["ProcessId"]),
+                ProcessName = target["Name"] as string ?? ""
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.Error("WMI stop event", ex);
+        }
     }
 
     private void OnArrived(object sender, EventArrivedEventArgs e)
@@ -64,6 +94,12 @@ public sealed class WmiProcessMonitor : IDisposable
 
     public void Dispose()
     {
+        if (_stopWatcher is not null)
+        {
+            try { _stopWatcher.EventArrived -= OnStopped; _stopWatcher.Stop(); } catch { }
+            try { _stopWatcher.Dispose(); } catch { }
+            _stopWatcher = null;
+        }
         if (_watcher is null) return;
         try { _watcher.EventArrived -= OnArrived; _watcher.Stop(); } catch { }
         try { _watcher.Dispose(); } catch { }

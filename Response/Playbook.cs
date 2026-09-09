@@ -328,11 +328,20 @@ public sealed class Playbook
         return true;
     }
 
+    /// <summary>
+    /// A required parent technique is satisfied by any of its sub-techniques: a rule that
+    /// asks for T1003 fires on T1003.001. Credential dumping is reported by the LSASS
+    /// rules as T1003.001, and a "credential-theft-critical" playbook rule that could not
+    /// see it was not critical about anything. A required SUB-technique still matches
+    /// exactly.
+    /// </summary>
     private static bool ContainsTechnique(IReadOnlyList<string> techniques, string wanted)
     {
         foreach (var t in techniques)
         {
             if (string.Equals(t, wanted, StringComparison.OrdinalIgnoreCase)) return true;
+            if (t.Length > wanted.Length && t[wanted.Length] == '.' &&
+                t.StartsWith(wanted, StringComparison.OrdinalIgnoreCase)) return true;
         }
         return false;
     }

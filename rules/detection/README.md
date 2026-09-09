@@ -110,6 +110,16 @@ may be true).
 `primaryTarget` is whichever path-like field the signal actually carries, so one rule can
 cover files, registry keys, pipes and domains at once.
 
+> **`NamedPipe` has no live producer.** No shipped monitor emits it; it exists for replay
+> traces and tests, and the builtin named-pipe C2 heuristic is dead on a running agent.
+> A rule written against `pipeName` will validate and replay, but never fire live until a
+> pipe monitor exists. Prefer `NetworkConnect`/`DnsQuery` for C2 on a live host.
+>
+> **`detail` on `ProcessAccess`** is `open-process:<target image>:<rights>` (or
+> `open-thread:` / `terminate:`). The target image name is resolved by the engine, so
+> `detail regex (?i)lsass\.exe` works on live telemetry. `desiredAccess` expands
+> `MAXIMUM_ALLOWED` / `GENERIC_*` to the specific rights they imply.
+
 ### Operators
 
 | `op` | Notes |

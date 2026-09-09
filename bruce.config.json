@@ -31,7 +31,6 @@
     "publishers": [ "Microsoft Windows", "Microsoft Corporation" ],
     "thumbprints": [],
     "allowSubjectMatch": true,
-    "requireValidChain": true,
     "checkRevocation": false
   },
   "intel": {

@@ -19,6 +19,15 @@ internal static class NativeMethods
     public const uint MEM_COMMIT = 0x1000;
     public const uint PAGE_NOACCESS = 0x01;
     public const uint PAGE_GUARD = 0x100;
+    public const uint PAGE_READONLY = 0x02;
+    public const uint PAGE_READWRITE = 0x04;
+    public const uint PAGE_WRITECOPY = 0x08;
+    public const uint PAGE_EXECUTE_READ = 0x20;
+    public const uint PAGE_EXECUTE_READWRITE = 0x40;
+    public const uint PAGE_EXECUTE_WRITECOPY = 0x80;
+    /// <summary>Every protection value that permits ReadProcessMemory.</summary>
+    public const uint PAGE_READABLE_MASK = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                                           PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
 
     /// <summary>Highest user-mode virtual address on x64.</summary>
     public static readonly IntPtr MaxUserAddress = new(0x00007FFFFFFFFFFF);

@@ -264,7 +264,8 @@ public sealed class SyslogSink : AsyncSinkBase
 /// <summary>POSTs each event as JSON to a SIEM/webhook endpoint.</summary>
 public sealed class WebhookSink : AsyncSinkBase
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
+    private static readonly HttpClient Http =
+        new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(10) };
     private readonly string _url;
     private readonly Func<BruceEvent, string> _render;
     private readonly string _contentType;
@@ -326,6 +327,16 @@ public sealed class AuditLogSink : IEventSink
     // High-water mark of the anchor: the furthest (seq, hash) this chain is known to have
     // reached. Guarded by _gate once construction completes. -1 means "no valid anchor yet".
     private long _anchorSeq;
+
+    // Set when the log has committed records but its anchor sidecar is gone. The next
+    // Emit used to mint a fresh anchor at whatever head the (possibly truncated) log now
+    // has, which healed the evidence of the truncation: "delete audit.log.anchor" was a
+    // complete attack. While locked, records still chain -- logging never stops -- but
+    // no anchor is written until an operator acknowledges the loss.
+    private bool _anchorLocked;
+
+    /// <summary>True while anchor writes are suspended pending operator acknowledgement.</summary>
+    public bool AnchorLocked { get { lock (_gate) return _anchorLocked; } }
     private string _anchorHash;
 
     /// <summary>
@@ -387,6 +398,15 @@ public sealed class AuditLogSink : IEventSink
         {
             warning = $"audit head anchor '{_anchorPath}' exists but failed its MAC check; it was corrupted, " +
                       "rewritten, or written under a different key. Truncation before this point cannot be proven.";
+            _anchorLocked = true;
+        }
+        else if (!anchorPresent && lastSeq >= 0)
+        {
+            warning = $"audit head anchor '{_anchorPath}' is MISSING but the chain at '{path}' has {lastSeq + 1} " +
+                      "committed record(s). Deleting the anchor is how a tail truncation is hidden, so this is " +
+                      "treated as an integrity failure: no replacement anchor will be written until an operator " +
+                      "acknowledges it (console: 'audit ack').";
+            _anchorLocked = true;
         }
 
         IntegrityWarning = warning;
@@ -504,8 +524,23 @@ public sealed class AuditLogSink : IEventSink
     /// anchor with the lower value on the very next Emit and destroy the truncation evidence.
     /// Callers hold <c>_gate</c>, so the compare-then-write is not racy.
     /// </summary>
+    /// <summary>
+    /// Operator acknowledgement of a missing/corrupt anchor: re-anchors the chain at its
+    /// current head. Until this is called the loss stays visible on every restart.
+    /// </summary>
+    public void AcknowledgeIntegrityWarning()
+    {
+        lock (_gate)
+        {
+            _anchorLocked = false;
+            _anchorSeq = -1;   // allow the write even though the old anchor may have been higher
+            if (_seq > 0) WriteAnchor(_seq - 1, _prevHash);
+        }
+    }
+
     private void WriteAnchor(long seq, string hash)
     {
+        if (_anchorLocked) return;
         if (seq <= _anchorSeq) return;
         try
         {
@@ -620,9 +655,28 @@ public sealed class AuditLogSink : IEventSink
         }
 
         byte[] key = RandomNumberGenerator.GetBytes(32);
-        try { File.WriteAllText(keyPath, Convert.ToHexString(key)); }
-        catch { /* if we can't persist it, later Verify fails loudly rather than passing silently */ }
-        return key;
+        // Same discipline as the vault key: written to a temp file with SYSTEM +
+        // Administrators only, then moved into place with overwrite:false, so two
+        // instances racing on first start cannot destroy each other's key and the key
+        // never exists with the directory's inherited permissions.
+        string tmp = keyPath + "." + Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant() + ".tmp";
+        try
+        {
+            BruceEDR.Security.SecretFiles.CreateProtected(tmp, Encoding.ASCII.GetBytes(Convert.ToHexString(key)));
+            File.Move(tmp, keyPath, overwrite: false);
+            return key;
+        }
+        catch (IOException) when (File.Exists(keyPath))
+        {
+            try { File.Delete(tmp); } catch { }
+            try { return LoadKey(keyPath); } catch { return key; }
+        }
+        catch
+        {
+            try { File.Delete(tmp); } catch { }
+            /* if we can't persist it, later Verify fails loudly rather than passing silently */
+            return key;
+        }
     }
 
     private static byte[] LoadKey(string keyPath)

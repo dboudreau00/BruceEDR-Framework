@@ -2,6 +2,103 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.1.0] — 2026-09-09
+
+A hardening release driven by two external reviews of 3.0.0. The headline: **watchlist
+containment did not work on a running agent.** The engine issued the verdict; the host
+handed it to a playbook that only looks at score and trust, nothing matched at score 0,
+and the process the operator had named was never frozen — while its profile sat marked
+Contained. The engine-level tests passed; no test crossed the engine/host seam. One does now.
+
+### Fixed — containment
+
+- **Watchlist Quarantine now reaches the containment primitives.** The snapshot carries the
+  operator's decision (`ContainmentRequired`), and the host treats it as a floor: Suspend and
+  FirewallBlock run regardless of what the playbook selects, and the playbook may still add
+  triage, isolation or notification. Covered by host-level tests for both an unsigned and a
+  trusted-signed process.
+- A containment task dropped by a full response queue no longer leaves the process marked
+  Contained; the flag is cleared so fresh evidence re-escalates and containment is retried.
+- Suspend and Kill are identity-checked: the pid must still belong to the process named in
+  the verdict, so a recycled pid is refused rather than frozen.
+- The protected-process guard now covers the shell (`explorer.exe`, `SearchHost.exe`,
+  `StartMenuExperienceHost.exe`, `RuntimeBroker.exe`) and the security stack (`MsMpEng.exe`,
+  `NisSrv.exe`, `SecurityHealthService.exe`, `MsSense.exe`, `SgrmBroker.exe`).
+
+### Fixed — detection
+
+- **LSASS rules could not see LSASS.** The ProcessAccess monitor emitted only the access mask;
+  the target's name was never resolved, so both the builtin and the JSON credential-dump rules
+  scored a generic cross-process open. The engine now resolves the target pid (process tree,
+  then a live lookup for processes older than the agent) and writes it into `detail` as
+  `open-process:lsass.exe:PROCESS_VM_READ|...`, which is what the shipped rules match.
+- **`MAXIMUM_ALLOWED` / `GENERIC_*` opens were emitted and then discarded** by the builtin
+  rule. They are now scored, and the rule engine expands them to the rights they imply, so
+  `desiredAccess in ["PROCESS_VM_READ"]` fires for the documented evasion.
+- **Live pid lifecycle.** ETW now subscribes `ProcessStop` (WMI watches deletions too);
+  start/stop travel on their own queue drained ahead of file telemetry, so a create flood
+  cannot drop the one event that is the PID-reuse barrier. A stop older than the current
+  tenant's start is ignored; an exited profile is never built on again.
+- **Image paths on the primary source.** Kernel `ProcessStart` carries only a basename; the
+  full path is now promoted from the main image's `ImageLoad`, so path and hash watchlist
+  entries work on live ETW data instead of only in replay.
+- The image-hash cache opens files with `FileShare.ReadWrite | Delete` (it could not hash a
+  running image before), never caches a failed read, and keys on length + mtime so a
+  replaced binary is re-hashed.
+- Off-thread results (memory scan, PE analysis) carry the profile generation they were
+  claimed under and are discarded after pid reuse.
+- Negative rule scores are now a persistent allowance: the credit past zero is banked and
+  absorbs later points, instead of being clamped away by the first positive score.
+- An unattributed staged archive charges the likeliest author, not every flagged process.
+- `imagePath` / `commandLine` rule fields fall back to the profile for signal kinds that do
+  not carry them (same fix `processName` already had).
+- A signature check that threw is retried rather than recorded as untrusted forever.
+- Rule-evaluation budget exhaustion is alerted (rate-limited), not just counted.
+- `IsRoutableRemote` classifies IPv4-mapped IPv6, CGNAT, 0/8 and multicast as internal.
+
+### Fixed — secrets and files
+
+- **The generated control-plane token was written to every telemetry sink** (incidents.jsonl,
+  the audit chain, syslog, webhook, the `/events` buffer). It now goes to
+  `%ProgramData%\BruceEDR\control.token` with a SYSTEM + Administrators DACL, and to the
+  console only when a person is at it.
+- The vault key, audit key, triage packages, and plain-moved quarantine samples are created
+  with inheritance disabled (SYSTEM + Administrators) instead of the directory's inherited
+  permissions. Plain-moved samples also get a `.quarantined` suffix.
+- Deleting the audit `.anchor` sidecar no longer heals a truncation: a missing anchor over a
+  populated log is an integrity failure, and no replacement anchor is written until an
+  operator runs `audit ack`. The audit key is created first-writer-wins like the vault key.
+- API Studio file bodies are confined to `api.studio.fileBodyRoot` (empty = disabled): UNC
+  and device paths are refused before the path is touched, and reparse points anywhere
+  under the root are refused.
+- API Studio pins DNS: after the host allowlist passes, the resolved addresses are checked
+  and internal, link-local, loopback and metadata space are refused unless the address itself
+  is allowlisted.
+- `--install` refuses to register a SYSTEM service from a user-writable location and pins
+  `--config` on both the service binPath and the watchdog task.
+- A malformed `bruce.config.json` refuses to start instead of silently starting on factory
+  defaults; a missing file is still a first run. The watchdog keeps its lenient mode.
+- The control plane (`api.control.*`) hot-reloads, so disabling HTTP process actions takes
+  effect on reload rather than at the next restart. An IPv6 listen address is bracketed.
+- Isolation refuses whole-space and inverted address ranges (`0.0.0.0-255.255.255.255`).
+- The webhook sink no longer follows redirects. URL redaction masks a bare token in userinfo.
+- Vault entry ids are validated before they name a blob path.
+- IOC feeds refuse `/0` prefixes. Watchlist breadth checks refuse `*exe`, bare words as
+  path fragments, and two-character command-line fragments; switch-style command-line
+  entries match on token boundaries. The GUI confirm names each contain-on-sight entry with
+  its match kind.
+- The minifilter receives directory prefixes only, not bare artifact names; over-long
+  fragments are refused rather than truncated. The memory walker only reads pages whose
+  protection actually grants read. Secret scanning recognises `github_pat_`, `sk-`/`sk-proj-`
+  and `glpat-` tokens. ETW pump death is retried with backoff; watcher overflow says what was lost.
+- Incident ids use the `BR-` prefix. Playbook `requiredTechniques` match sub-techniques.
+
+### Removed
+
+- `allowlist.requireValidChain`. It was never honoured — trust has always required a valid
+  chain — so it was removed rather than left as a knob that appeared to do something. Old
+  configs that still carry it load unchanged.
+
 ## [3.0.0] — 2026-08-26
 
 Renamed to **BruceEDR**, plus operator-authored detections, an offline network map,

@@ -133,6 +133,9 @@ public sealed class QuarantineVault : IDisposable
 
         Directory.CreateDirectory(_vaultDir);
         Directory.CreateDirectory(_blobDir);
+        // Best effort, logged nowhere by design (the vault has no logger): the key file's
+        // own DACL is the real control; this narrows the directory around it too.
+        BruceEDR.Security.SecretFiles.ProtectDirectory(_vaultDir);
 
         _key = LoadOrCreateKey(_keyPath);
         LoadManifest();
@@ -287,6 +290,7 @@ public sealed class QuarantineVault : IDisposable
     {
         error = "";
         if (_disposed) { error = "vault is disposed"; return false; }
+        if (!IsSafeId(id)) { error = "unknown vault id (not a valid id form)"; return false; }
         if (string.IsNullOrWhiteSpace(destinationPath)) { error = "destination path is empty"; return false; }
 
         string dest;
@@ -552,7 +556,33 @@ public sealed class QuarantineVault : IDisposable
 
     // ----------------------------------------------------------------- storage
 
-    private string BlobPath(string id) => Path.Combine(_blobDir, id + BlobExtension);
+    private string BlobPath(string id)
+    {
+        if (!IsSafeId(id))
+            throw new ArgumentException($"vault entry id '{id}' is not a valid id (letters, digits and '-' only)");
+        return Path.Combine(_blobDir, id + BlobExtension);
+    }
+
+    /// <summary>
+    /// Ids the vault mints are timestamp-seq-random with only [A-Za-z0-9-]. Anything else
+    /// did not come from here, and a manifest row carrying "..\..\x" as its id must not
+    /// be able to name a blob path outside the blobs directory.
+    /// </summary>
+    internal static bool IsSafeId(string? id)
+    {
+        if (string.IsNullOrEmpty(id) || id.Length > 128) return false;
+        // Minted ids are "<yyyyMMddTHHmmss.fffffffZ>-<seq>-<rand>": letters, digits, '-' and
+        // a single '.' in the timestamp. Anything else -- and in particular "..", which is
+        // the only way a dot could become a path -- did not come from here.
+        if (id.Contains("..", StringComparison.Ordinal)) return false;
+        if (id[0] == '.' || id[^1] == '.') return false;
+        foreach (char c in id)
+        {
+            bool ok = char.IsAsciiLetterOrDigit(c) || c == '-' || c == '.';
+            if (!ok) return false;
+        }
+        return true;
+    }
 
     /// <summary>
     /// Reads a file while tolerating other openers. FileShare.ReadWrite|Delete matters
@@ -728,7 +758,11 @@ public sealed class QuarantineVault : IDisposable
             Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant() + ".tmp";
         try
         {
-            File.WriteAllText(tmpPath, Convert.ToHexString(key));
+            // Created with SYSTEM + Administrators only, inheritance off, so there is no
+            // window in which the key exists with the directory's inherited (typically
+            // Users:RX) permissions. The move preserves the explicit DACL.
+            BruceEDR.Security.SecretFiles.CreateProtected(tmpPath,
+                System.Text.Encoding.ASCII.GetBytes(Convert.ToHexString(key)));
             File.Move(tmpPath, keyPath, overwrite: false);
             return key;
         }

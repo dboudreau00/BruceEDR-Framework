@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using BruceEDR.Core;
@@ -150,7 +151,7 @@ public sealed class ApiClient : IApiClient
             return Fail(started, sw, "blocked by API safety policy: " + refusal, uri.AbsoluteUri);
 
         string boundary = "----BruceEDRBoundary" + Guid.NewGuid().ToString("n");
-        if (!TryBuildBody(resolved, boundary, out byte[]? payload, out string bodyContentType, out string bodyError))
+        if (!TryBuildBody(resolved, boundary, _policy, out byte[]? payload, out string bodyContentType, out string bodyError))
             return Fail(started, sw, bodyError, uri.AbsoluteUri);
 
         // Pace the send. Everything above this line can fail without a packet leaving the
@@ -215,7 +216,7 @@ public sealed class ApiClient : IApiClient
         // A shared handler would need an AsyncLocal to route certificates back to the
         // right request, and would also share connections (and therefore TLS sessions)
         // across targets, which is exactly what we are trying to observe.
-        using var handler = CreateHandler(tls);
+        using var handler = CreateHandler(tls, _policy);
         using var http = new HttpClient(handler, disposeHandler: false)
         {
             // Timing is owned by the linked CTS above so a timeout is reported as a
@@ -599,7 +600,78 @@ public sealed class ApiClient : IApiClient
     /// once (rather than per hop) keeps a redirect from re-reading a file that changed
     /// underneath us, and gives multipart a stable boundary.
     /// </summary>
+    /// <summary>
+    /// Resolves a host and keeps only the addresses the policy allows connecting to. A
+    /// literal address skips DNS. Never throws: a resolution failure is an empty result,
+    /// which the caller reports as a policy refusal.
+    /// </summary>
+    internal static async Task<IPAddress[]> ResolvePermittedAsync(string host, ApiSafetyPolicy policy, CancellationToken ct)
+    {
+        IPAddress[] resolved;
+        try
+        {
+            string bare = host.Trim();
+            if (bare.Length >= 2 && bare[0] == '[' && bare[^1] == ']') bare = bare[1..^1];
+            resolved = IPAddress.TryParse(bare, out var literal)
+                ? new[] { literal }
+                : await Dns.GetHostAddressesAsync(bare, ct).ConfigureAwait(false);
+        }
+        catch { return Array.Empty<IPAddress>(); }
+
+        return policy.FilterResolved(resolved, ApiSafetyPolicy.IsLoopbackHostName(host));
+    }
+
+    /// <summary>
+    /// Confines a file-body path to the policy's root. Returns null when the path is
+    /// acceptable, otherwise the reason. Rejects UNC and device paths outright (an
+    /// elevated process opening \\host\share authenticates to it as SYSTEM), requires the
+    /// resolved path to sit under the root, and refuses any reparse point on the way --
+    /// a junction under the root is how the root gets escaped.
+    /// </summary>
+    internal static string? ValidateBodyFilePath(string path, string root)
+    {
+        if (string.IsNullOrWhiteSpace(root))
+            return "file bodies are disabled: set api.studio.fileBodyRoot to the directory request files may be read from";
+
+        string p = path.Trim();
+        if (p.StartsWith(@"\\", StringComparison.Ordinal) || p.StartsWith("//", StringComparison.Ordinal))
+            return "UNC and device paths are not allowed as request bodies";
+
+        string fullRoot, full;
+        try
+        {
+            fullRoot = Path.GetFullPath(root).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+            full = Path.GetFullPath(Path.IsPathRooted(p) ? p : Path.Combine(fullRoot, p));
+        }
+        catch (Exception ex) { return "path could not be resolved: " + ex.Message; }
+
+        if (full.StartsWith(@"\\", StringComparison.Ordinal)) return "UNC and device paths are not allowed as request bodies";
+        if (!full.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+            return $"request body file must be under '{fullRoot}'";
+
+        // Walk every component under the root; any reparse point (junction, symlink,
+        // mount point) can redirect out of the root after the textual check passed.
+        string cursor = fullRoot.TrimEnd(Path.DirectorySeparatorChar);
+        string rel = full[fullRoot.Length..];
+        foreach (var part in rel.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            cursor = Path.Combine(cursor, part);
+            try
+            {
+                if (!File.Exists(cursor) && !Directory.Exists(cursor)) break;
+                if ((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0)
+                    return $"'{cursor}' is a reparse point; request body files must be regular files under the root";
+            }
+            catch (Exception ex) { return "path could not be inspected: " + ex.Message; }
+        }
+        return null;
+    }
+
     internal static bool TryBuildBody(ApiRequest request, string boundary,
+                                      out byte[]? payload, out string contentType, out string error)
+        => TryBuildBody(request, boundary, null, out payload, out contentType, out error);
+
+    internal static bool TryBuildBody(ApiRequest request, string boundary, ApiSafetyPolicy? policy,
                                       out byte[]? payload, out string contentType, out string error)
     {
         payload = null;
@@ -655,6 +727,14 @@ public sealed class ApiClient : IApiClient
                 if (string.IsNullOrWhiteSpace(path))
                 {
                     error = "request body is a file but no path was given";
+                    return false;
+                }
+                // Policy BEFORE FileInfo: touching a UNC path with Exists() is already a
+                // network round-trip carrying this process's credentials.
+                string? refusal = ValidateBodyFilePath(path, policy?.FileBodyRoot ?? "");
+                if (refusal is not null)
+                {
+                    error = refusal;
                     return false;
                 }
                 try
@@ -800,10 +880,37 @@ public sealed class ApiClient : IApiClient
         return message;
     }
 
-    private static SocketsHttpHandler CreateHandler(TlsCapture capture)
+    private static SocketsHttpHandler CreateHandler(TlsCapture capture, ApiSafetyPolicy policy)
     {
         var handler = new SocketsHttpHandler
         {
+            // DNS pinning. The allowlist is checked by NAME before any socket opens; this
+            // callback re-checks the ADDRESSES that name resolves to and connects only to
+            // one the policy permits, so a rebinding name cannot route the request into
+            // internal space. Resolving and connecting in the same callback is what
+            // removes the check-then-connect race.
+            ConnectCallback = async (context, ct) =>
+            {
+                var ep = context.DnsEndPoint;
+                IPAddress[] permitted = await ResolvePermittedAsync(ep.Host, policy, ct).ConfigureAwait(false);
+                if (permitted.Length == 0)
+                    throw new HttpRequestException(
+                        $"host '{ep.Host}' resolved only to addresses the API policy refuses " +
+                        "(internal, link-local, loopback or metadata space)");
+
+                Exception? last = null;
+                foreach (var addr in permitted)
+                {
+                    var socket = new Socket(addr.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+                    try
+                    {
+                        await socket.ConnectAsync(new IPEndPoint(addr, ep.Port), ct).ConfigureAwait(false);
+                        return new NetworkStream(socket, ownsSocket: true);
+                    }
+                    catch (Exception ex) { last = ex; socket.Dispose(); }
+                }
+                throw new HttpRequestException($"could not connect to '{ep.Host}'", last);
+            },
             // Manual redirects: the automatic ones are invisible, and the whole point of
             // RedirectChain is to show the operator where a request actually went.
             AllowAutoRedirect = false,

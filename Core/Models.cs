@@ -145,6 +145,28 @@ public sealed record ProfileSnapshot
     public IReadOnlyList<string> Domains { get; init; } = Array.Empty<string>();
     /// <summary>Peak score reached before any decay, for triage ordering.</summary>
     public int PeakScore { get; init; }
+
+    /// <summary>
+    /// True when an operator watchlist entry has forced a Quarantine verdict. This is the
+    /// bridge across the engine/host seam that was missing: the host asks the playbook
+    /// what to do, and the playbook only sees score and trust -- so a policy conviction
+    /// at score 0 matched no rule and nothing was ever frozen. The host now treats this
+    /// flag as a containment floor regardless of what the playbook selects.
+    /// </summary>
+    public bool ContainmentRequired { get; init; }
+
+    /// <summary>Rule id of the watchlist entry behind <see cref="ContainmentRequired"/>, for the audit trail.</summary>
+    public string ForcedBy { get; init; } = "";
+
+    /// <summary>
+    /// Identity of the profile instance this snapshot was taken from. Async work (memory
+    /// scans, PE analysis) carries it back so a result cannot land on a different process
+    /// that has since reused the pid.
+    /// </summary>
+    public long Generation { get; init; }
+
+    /// <summary>When the process started, as reported by the telemetry source.</summary>
+    public DateTime StartedUtc { get; init; }
 }
 
 /// <summary>
@@ -226,11 +248,42 @@ public sealed class ThreatProfile
     public int ReportedTechniques { get; set; }
     /// <summary>Whether a Warn has already been raised, so Warn is one-shot like Quarantine.</summary>
     public bool WarnRaised { get; set; }
+    /// <summary>
+    /// Signature checks that threw (image locked, transient access denied). The check is
+    /// retried on later signals rather than recorded as "untrusted" on the first failure,
+    /// but only a few times, because each attempt is a WinVerifyTrust call.
+    /// </summary>
+    public int SignatureAttempts { get; set; }
     /// <summary>Last time decay was applied, so decay is charged once per interval.</summary>
     public DateTime LastDecayUtc { get; set; }
 
     public DateTime FirstSeenUtc { get; }
     public DateTime LastUpdatedUtc { get; set; }
+
+    /// <summary>
+    /// Process start as the telemetry source reported it (the ProcessStart signal's own
+    /// timestamp), falling back to first-seen. A ProcessStop older than this belongs to a
+    /// previous tenant of the pid and must not mark this one exited.
+    /// </summary>
+    public DateTime StartedUtc { get; set; }
+
+    private static long _nextGeneration;
+
+    /// <summary>
+    /// Unique per profile instance. Off-thread results (memory scan, PE analysis) are
+    /// stamped with the generation they were claimed under and applied only if it still
+    /// matches, so a scan of process A can never score process B after pid reuse.
+    /// </summary>
+    public long Generation { get; } = Interlocked.Increment(ref _nextGeneration);
+
+    /// <summary>
+    /// Credit banked by negative-score (allowlist) rules. A -50 rule against a process
+    /// sitting at 10 used to clamp to 0 and throw the other 40 away, so the "allowlist"
+    /// was really a one-shot discount. The excess now waits here and absorbs the next
+    /// positive points before they reach <see cref="Score"/>, which is what a persistent
+    /// allowlist means. Decay leaves it alone: an operator statement does not fade.
+    /// </summary>
+    public int Allowance { get; private set; }
 
     public ThreatProfile(int pid) : this(pid, DateTime.UtcNow) { }
 
@@ -239,6 +292,7 @@ public sealed class ThreatProfile
     {
         Pid = pid;
         FirstSeenUtc = nowUtc;
+        StartedUtc = nowUtc;
         LastUpdatedUtc = nowUtc;
         LastDecayUtc = nowUtc;
     }
@@ -259,8 +313,18 @@ public sealed class ThreatProfile
             Techniques = techniques,
             TimeUtc = nowUtc
         };
-        Score += points;
-        if (Score < 0) Score = 0;
+        if (points < 0)
+        {
+            int after = Score + points;
+            if (after < 0) { Allowance += -after; Score = 0; }
+            else Score = after;
+        }
+        else
+        {
+            int absorbed = Math.Min(Allowance, points);
+            Allowance -= absorbed;
+            Score += points - absorbed;
+        }
         if (Score > PeakScore) PeakScore = Score;
         ReasonLog.Add(entry);
         Reasons.Add(entry.ToString());
@@ -309,6 +373,17 @@ public static class IocDatabase
         "local state", "key4.db", "logins.json",
         "wallet.dat", @"\electrum\wallets\", @"\exodus\", @"\discord\leveldb\"
     };
+
+    /// <summary>
+    /// What is actually sent to the minifilter. The driver does a case-insensitive
+    /// SUBSTRING search of every IRP_MJ_CREATE path, so a bare artifact name such as
+    /// "local state" or "login data" denied every file anywhere whose path happened to
+    /// contain those words. Only directory prefixes go to the kernel; they are still
+    /// process-agnostic (the skeleton driver has no trusted-pid list), which is why
+    /// kernelBlocking stays off by default.
+    /// </summary>
+    public static readonly string[] KernelBlockPrefixes =
+        SensitiveFileFragments.Where(f => f.StartsWith('\\') && f.EndsWith('\\')).ToArray();
 
     /// <summary>
     /// The specific secret artifacts whose access is worth scoring.

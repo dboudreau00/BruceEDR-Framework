@@ -27,6 +27,8 @@ public sealed class BruceConfig
         Detection.MaxTrackedProcesses = Math.Clamp(Detection.MaxTrackedProcesses, 128, 262144);
 
         Service.HeartbeatIntervalSeconds = Math.Max(1, Service.HeartbeatIntervalSeconds);
+        if (!string.IsNullOrWhiteSpace(Service.HeartbeatPath) && !Path.IsPathRooted(Service.HeartbeatPath))
+            Service.HeartbeatPath = Path.Combine(AppContext.BaseDirectory, Service.HeartbeatPath);
         Service.WatchdogStaleSeconds = Math.Max(Service.HeartbeatIntervalSeconds * 3, Service.WatchdogStaleSeconds);
         if (string.IsNullOrWhiteSpace(Service.ServiceName)) Service.ServiceName = "BruceEDR";
 
@@ -198,6 +200,12 @@ public sealed class ApiStudioConfig
     public bool AllowInsecureHttp { get; set; } = false;
     public double MaxRequestsPerSecond { get; set; } = 5.0;
     public long MaxResponseBytes { get; set; } = 8L * 1024 * 1024;
+    /// <summary>
+    /// Directory that File-kind request bodies may be read from (relative paths resolve
+    /// against the agent directory). Empty, the default, disables file bodies entirely:
+    /// an imported collection can name any path, and this process is elevated.
+    /// </summary>
+    public string FileBodyRoot { get; set; } = "";
 }
 
 public sealed class AllowlistConfig
@@ -205,7 +213,9 @@ public sealed class AllowlistConfig
     public string[] Publishers { get; set; } = { "Microsoft Windows", "Microsoft Corporation" };
     public string[] Thumbprints { get; set; } = Array.Empty<string>();
     public bool AllowSubjectMatch { get; set; } = true;
-    public bool RequireValidChain { get; set; } = true;
+    // NOTE: there is deliberately no requireValidChain setting. Trust ALWAYS requires a
+    // cryptographically valid Authenticode chain; a flag that appeared to relax that was
+    // never honoured and has been removed (an old config carrying it still loads).
     public bool CheckRevocation { get; set; } = false;
 }
 
@@ -262,28 +272,44 @@ public static class ConfigLoader
         WriteIndented = true
     };
 
-    public static BruceConfig Load(string path, Action<string>? warn = null)
+    /// <summary>
+    /// Start-up loader. A MISSING file is a first run and yields defaults with a warning.
+    /// A file that exists but cannot be parsed is refused when <paramref name="strict"/>
+    /// (the default): starting an EDR on factory defaults because the operator's config
+    /// was truncated mid-save would silently drop their watchlist, thresholds and
+    /// control-plane settings, which is a fail-open dressed up as resilience. The
+    /// watchdog passes <c>strict:false</c> because it must keep running regardless.
+    /// </summary>
+    public static BruceConfig Load(string path, Action<string>? warn = null, bool strict = true)
     {
+        if (!File.Exists(path))
+        {
+            warn?.Invoke($"config '{path}' not found; using defaults");
+            var def = new BruceConfig();
+            def.ClampAndValidate();
+            return def;
+        }
+
         try
         {
-            if (!File.Exists(path))
-            {
-                warn?.Invoke($"config '{path}' not found; using defaults");
-                var def = new BruceConfig();
-                def.ClampAndValidate();
-                return def;
-            }
             var json = File.ReadAllText(path);
-            var cfg = JsonSerializer.Deserialize<BruceConfig>(json, Options) ?? new BruceConfig();
+            var cfg = JsonSerializer.Deserialize<BruceConfig>(json, Options)
+                      ?? throw new JsonException("document is empty or null");
             cfg.ClampAndValidate();
             return cfg;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!strict)
         {
             warn?.Invoke($"config load failed ({ex.Message}); using defaults");
             var def = new BruceConfig();
             def.ClampAndValidate();
             return def;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"config '{path}' exists but could not be parsed: {ex.Message}. " +
+                "Refusing to start on default (disarmed) policy. Fix the file, or delete it to start from defaults.", ex);
         }
     }
 

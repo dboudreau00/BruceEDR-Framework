@@ -483,7 +483,10 @@ public sealed class IocFeed
 
         isV6 = addr.AddressFamily == AddressFamily.InterNetworkV6;
         int max = isV6 ? 128 : 32;
-        if (prefix < 0 || prefix > max) return false;
+        // /0 is "every address". A feed line that says so is a mistake (or a poisoned
+        // feed), and with HitScore=60 it would mark every connection on the box as an
+        // indicator hit. Refuse it.
+        if (prefix < 1 || prefix > max) return false;
 
         network = MaskBytes(addr.GetAddressBytes(), prefix);
         canonical = new IPAddress(network).ToString().ToLowerInvariant() + "/" +

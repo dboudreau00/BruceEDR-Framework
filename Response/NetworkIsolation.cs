@@ -343,7 +343,22 @@ public sealed class NetworkIsolation
         {
             if (!IPAddress.TryParse(v[..dash], out var lo)) return false;
             if (!IPAddress.TryParse(v[(dash + 1)..], out var hi)) return false;
-            return lo.AddressFamily == hi.AddressFamily;
+            if (lo.AddressFamily != hi.AddressFamily) return false;
+
+            // The single-address and CIDR forms refuse "everything"; the range form must
+            // too. 0.0.0.0-255.255.255.255 is /0 written the long way, and netsh accepts
+            // it, so "host isolated" would have reported success while blocking nothing.
+            if (IsUnspecified(lo)) return false;
+            byte[] a = lo.GetAddressBytes(), b = hi.GetAddressBytes();
+            bool allOnes = true;
+            for (int i = 0; i < b.Length; i++) if (b[i] != 0xFF) { allOnes = false; break; }
+            if (allOnes) return false;
+            for (int i = 0; i < a.Length; i++)          // lo must not exceed hi
+            {
+                if (a[i] < b[i]) break;
+                if (a[i] > b[i]) return false;
+            }
+            return true;
         }
 
         return false;

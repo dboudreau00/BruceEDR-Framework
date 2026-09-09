@@ -156,6 +156,11 @@ public class NetworkUtilTests
     [InlineData("::1", false)]                    // IPv6 loopback
     [InlineData("fe80::1", false)]                // IPv6 link-local
     [InlineData("fd00::1", false)]                // IPv6 unique-local (fc00::/7)
+    [InlineData("::ffff:10.0.0.1", false)]        // IPv4-mapped RFC1918 (dual-stack socket)
+    [InlineData("::ffff:8.8.8.8", true)]          // IPv4-mapped public
+    [InlineData("100.64.0.1", false)]             // CGNAT
+    [InlineData("224.0.0.251", false)]            // multicast
+    [InlineData("0.0.0.0", false)]
     [InlineData("not-an-ip", false)]
     [InlineData("", false)]
     public void RoutableRemote(string ip, bool expected)

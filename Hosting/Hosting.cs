@@ -33,6 +33,9 @@ public sealed class Composition : IDisposable
     public IocFeed Intel { get; private set; } = new();
     /// <summary>Operator watchlist currently armed. Replaced wholesale on hot reload.</summary>
     public Watchlist Watchlist { get; private set; } = Watchlist.Empty;
+
+    /// <summary>The tamper-evident audit sink, when one is running (null if it failed to open).</summary>
+    public AuditLogSink? Audit { get; private set; }
     /// <summary>Observed network/API surface, shared with the engine.</summary>
     public ApiSurfaceInventory Surface { get; }
     /// <summary>Encrypted quarantine store, or null when the operator disabled it.</summary>
@@ -84,7 +87,7 @@ public sealed class Composition : IDisposable
         var clock = SystemClock.Instance;
 
         var events = new RingBufferSink(512);
-        var sink = BuildSink(cfg.Telemetry, log, extraSink, events);
+        var sink = BuildSink(cfg.Telemetry, log, extraSink, events, out var auditSink);
         log.SetSink(sink);
 
         var verifier = new AuthenticodeVerifier(cfg.Allowlist);
@@ -93,6 +96,7 @@ public sealed class Composition : IDisposable
         // --- optional analytics -------------------------------------------------
         var ruleHolder = new RuleEngineHolder();
         var ruleSet = LoadRules(cfg.Detection, log);
+        ruleHolder.BudgetExhaustedAlert = msg => log.Info("WARNING: " + msg);
         ruleHolder.Set(ruleSet);
 
         var intelHolder = new IocFeedHolder();
@@ -182,6 +186,7 @@ public sealed class Composition : IDisposable
         {
             Rules = ruleSet,
             Intel = feed,
+            Audit = auditSink,
             Watchlist = watchlist
         };
 
@@ -324,7 +329,10 @@ public sealed class Composition : IDisposable
         AllowMutatingMethods = s.AllowMutatingMethods,
         AllowInsecureHttp = s.AllowInsecureHttp,
         MaxRequestsPerSecond = s.MaxRequestsPerSecond,
-        MaxResponseBytes = s.MaxResponseBytes
+        MaxResponseBytes = s.MaxResponseBytes,
+        FileBodyRoot = string.IsNullOrWhiteSpace(s.FileBodyRoot)
+            ? ""
+            : (Path.IsPathRooted(s.FileBodyRoot) ? s.FileBodyRoot : Path.Combine(AppContext.BaseDirectory, s.FileBodyRoot))
     };
 
     /// <summary>Resolves a config-relative path against the executable directory.</summary>
@@ -333,6 +341,30 @@ public sealed class Composition : IDisposable
         if (string.IsNullOrWhiteSpace(path)) return AppContext.BaseDirectory;
         return Path.IsPathRooted(path) ? path : Path.Combine(AppContext.BaseDirectory, path);
     }
+
+    private static string BracketIfIpv6(string address)
+    {
+        string a = (address ?? "").Trim();
+        return a.Contains(':') && !a.StartsWith('[') ? "[" + a + "]" : a;
+    }
+
+    /// <summary>
+    /// The control plane reloads live: enabled/token/allowActions/address/port. An
+    /// incident responder turning off "kill a process over HTTP" must not have to wait
+    /// for a service restart for it to take effect.
+    /// </summary>
+    private void RestartControlServer(BruceConfig next)
+    {
+        try { _control?.Dispose(); } catch { }
+        _control = null;
+        StartControlServer(next);
+        if (!next.Api.Control.Enabled) Log.Info("control server stopped (api.control.enabled is off)");
+    }
+
+    private static bool ControlChanged(ControlApiConfig a, ControlApiConfig b)
+        => a.Enabled != b.Enabled || a.AllowActions != b.AllowActions || a.Port != b.Port ||
+           !string.Equals(a.Address, b.Address, StringComparison.OrdinalIgnoreCase) ||
+           !string.Equals(a.Token, b.Token, StringComparison.Ordinal);
 
     private void StartControlServer(BruceConfig cfg)
     {
@@ -344,7 +376,10 @@ public sealed class Composition : IDisposable
             var server = new ControlServer(
                 new ControlServerOptions
                 {
-                    Prefix = $"http://{c.Address}:{c.Port}/",
+                    // An IPv6 literal must be bracketed in a listener prefix; "::1" written
+                    // bare produced a prefix the parser rightly refused, and the operator got
+                    // "enabled but not listening".
+                    Prefix = $"http://{BracketIfIpv6(c.Address)}:{c.Port}/",
                     Token = c.Token,
                     Enabled = true,
                     AllowActions = c.AllowActions
@@ -368,7 +403,7 @@ public sealed class Composition : IDisposable
             if (!client.TryConnect()) { client.Dispose(); return; }
 
             client.ClearPolicy();
-            foreach (var fragment in IocDatabase.SensitiveFileFragments)
+            foreach (var fragment in IocDatabase.KernelBlockPrefixes)
                 client.AddSensitivePath(fragment);
             client.SetBlocking(cfg.Detection.KernelBlocking);
             _minifilter = client;
@@ -384,8 +419,9 @@ public sealed class Composition : IDisposable
     }
 
     private static CompositeSink BuildSink(TelemetryConfig t, Logger log, IEventSink? extra,
-        RingBufferSink events)
+        RingBufferSink events, out AuditLogSink? audit)
     {
+        audit = null;
         // The wire format applies to the file/syslog/webhook sinks so BruceEDR can be
         // a drop-in producer for an existing SIEM. The audit chain deliberately keeps the
         // native shape: its HMACs are computed over that canonical form, and switching the
@@ -409,7 +445,14 @@ public sealed class Composition : IDisposable
         // Open the audit log defensively: if its file is genuinely unreadable (locked,
         // permissions), disable the audit sink LOUDLY and keep the agent running rather
         // than crashing startup or silently resetting the tamper-evident chain.
-        try { sinks.Add(new AuditLogSink(auditPath)); }
+        try
+        {
+            // The integrity warning goes through the logger so it reaches every sink and
+            // the console, not just stderr.
+            var a = new AuditLogSink(auditPath, m => log.Info("AUDIT WARNING: " + m));
+            sinks.Add(a);
+            audit = a;
+        }
         catch (Exception ex) { log.Error("audit log unavailable; audit sink disabled", ex); }
 
         if (t.Syslog.Enabled)
@@ -468,6 +511,7 @@ public sealed class Composition : IDisposable
             // the loaded packs. Keeping the previous set when the new one is empty would make
             // "turn the rule engine off" a silent no-op with the old rules still firing.
             var rules = LoadRules(next.Detection, Log);
+            _ruleHolder.BudgetExhaustedAlert = msg => Log.Info("WARNING: " + msg);
             _ruleHolder.Set(rules);
             Rules = rules;
             Log.Info(next.Detection.EnableRuleEngine
@@ -487,6 +531,9 @@ public sealed class Composition : IDisposable
                 Log.Info(next.Watchlist.Enabled ? "watchlist: empty" : "watchlist: disabled");
 
             ApiPolicy = BuildApiPolicy(next.Api.Studio);
+
+            if (ControlChanged(Config.Api.Control, next.Api.Control))
+                RestartControlServer(next);
 
             // The block toggle is the one minifilter setting that reloads live: the client is
             // held in _minifilter for the process lifetime, so the new value is a single
@@ -590,7 +637,6 @@ public sealed class Composition : IDisposable
         var oi = old.Intel; var ni = next.Intel;
         // Turning intel OFF does take effect (the reload installs an empty feed); turning it
         // back ON does not, because the engine was wired with a null indicator source.
-        if (!oi.Enabled && ni.Enabled) changed.Add("intel.enabled");
         Text("intel.feedPath", oi.FeedPath, ni.FeedPath);
         Number("intel.hitScore", oi.HitScore, ni.HitScore);
 
@@ -600,11 +646,6 @@ public sealed class Composition : IDisposable
         Text("response.playbookPath", orr.PlaybookPath, nr.PlaybookPath);
 
         var oc = old.Api.Control; var nc = next.Api.Control;
-        Flag("api.control.enabled", oc.Enabled, nc.Enabled);
-        Text("api.control.address", oc.Address, nc.Address);
-        Number("api.control.port", oc.Port, nc.Port);
-        Text("api.control.token", oc.Token, nc.Token);
-        Flag("api.control.allowActions", oc.AllowActions, nc.AllowActions);
         Flag("api.enableSurfaceInventory", old.Api.EnableSurfaceInventory, next.Api.EnableSurfaceInventory);
 
         Text("service.heartbeatPath", old.Service.HeartbeatPath, next.Service.HeartbeatPath);
@@ -679,7 +720,10 @@ internal sealed class RuleEngineHolder
     /// <summary>The stable façade handed to the detection engine.</summary>
     public RuleEngine Engine => _engine;
 
-    public void Set(RuleSet set) => _engine = new RuleEngine(set);
+    /// <summary>Applied to every engine this holder compiles, so a reload keeps the alert.</summary>
+    public Action<string>? BudgetExhaustedAlert { get; set; }
+
+    public void Set(RuleSet set) => _engine = new RuleEngine(set) { BudgetExhaustedAlert = BudgetExhaustedAlert };
 }
 
 /// <summary>Same atomic-swap treatment for indicator feeds.</summary>
@@ -750,33 +794,52 @@ internal sealed class ImageHashCache
 {
     private const int MaxEntries = 4096;
     private const long MaxFileBytes = 64L * 1024 * 1024;
-    private readonly Dictionary<string, string?> _cache = new(StringComparer.OrdinalIgnoreCase);
+
+    // Keyed on path + length + last-write so an overwrite at the same path (a dropper
+    // that replaces its own binary) is re-hashed instead of answered from the cache
+    // until the next 4096-entry wipe. Only SUCCESSFUL hashes are cached: a sharing
+    // violation or a transient access denied used to be stored as "no hash, forever",
+    // which made every hash watchlist entry and hash IOC inert for that image.
+    private readonly Dictionary<string, string> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
 
     public string? Sha256(string path)
     {
         if (string.IsNullOrEmpty(path)) return null;
-        lock (_gate)
-        {
-            if (_cache.TryGetValue(path, out var cached)) return cached;
-        }
 
-        string? hash = null;
+        FileInfo info;
         try
         {
-            var info = new FileInfo(path);
-            if (info.Exists && info.Length <= MaxFileBytes)
-            {
-                using var fs = File.OpenRead(path);
-                hash = Convert.ToHexString(SHA256.HashData(fs));
-            }
+            info = new FileInfo(path);
+            if (!info.Exists || info.Length > MaxFileBytes) return null;
         }
-        catch { hash = null; }
+        catch { return null; }
+
+        string key = path + "|" + info.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                          + "|" + info.LastWriteTimeUtc.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        lock (_gate)
+        {
+            if (_cache.TryGetValue(key, out var cached)) return cached;
+        }
+
+        string hash;
+        try
+        {
+            // FileShare.ReadWrite | Delete: an EDR must be able to hash an image that the
+            // running process still holds open, and must not block a delete while doing
+            // so. File.OpenRead (FileShare.Read) fails against a live image with a
+            // sharing violation -- the common case, since the interesting binary is the
+            // one that is running.
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.SequentialScan);
+            hash = Convert.ToHexString(SHA256.HashData(fs));
+        }
+        catch { return null; }   // transient; try again next time rather than remembering failure
 
         lock (_gate)
         {
             if (_cache.Count >= MaxEntries) _cache.Clear();   // simple, bounded, and rare
-            _cache[path] = hash;
+            _cache[key] = hash;
         }
         return hash;
     }
@@ -848,7 +911,9 @@ public static class Watchdog
 {
     public static int Run(string configPath)
     {
-        var cfg = ConfigLoader.Load(configPath);
+        // Not strict: the watchdog's job is to keep the service alive, and a malformed
+        // config must not take the watchdog down with it.
+        var cfg = ConfigLoader.Load(configPath, strict: false);
         var svc = cfg.Service.ServiceName;
         var hbPath = cfg.Service.HeartbeatPath;
         var stale = TimeSpan.FromSeconds(cfg.Service.WatchdogStaleSeconds);
@@ -894,7 +959,7 @@ public static class ServiceControl
 {
     private const string WatchdogTask = "BruceEDRWatchdog";
 
-    public static int Install(BruceConfig cfg)
+    public static int Install(BruceConfig cfg, string configPath)
     {
         string exe = Environment.ProcessPath ?? "";
         string fileName = Path.GetFileName(exe).ToLowerInvariant();
@@ -907,22 +972,69 @@ public static class ServiceControl
             return 1;
         }
 
+        // A service runs as LocalSystem from wherever its ImagePath points. Registering
+        // an exe that lives in a user-writable folder (Downloads, a home directory, a
+        // build tree) hands any local user a SYSTEM shell: replace the file, wait for the
+        // restart. Only install from a location a standard user cannot write to.
+        if (!IsProtectedInstallLocation(exe, out string why))
+        {
+            Console.Error.WriteLine(
+                $"Refusing to install a SYSTEM service from '{Path.GetDirectoryName(exe)}': {why}\n" +
+                "Copy the publish folder under Program Files (for example " +
+                @"C:\Program Files\BruceEDR\" + ") and run --install from there.");
+            return 1;
+        }
+
         string svc = cfg.Service.ServiceName;
+        string fullConfig = Path.GetFullPath(configPath);
         int rc = 0;
         // Quote the binPath value so the stored ImagePath is quoted (CWE-428). An
         // unquoted "C:\Program Files\...\BruceEDR.exe" lets a local user drop
         // C:\Program.exe and get it run as LocalSystem. sc.exe never adds quotes itself.
-        rc |= Sc("create", svc, "binPath=", $"\"{exe}\"", "start=", "auto", "DisplayName=", "BruceEDR EDR");
+        // The config path travels with it so the service loads the file the operator
+        // installed with, not whatever bruce.config.json sits next to the exe.
+        rc |= Sc("create", svc, "binPath=", $"\"{exe}\" --config \"{fullConfig}\"",
+                 "start=", "auto", "DisplayName=", "BruceEDR EDR");
         Sc("description", svc, "User-mode behavioural EDR agent for RAT / infostealer IOCs");
         Sc("failure", svc, "reset=", "86400", "actions=", "restart/5000/restart/5000/restart/5000");
 
         // Register the watchdog as a SYSTEM scheduled task that starts at boot.
         RunTool("schtasks", "/Create", "/TN", WatchdogTask,
-            "/TR", $"\"{exe}\" --watchdog", "/SC", "ONSTART", "/RL", "HIGHEST", "/RU", "SYSTEM", "/F");
+            "/TR", $"\"{exe}\" --watchdog --config \"{fullConfig}\"",
+            "/SC", "ONSTART", "/RL", "HIGHEST", "/RU", "SYSTEM", "/F");
 
         Sc("start", svc);
         Console.WriteLine(rc == 0 ? $"Service '{svc}' installed and started." : "Install completed with warnings.");
         return rc;
+    }
+
+    /// <summary>
+    /// True when <paramref name="exe"/> lives under a directory tree a standard user
+    /// cannot write to: Program Files (either), or the Windows directory. Anything else
+    /// -- user profiles, Downloads, ProgramData, a repository checkout -- is refused.
+    /// </summary>
+    internal static bool IsProtectedInstallLocation(string exe, out string why)
+    {
+        why = "";
+        string full;
+        try { full = Path.GetFullPath(exe); }
+        catch { why = "path could not be resolved"; return false; }
+
+        var roots = new[]
+        {
+            Environment.GetEnvironmentVariable("ProgramFiles"),
+            Environment.GetEnvironmentVariable("ProgramFiles(x86)"),
+            Environment.GetEnvironmentVariable("ProgramW6432"),
+            Environment.GetEnvironmentVariable("SystemRoot"),
+        };
+        foreach (var root in roots)
+        {
+            if (string.IsNullOrEmpty(root)) continue;
+            string r = Path.GetFullPath(root).TrimEnd('\\') + "\\";
+            if (full.StartsWith(r, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        why = "standard users can write to that location, so a replaced exe would run as SYSTEM";
+        return false;
     }
 
     public static int Uninstall(BruceConfig cfg)

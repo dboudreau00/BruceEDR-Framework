@@ -439,8 +439,57 @@ public sealed record ApiSafetyPolicy
     /// <summary>Hard cap on response bytes read into memory.</summary>
     public long MaxResponseBytes { get; init; } = 8L * 1024 * 1024;
 
+    /// <summary>
+    /// Directory that file-body requests may read from. Empty disables file bodies. A
+    /// request body of kind File is an operator-supplied path read by an elevated
+    /// process, and an imported collection can carry any path at all -- a UNC share (the
+    /// agent would authenticate to it as SYSTEM) or a local secret. Reads are confined to
+    /// this root, resolved without following reparse points.
+    /// </summary>
+    public string FileBodyRoot { get; init; } = "";
+
     private static readonly HashSet<string> Mutating =
         new(StringComparer.OrdinalIgnoreCase) { "POST", "PUT", "PATCH", "DELETE" };
+
+    /// <summary>
+    /// Whether a RESOLVED address may be connected to. The host allowlist is checked
+    /// before DNS; this is checked after, because a permitted name can resolve to an
+    /// internal address (DNS rebinding) and the request would otherwise reach cloud
+    /// metadata, a link-local service, or an RFC1918 host from an elevated process.
+    /// Internal space is refused unless the address itself is allowlisted, or the
+    /// request was made TO a loopback name and the address is loopback.
+    /// </summary>
+    public bool IsAddressPermitted(IPAddress address, bool requestHostIsLoopback)
+    {
+        if (address is null) return false;
+        var a = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+
+        // An explicitly allowlisted address literal is always fine, internal or not.
+        foreach (var entry in AllowedHosts)
+        {
+            if (IPAddress.TryParse(NormalizeHost(entry), out var literal) && literal.Equals(a)) return true;
+        }
+        if (requestHostIsLoopback && IPAddress.IsLoopback(a)) return true;
+
+        return !BruceEDR.Analysis.GeoIpDatabase.IsPrivate(a);
+    }
+
+    /// <summary>The subset of <paramref name="resolved"/> this policy will connect to, in order.</summary>
+    public IPAddress[] FilterResolved(IReadOnlyList<IPAddress> resolved, bool requestHostIsLoopback)
+    {
+        var keep = new List<IPAddress>(resolved.Count);
+        foreach (var addr in resolved)
+            if (IsAddressPermitted(addr, requestHostIsLoopback)) keep.Add(addr);
+        return keep.ToArray();
+    }
+
+    /// <summary>"localhost" or a loopback literal, the forms <see cref="Uri.IsLoopback"/> treats as local.</summary>
+    public static bool IsLoopbackHostName(string? host)
+    {
+        string h = NormalizeHost(host);
+        if (string.Equals(h, "localhost", StringComparison.OrdinalIgnoreCase)) return true;
+        return IPAddress.TryParse(h, out var ip) && IPAddress.IsLoopback(ip);
+    }
 
     /// <summary>Returns null when the request is permitted, or the refusal reason.</summary>
     public string? Refuse(string method, Uri uri)

@@ -650,7 +650,10 @@ public static class ApiReports
             {
                 string userinfo = authority[..at];
                 int colon = userinfo.IndexOf(':');
-                string masked = colon >= 0 ? userinfo[..colon] + ":" + RedactionPlaceholder : userinfo;
+                // "user:secret@" keeps the user; "secret@" alone (a token used as userinfo)
+                // used to pass through untouched. Mask the whole thing when it has no
+                // user/password split.
+                string masked = colon >= 0 ? userinfo[..colon] + ":" + RedactionPlaceholder : RedactionPlaceholder;
                 s = s[..authorityStart] + masked + authority[at..] + s[authorityEnd..];
             }
         }

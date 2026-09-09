@@ -23,6 +23,9 @@ public sealed class EtwMonitor : IDisposable
     private readonly Logger _log;
     private TraceEventSession? _session;
     private Thread? _pump;
+    private volatile bool _disposed;
+    private int _restarts;
+    private const int MaxRestarts = 5;
 
     public EtwMonitor(Action<Signal> emit, Logger log)
     {
@@ -53,7 +56,19 @@ public sealed class EtwMonitor : IDisposable
                 ParentPid = d.ParentID,
                 ProcessName = Path.GetFileName(d.ImageFileName),
                 ImagePath = d.ImageFileName,
-                CommandLine = d.CommandLine ?? ""
+                CommandLine = d.CommandLine ?? "",
+                TimestampUtc = d.TimeStamp.ToUniversalTime()
+            }));
+
+            // The other half of pid lifecycle. Without it the engine's PID-reuse handling
+            // (replace the profile on start, ignore signals for an exited pid) only ever
+            // ran in replay, never on a live host.
+            k.ProcessStop += d => Guard(() => _emit(new Signal
+            {
+                Kind = SignalKind.ProcessStop,
+                Pid = d.ProcessID,
+                ProcessName = Path.GetFileName(d.ImageFileName),
+                TimestampUtc = d.TimeStamp.ToUniversalTime()
             }));
 
             k.ImageLoad += d => Guard(() => _emit(new Signal
@@ -61,14 +76,16 @@ public sealed class EtwMonitor : IDisposable
                 Kind = SignalKind.ImageLoad,
                 Pid = d.ProcessID,
                 FilePath = d.FileName,
-                Detail = d.FileName
+                Detail = d.FileName,
+                TimestampUtc = d.TimeStamp.ToUniversalTime()
             }));
 
             k.FileIOCreate += d => Guard(() => _emit(new Signal
             {
                 Kind = SignalKind.FileCreate,
                 Pid = d.ProcessID,
-                FilePath = d.FileName
+                FilePath = d.FileName,
+                TimestampUtc = d.TimeStamp.ToUniversalTime()
             }));
 
             k.TcpIpConnect += d => Guard(() => _emit(new Signal
@@ -76,7 +93,8 @@ public sealed class EtwMonitor : IDisposable
                 Kind = SignalKind.NetworkConnect,
                 Pid = d.ProcessID,
                 RemoteAddress = d.daddr?.ToString(),
-                RemotePort = d.dport
+                RemotePort = d.dport,
+                TimestampUtc = d.TimeStamp.ToUniversalTime()
             }));
 
             // IPv6 outbound connects fire a separate event; without this, IPv6 C2/exfil
@@ -86,7 +104,8 @@ public sealed class EtwMonitor : IDisposable
                 Kind = SignalKind.NetworkConnect,
                 Pid = d.ProcessID,
                 RemoteAddress = d.daddr?.ToString(),
-                RemotePort = d.dport
+                RemotePort = d.dport,
+                TimestampUtc = d.TimeStamp.ToUniversalTime()
             }));
 
             _session = session;
@@ -108,7 +127,26 @@ public sealed class EtwMonitor : IDisposable
         }
         catch (Exception ex)
         {
-            _log.Error("ETW pump stopped", ex);
+            if (_disposed) return;
+            int n = Interlocked.Increment(ref _restarts);
+            if (n > MaxRestarts)
+            {
+                _log.Error($"ETW pump stopped and will NOT be restarted ({MaxRestarts} restarts exhausted); " +
+                           "kernel telemetry is DOWN until the agent restarts", ex);
+                return;
+            }
+            _log.Error($"ETW pump stopped; restarting in 5s (attempt {n}/{MaxRestarts})", ex);
+            Thread.Sleep(5000);
+            if (_disposed) return;
+            try
+            {
+                var old = _session;
+                _session = null;
+                try { old?.Dispose(); } catch { }
+                Start();
+                _log.Info("ETW pump restarted");
+            }
+            catch (Exception ex2) { _log.Error("ETW restart failed; kernel telemetry is DOWN", ex2); }
         }
     }
 
@@ -141,6 +179,7 @@ public sealed class EtwMonitor : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         try { _session?.Dispose(); } catch { }
         _session = null;
     }

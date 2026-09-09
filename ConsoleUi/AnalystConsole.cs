@@ -78,6 +78,19 @@ public sealed class AnalystConsole
                 return false;
 
             case "audit":
+                if (arg.Equals("ack", StringComparison.OrdinalIgnoreCase))
+                {
+                    var audit = _composition?.Audit;
+                    if (audit is null) _log.Raw("  audit sink not available in this mode.");
+                    else if (!audit.AnchorLocked) _log.Raw("  nothing to acknowledge: the audit anchor is intact.");
+                    else
+                    {
+                        audit.AcknowledgeIntegrityWarning();
+                        _log.Raw("  acknowledged: the audit chain is re-anchored at its current head. " +
+                                 "Whatever was truncated before this point is NOT recoverable from the anchor.");
+                    }
+                    return false;
+                }
                 _log.Raw("  " + (_verifyAudit?.Invoke() ?? "audit verification not available."));
                 return false;
 
@@ -388,6 +401,7 @@ public sealed class AnalystConsole
             "  metrics      Prometheus exposition of the same counters\n" +
             "  reload       re-read bruce.config.json (incl. rules and intel feeds)\n" +
             "  audit        verify the tamper-evident audit log\n" +
+            "  audit ack    accept a missing/corrupt audit anchor and re-anchor at the current head\n" +
             "\n" +
             "  attack       MITRE ATT&CK coverage vs. what has been observed\n" +
             "  rules [id]   list loaded detection rules, or show one in detail\n" +

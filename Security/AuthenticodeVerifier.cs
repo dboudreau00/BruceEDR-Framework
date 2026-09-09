@@ -42,12 +42,12 @@ public sealed class AuthenticodeVerifier
             // Trust REQUIRES a cryptographically valid Authenticode chain. CreateFromSignedFile
             // only extracts the embedded signer cert; it does not prove the signature covers
             // this file's bytes. So without WinVerifyTrust an attacker can keep a trusted
-            // cert's thumbprint/subject in a tampered binary. Gate BOTH the thumbprint pin and
-            // the subject match on chainOk -- RequireValidChain=false must never downgrade to
-            // "trust the embedded cert with zero validation".
+            // cert's thumbprint/subject in a tampered binary. There is no setting that relaxes
+            // this: the old requireValidChain flag never actually did (both matchers below
+            // gate on chainOk regardless), so it was removed rather than left as a knob that
+            // appeared to do something.
             bool chainOk = ChainIsValid(path, allow.CheckRevocation);
-            if (allow.RequireValidChain && !chainOk)
-                return false;
+            if (!chainOk) return false;
 
             using var cert = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
             string thumb = cert.Thumbprint ?? "";

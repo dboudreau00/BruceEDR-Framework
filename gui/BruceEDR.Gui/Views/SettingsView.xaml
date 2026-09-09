@@ -101,10 +101,6 @@
                     <Border Height="1" Background="{StaticResource Brush.LineSoft}" Margin="0,16"/>
 
                     <Grid>
-                        <TextBlock Text="Require a valid signature chain" Style="{StaticResource Text.Body}"/>
-                        <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding RequireValidChain}"/>
-                    </Grid>
-                    <Grid Margin="0,12,0,0">
                         <TextBlock Text="Allow publisher-name match" Style="{StaticResource Text.Body}"/>
                         <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" IsChecked="{Binding AllowSubjectMatch}"/>
                     </Grid>

@@ -37,3 +37,29 @@ can satisfy on its own.
 - Switch from outright deny to **send-event-and-wait**: `FltSendMessage` the create
   attempt to the agent and complete based on its verdict.
 - Add contexts/streams and handle `IRP_MJ_SET_INFORMATION` (renames) and writes.
+
+## Known gaps in the skeleton (from external review; not fixed here)
+
+These are real defects in the driver as shipped. They are listed rather than fixed
+because this repository cannot build or load a driver in its verification path (no
+WDK, no test-signed lab in CI), and shipping unverified kernel changes is worse than
+shipping an honest list. `detection.kernelBlocking` defaults to **off**; leave it
+there until these are addressed.
+
+1. **Name query can fail open.** Pre-create asks for `FLT_FILE_NAME_NORMALIZED`, which
+   often misses the name cache at that point; on failure the callback returns
+   `FLT_PREOP_SUCCESS_NO_CALLBACK`, i.e. *allow*. It should use `FLT_FILE_NAME_OPENED`
+   and either fail closed for sensitive-looking paths or at minimum log the miss.
+2. **No trusted-process allowlist.** Every matching open is denied for every process,
+   including the browser that owns the profile and the agent itself. User mode now sends
+   only directory prefixes (never bare artifact names), but the driver still needs a
+   trusted-PID list before blocking is usable outside a lab.
+3. **CREATE only.** There is no `IRP_MJ_SET_INFORMATION` hook, so open-a-boring-path,
+   write, then *rename onto* the guarded file bypasses the policy entirely.
+4. **Port security descriptor allows Administrators, not just SYSTEM.** After the
+   user-mode agent exits, any administrator can connect to the port and call
+   `SetBlocking` / `AddSensitivePath`. The SD should be SYSTEM-only.
+
+User-mode mitigations that ARE in place: the client refuses fragments the wire struct
+would truncate (a truncated fragment is a broader one), and the fragment list sent to
+the kernel is directory prefixes only.

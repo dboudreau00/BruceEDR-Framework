@@ -93,8 +93,17 @@ public sealed class MinifilterClient : IDisposable
     public void SetBlocking(bool enabled) =>
         Send(new BruceMessage { Command = (uint)BruceCommand.SetBlocking, Flag = enabled ? 1u : 0u, Path = "" });
 
-    public void AddSensitivePath(string fragment) =>
+    /// <summary>
+    /// Pushes one path fragment to the driver. The wire struct holds 260 WCHARs; a longer
+    /// fragment would be silently truncated by the marshaller into a SHORTER, broader
+    /// pattern that blocks more than intended, so it is refused instead.
+    /// </summary>
+    public bool AddSensitivePath(string fragment)
+    {
+        if (string.IsNullOrEmpty(fragment) || fragment.Length >= 260) return false;
         Send(new BruceMessage { Command = (uint)BruceCommand.AddSensitivePath, Flag = 0, Path = fragment });
+        return true;
+    }
 
     public void ClearPolicy() =>
         Send(new BruceMessage { Command = (uint)BruceCommand.ClearPolicy, Flag = 0, Path = "" });

@@ -79,6 +79,24 @@ public sealed class EngineDependencies
     /// <summary>Late-bound watchlist, so an edited watchlist takes effect without a restart.</summary>
     public Func<Watchlist?>? WatchlistProvider { get; init; }
 
+    /// <summary>
+    /// Resolves a pid to an image name when the process tree has never seen it (anything
+    /// that started before the agent did -- lsass, for one). Defaults to a live OS lookup;
+    /// tests supply a table. Null disables resolution and ProcessAccess events keep only
+    /// the pid, which is what made every LSASS rule blind.
+    /// </summary>
+    public Func<int, string?>? ResolveProcessName { get; init; } = DefaultResolveProcessName;
+
+    private static string? DefaultResolveProcessName(int pid)
+    {
+        try
+        {
+            using var proc = System.Diagnostics.Process.GetProcessById(pid);
+            return proc.ProcessName;
+        }
+        catch { return null; }
+    }
+
     /// <summary>Resolves the rules to evaluate right now.</summary>
     internal RuleEngine? CurrentRules() => RulesProvider is null ? Rules : RulesProvider();
     /// <summary>Resolves the indicator feed to match against right now.</summary>
@@ -137,6 +155,11 @@ public sealed class DetectionEngine
     private DateTime _lastPrune;
     private long _incidentCounter;
 
+    // pid -> image name for ProcessAccess targets. Cleared for a pid on its start/stop so
+    // a recycled pid is re-resolved rather than answered from a dead process's name.
+    private readonly Dictionary<int, string> _targetNames = new();
+    private const int MaxTargetNames = 4096;
+
     public DetectionEngine(EngineOptions opt, Func<int, bool> isTrusted)
         : this(opt, isTrusted, EngineDependencies.Empty) { }
 
@@ -186,6 +209,7 @@ public sealed class DetectionEngine
         if (s.Kind == SignalKind.ProcessStart)
         {
             _profiles.Remove(s.Pid);
+            _targetNames.Remove(s.Pid);
             _deps.Beacons?.Forget(s.Pid);
             _deps.Surface?.Forget(s.Pid);
             _deps.Tree?.OnStart(s.Pid, s.ParentPid, s.ProcessName, s.ImagePath, s.CommandLine, s.TimestampUtc);
@@ -194,15 +218,44 @@ public sealed class DetectionEngine
         {
             _deps.Tree?.OnExit(s.Pid, s.TimestampUtc);
             _deps.Beacons?.Forget(s.Pid);
-            if (_profiles.TryGetValue(s.Pid, out var gone)) gone.Exited = true;
+            _targetNames.Remove(s.Pid);
+            // A stop that predates this tenant's start belongs to the PREVIOUS occupant of
+            // the pid, delivered late. Marking the new process exited on its behalf would
+            // exempt it from containment (Decide skips exited rows).
+            if (_profiles.TryGetValue(s.Pid, out var gone) && s.TimestampUtc >= gone.StartedUtc)
+                gone.Exited = true;
             return results;   // a dead process cannot be contained; nothing further to score
         }
 
+        // Never build on an exited row. If the pid is emitting again after a stop, either
+        // Windows recycled it and the ProcessStart was dropped, or these are the dead
+        // process's last events; either way the old Contained/Score/ForcedVerdict state
+        // must not be inherited by whatever is running under that number now.
+        if (_profiles.TryGetValue(s.Pid, out var stale) && stale.Exited)
+        {
+            _profiles.Remove(s.Pid);
+            _deps.Beacons?.Forget(s.Pid);
+        }
+
         var p = GetOrAdd(s.Pid);
+        if (s.Kind == SignalKind.ProcessStart) p.StartedUtc = s.TimestampUtc;
         if (!string.IsNullOrEmpty(s.ProcessName)) p.ProcessName = s.ProcessName;
         if (!string.IsNullOrEmpty(s.ImagePath)) p.ImagePath = s.ImagePath;
         if (!string.IsNullOrEmpty(s.CommandLine)) p.CommandLine = s.CommandLine;
         if (s.ParentPid > 0) p.ParentPid = s.ParentPid;
+
+        // The kernel ProcessStart event carries only the image BASENAME. The full path
+        // arrives moments later on the main image's ImageLoad. Without this promotion a
+        // profile from the default (ETW) source never has a real path, so hashing opened a
+        // cwd-relative name and every path/hash watchlist entry was inert on live data.
+        if (s.Kind == SignalKind.ImageLoad && !string.IsNullOrEmpty(s.FilePath))
+            PromoteImagePath(p, s.FilePath);
+
+        // ProcessAccess events name their target by pid only. Resolve it so the LSASS
+        // rules (builtin and JSON) can see what was opened; they match on the name.
+        string targetName = "";
+        if (s.Kind == SignalKind.ProcessAccess && s.TargetPid > 0)
+            s = EnrichTargetName(s, out targetName);
 
         switch (s.Kind)
         {
@@ -212,7 +265,7 @@ public sealed class DetectionEngine
             case SignalKind.NetworkConnect: RuleNetwork(p, s);      break;
             case SignalKind.RegistryWrite:  RuleRegistry(p, s);     break;
             case SignalKind.DnsQuery:       RuleDns(p, s);          break;
-            case SignalKind.ProcessAccess:  RuleProcessAccess(p, s); break;
+            case SignalKind.ProcessAccess:  RuleProcessAccess(p, s, targetName); break;
             case SignalKind.ScriptContent:  RuleScript(p, s);       break;
             case SignalKind.NamedPipe:      RuleNamedPipe(p, s);    break;
         }
@@ -438,17 +491,18 @@ public sealed class DetectionEngine
                   "builtin-dns-tunnel", Tech("T1071.004", "T1572"), s.TimestampUtc);
     }
 
-    private void RuleProcessAccess(ThreatProfile p, Signal s)
+    private void RuleProcessAccess(ThreatProfile p, Signal s, string targetName)
     {
         if (s.TargetPid <= 0) return;
 
-        // PROCESS_VM_READ (0x10) / PROCESS_VM_WRITE (0x20) / PROCESS_VM_OPERATION (0x08) /
-        // PROCESS_CREATE_THREAD (0x02) are the rights an injector or a credential dumper needs.
-        const uint Sensitive = 0x0002 | 0x0008 | 0x0010 | 0x0020 | 0x0040;
-        bool sensitive = (s.DesiredAccess & Sensitive) != 0 || s.DesiredAccess == 0x1FFFFF;
-        if (!sensitive) return;
+        // The monitor already filtered on the same predicate; using it here too means
+        // MAXIMUM_ALLOWED and GENERIC_* -- the documented way to open LSASS without ever
+        // putting PROCESS_VM_READ in the mask -- are scored instead of silently dropped.
+        if (!Monitoring.MonitorSupport.IsSensitiveProcessAccess(s.DesiredAccess)) return;
 
-        string target = (s.Detail ?? "").ToLowerInvariant();
+        // Prefer the resolved target name; fall back to whatever the signal said (replay
+        // traces write the name straight into Detail).
+        string target = (targetName.Length > 0 ? targetName : s.Detail ?? "").ToLowerInvariant();
         if (target.Contains("lsass"))
             Score(p, 60, $"Opened LSASS with memory-access rights (mask 0x{s.DesiredAccess:X})",
                   "builtin-lsass-access", Tech("T1003.001"), s.TimestampUtc);
@@ -499,6 +553,8 @@ public sealed class DetectionEngine
             // Carried from the profile because most signal kinds have no process name of
             // their own; without it every processName exclusion in a rule pack is inert.
             ProcessName = p.ProcessName,
+            ImagePath = p.ImagePath,
+            CommandLine = p.CommandLine,
             ParentName = _profiles.TryGetValue(p.ParentPid, out var parent) ? parent.ProcessName : "",
             Ancestry = _deps.Tree is null
                 ? Array.Empty<string>()
@@ -570,6 +626,11 @@ public sealed class DetectionEngine
         var now = s.TimestampUtc;
         string file = (s.FilePath ?? "").ToLowerInvariant();
 
+        // One archive has one author. Charging every in-window flagged process for it
+        // turned a single zip in Temp into +25 across the board, which is how unrelated
+        // processes got pushed over a threshold together. Pick the likeliest author: the
+        // flagged process that was most recently active.
+        ThreatProfile? best = null;
         foreach (var p in _profiles.Values)
         {
             // An exited process cannot be contained, and acting on its PID risks hitting
@@ -577,15 +638,17 @@ public sealed class DetectionEngine
             if (p.Exited || p.Terminated) continue;
             if (p.Score <= 0 || p.Contained) continue;
             if (now - p.LastUpdatedUtc > _window) continue;
-
-            if (!p.StagedArchives.Add(file)) continue;   // score each distinct archive once
-            p.ArchiveStagedUtc = now;
-            Score(p, 25, $"Archive '{Path.GetFileName(s.FilePath)}' staged near flagged activity",
-                  "builtin-archive-correlation", Tech("T1074.001"), now);
-
-            var r = Decide(p, "ArchiveCorrelation", now);
-            if (r is not null) results.Add(r);
+            if (best is null || p.LastUpdatedUtc > best.LastUpdatedUtc) best = p;
         }
+        if (best is null) return;
+
+        if (!best.StagedArchives.Add(file)) return;   // score each distinct archive once
+        best.ArchiveStagedUtc = now;
+        Score(best, 25, $"Archive '{Path.GetFileName(s.FilePath)}' staged near flagged activity",
+              "builtin-archive-correlation", Tech("T1074.001"), now);
+
+        var r = Decide(best, "ArchiveCorrelation", now);
+        if (r is not null) results.Add(r);
     }
 
     /// <summary>
@@ -593,11 +656,21 @@ public sealed class DetectionEngine
     /// crosses the scan threshold, and marks it claimed so the scan isn't scheduled
     /// twice. The caller (BruceHost) runs the actual scan off the detection thread.
     /// </summary>
-    public bool TryClaimMemoryScan(int pid)
+    public bool TryClaimMemoryScan(int pid) => TryClaimMemoryScan(pid, out _);
+
+    /// <summary>
+    /// As <see cref="TryClaimMemoryScan(int)"/>, also returning the profile generation the
+    /// claim was made under. Hand it back to <see cref="ApplyMemoryHits(int, IReadOnlyList{string}, long)"/>
+    /// so a scan that finishes after the pid was recycled is discarded, not scored against
+    /// the new occupant.
+    /// </summary>
+    public bool TryClaimMemoryScan(int pid, out long generation)
     {
+        generation = 0;
         if (!_profiles.TryGetValue(pid, out var p)) return false;
-        if (p.MemoryScanned || p.Score < _scanAt) return false;
+        if (p.Exited || p.MemoryScanned || p.Score < _scanAt) return false;
         p.MemoryScanned = true;
+        generation = p.Generation;
         return true;
     }
 
@@ -606,14 +679,22 @@ public sealed class DetectionEngine
     /// known. The caller runs the (disk-bound) PE parse off the detection thread and folds
     /// the result back through <see cref="ApplyImageAnalysis"/>.
     /// </summary>
-    public bool TryClaimImageAnalysis(int pid, out string imagePath)
+    public bool TryClaimImageAnalysis(int pid, out string imagePath) => TryClaimImageAnalysis(pid, out imagePath, out _);
+
+    /// <summary>Generation-stamped form; see <see cref="TryClaimMemoryScan(int, out long)"/>.</summary>
+    public bool TryClaimImageAnalysis(int pid, out string imagePath, out long generation)
     {
         imagePath = "";
+        generation = 0;
         if (_deps.AnalyzeImage is null) return false;
         if (!_profiles.TryGetValue(pid, out var p)) return false;
-        if (p.ImageAnalyzed || string.IsNullOrEmpty(p.ImagePath)) return false;
+        if (p.Exited || p.ImageAnalyzed || string.IsNullOrEmpty(p.ImagePath)) return false;
+        // A bare basename (what the kernel ProcessStart carries) is not a path to analyse;
+        // wait for the ImageLoad promotion to supply the real one.
+        if (p.ImagePath.IndexOfAny(new[] { '\\', '/' }) < 0) return false;
         p.ImageAnalyzed = true;
         imagePath = p.ImagePath;
+        generation = p.Generation;
         return true;
     }
 
@@ -626,10 +707,20 @@ public sealed class DetectionEngine
     /// malware. These are corroborating signals, not verdicts.
     /// </summary>
     public IReadOnlyList<DetectionResult> ApplyImageAnalysis(int pid, FileAnalysis analysis)
+        => ApplyImageAnalysis(pid, analysis, generation: 0);
+
+    /// <summary>
+    /// Generation-checked form: a non-zero <paramref name="generation"/> that no longer
+    /// matches the live profile means the pid was recycled while the analysis ran, and the
+    /// result is dropped rather than scored against an unrelated process.
+    /// </summary>
+    public IReadOnlyList<DetectionResult> ApplyImageAnalysis(int pid, FileAnalysis analysis, long generation)
     {
         var results = new List<DetectionResult>();
         if (analysis is null || !analysis.Valid || !analysis.IsPeFile) return results;
         if (!_profiles.TryGetValue(pid, out var p)) return results;
+        if (generation != 0 && p.Generation != generation) return results;
+        if (p.Exited) return results;
 
         var now = _clock.UtcNow;
 
@@ -654,10 +745,16 @@ public sealed class DetectionEngine
     /// (a moment later than an inline scan would, which is the accepted trade-off).
     /// </summary>
     public IReadOnlyList<DetectionResult> ApplyMemoryHits(int pid, IReadOnlyList<string> hits)
+        => ApplyMemoryHits(pid, hits, generation: 0);
+
+    /// <summary>Generation-checked form; see <see cref="ApplyImageAnalysis(int, FileAnalysis, long)"/>.</summary>
+    public IReadOnlyList<DetectionResult> ApplyMemoryHits(int pid, IReadOnlyList<string> hits, long generation)
     {
         var results = new List<DetectionResult>();
         if (hits.Count == 0) return results;
         if (!_profiles.TryGetValue(pid, out var p)) return results;
+        if (generation != 0 && p.Generation != generation) return results;
+        if (p.Exited) return results;
 
         var now = _clock.UtcNow;
         Score(p, 20 + 5 * Math.Min(hits.Count, 6), "Memory IOC(s): " + string.Join(", ", hits),
@@ -670,6 +767,64 @@ public sealed class DetectionEngine
     private void Score(ThreatProfile p, int points, string reason, string ruleId,
                        IReadOnlyList<string> techniques, DateTime nowUtc)
         => p.Add(points, reason, ruleId, techniques, nowUtc);
+
+    /// <summary>
+    /// Adopts the main image's full path from its ImageLoad when the profile only knows a
+    /// basename. Only the process's OWN image qualifies (leaf name must match), so a DLL
+    /// load can never rewrite the path.
+    /// </summary>
+    private static void PromoteImagePath(ThreatProfile p, string loadedPath)
+    {
+        if (p.ImagePath.Length > 0 && p.ImagePath.IndexOfAny(new[] { '\\', '/' }) >= 0) return;
+        if (loadedPath.IndexOfAny(new[] { '\\', '/' }) < 0) return;
+
+        string leaf = Path.GetFileName(loadedPath);
+        string own = p.ProcessName.Length > 0 ? p.ProcessName : Path.GetFileName(p.ImagePath);
+        if (own.Length == 0 || !string.Equals(leaf, own, StringComparison.OrdinalIgnoreCase)) return;
+
+        p.ImagePath = loadedPath;
+        // The PE analysis may have been skipped (or attempted against the bare name and
+        // failed) before the real path was known; let it be claimed again.
+        p.ImageAnalyzed = false;
+    }
+
+    /// <summary>
+    /// Names the target of a ProcessAccess event and writes it into <c>Detail</c> as
+    /// <c>open-process:lsass.exe:PROCESS_VM_READ|...</c>, which is the shape the shipped
+    /// JSON rules match on. Resolution order: the process tree (already-tracked children),
+    /// then the injected resolver (live OS lookup for processes older than the agent).
+    /// </summary>
+    private Signal EnrichTargetName(Signal s, out string targetName)
+    {
+        targetName = ResolveTargetName(s.TargetPid);
+        if (targetName.Length == 0) return s;
+
+        string detail = s.Detail ?? "";
+        if (detail.Contains(targetName, StringComparison.OrdinalIgnoreCase)) return s;
+
+        int colon = detail.IndexOf(':');
+        string enriched = colon > 0
+            ? detail[..colon] + ":" + targetName + detail[colon..]
+            : (detail.Length == 0 ? "open-process:" + targetName : detail + ":" + targetName);
+        return s with { Detail = enriched };
+    }
+
+    private string ResolveTargetName(int pid)
+    {
+        if (_targetNames.TryGetValue(pid, out var cached)) return cached;
+
+        string name = _deps.Tree?.Get(pid)?.Name ?? "";
+        if (name.Length == 0)
+        {
+            try { name = _deps.ResolveProcessName?.Invoke(pid) ?? ""; } catch { name = ""; }
+        }
+        name = name.Trim().ToLowerInvariant();
+        if (name.Length > 0 && !name.Contains('.')) name += ".exe";   // Process.ProcessName drops the extension
+
+        if (_targetNames.Count >= MaxTargetNames) _targetNames.Clear();
+        _targetNames[pid] = name;   // cache misses too, so an unresolvable pid is not re-queried per event
+        return name;
+    }
 
     // ------------------------------------------------------- operator watchlist
 
@@ -710,7 +865,7 @@ public sealed class DetectionEngine
             try { hash = hasher(p.ImagePath); } catch { hash = null; }
         }
 
-        string fingerprint = p.ProcessName + "|" + p.ImagePath + "|" + (hash ?? "") + "|" + p.CommandLine.Length;
+        string fingerprint = p.ProcessName + "|" + p.ImagePath + "|" + (hash ?? "") + "|" + p.CommandLine;
         if (string.Equals(fingerprint, p.WatchlistFingerprint, StringComparison.Ordinal)) return;
         p.WatchlistFingerprint = fingerprint;
 
@@ -765,9 +920,12 @@ public sealed class DetectionEngine
         // trades a latency problem for a false positive.
         if (!p.SignatureChecked && p.Score >= _warn)
         {
-            p.SignatureChecked = true;
             bool trusted;
-            try { trusted = _isTrusted(p.Pid); } catch { trusted = false; }
+            // An exception here (image still locked, transient access denied) used to be
+            // recorded as "checked: untrusted" forever, so a signed process never got its
+            // discount. Leave it unchecked and try again on a later signal, a few times.
+            try { trusted = _isTrusted(p.Pid); p.SignatureChecked = true; }
+            catch { trusted = false; if (++p.SignatureAttempts >= 3) p.SignatureChecked = true; }
             if (trusted)
             {
                 p.Trusted = true;
@@ -850,7 +1008,7 @@ public sealed class DetectionEngine
     /// tie a SIEM row back to a process without a lookup.
     /// </summary>
     private string NewIncidentId(ThreatProfile p, DateTime nowUtc)
-        => $"PS-{nowUtc:yyyyMMdd}-{++_incidentCounter:D5}-{p.Pid}";
+        => $"BR-{nowUtc:yyyyMMdd}-{++_incidentCounter:D5}-{p.Pid}";
 
     private ProfileSnapshot ToSnapshot(ThreatProfile p) => new()
     {
@@ -876,7 +1034,11 @@ public sealed class DetectionEngine
         ReasonLog = p.ReasonLog.ToArray(),
         RemoteEndpoints = p.RemoteEndpoints.ToArray(),
         Domains = p.Domains.ToArray(),
-        PeakScore = p.PeakScore
+        PeakScore = p.PeakScore,
+        ContainmentRequired = p.ForcedVerdict == Verdict.Quarantine,
+        ForcedBy = p.WatchlistRuleId,
+        Generation = p.Generation,
+        StartedUtc = p.StartedUtc
     };
 
     private ThreatProfile GetOrAdd(int pid)

@@ -179,7 +179,25 @@ public sealed class ControlServer : IDisposable
 
             _token = string.IsNullOrEmpty(_options.Token) ? NewToken() : _options.Token;
             if (string.IsNullOrEmpty(_options.Token))
-                _log.Info("control server generated a bearer token (shown once): " + _token);
+            {
+                // The token is what authorises kill/suspend over HTTP. It used to be
+                // Info()-logged, and Info fans out to every sink: incidents.jsonl, the
+                // audit chain, syslog, the webhook, the /events ring buffer. On a default
+                // install those files are readable by every local user, so the secret
+                // that gates the control plane was published to exactly the accounts it
+                // exists to keep out. It goes to an ACL'd file now, and to the console
+                // only when there is a person at it.
+                string? tokenPath = WriteTokenFile(_token, out string? aclProblem);
+                if (tokenPath is not null)
+                    _log.Info("control server generated a bearer token; written to " + tokenPath +
+                              (aclProblem is null ? " (SYSTEM and Administrators only)"
+                                                  : " (WARNING: could not restrict the file: " + aclProblem + ")"));
+                else
+                    _log.Info("control server generated a bearer token but could not write it to disk; " +
+                              "it is shown on the console only");
+                if (Environment.UserInteractive)
+                    _log.Raw("    control token (console only, not logged): " + _token);
+            }
 
             try
             {
@@ -502,9 +520,33 @@ public sealed class ControlServer : IDisposable
             catch (ObjectDisposedException) { return; }
             catch (InvalidOperationException) { return; }
 
-            try { Serve(ctx); }
-            catch (Exception ex) { _log.Error("control server request", ex); }
+            if (!_inflight.Wait(0))
+            {
+                TryRespondBusy(ctx);
+                continue;
+            }
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try { Serve(ctx); }
+                catch (Exception ex) { _log.Error("control server request", ex); }
+                finally { _inflight.Release(); }
+            });
         }
+    }
+
+    // Concurrent requests in flight. Loopback-only and read-mostly, so this is a
+    // ceiling against a local flood, not a throughput target.
+    private readonly SemaphoreSlim _inflight = new(8, 8);
+
+    private static void TryRespondBusy(HttpListenerContext ctx)
+    {
+        try
+        {
+            ctx.Response.StatusCode = 503;
+            ctx.Response.Headers["Retry-After"] = "1";
+            ctx.Response.Close();
+        }
+        catch { }
     }
 
     private void Serve(HttpListenerContext ctx)
@@ -545,6 +587,29 @@ public sealed class ControlServer : IDisposable
     }
 
     private static string NewToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+
+    /// <summary>Where a generated token is persisted for the operator to read back.</summary>
+    public static string TokenFilePath =>
+        Path.Combine(Environment.GetEnvironmentVariable("ProgramData") ?? @"C:\ProgramData", "BruceEDR", "control.token");
+
+    private static string? WriteTokenFile(string token, out string? aclProblem)
+    {
+        aclProblem = null;
+        try
+        {
+            string path = TokenFilePath;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            if (File.Exists(path)) File.Delete(path);
+            BruceEDR.Security.SecretFiles.CreateProtected(path, Encoding.ASCII.GetBytes(token + Environment.NewLine));
+            if (!BruceEDR.Security.SecretFiles.IsProtected(path)) aclProblem = "DACL not applied";
+            return path;
+        }
+        catch (Exception ex)
+        {
+            aclProblem = ex.Message;
+            return null;
+        }
+    }
 
     private static bool IsHealthPath(string normalizedPath) =>
         normalizedPath == "/health" || normalizedPath == "/api/v1/health";

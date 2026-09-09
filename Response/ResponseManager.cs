@@ -68,6 +68,49 @@ public sealed class ResponseManager
         }
     }
 
+    /// <summary>
+    /// Suspends <paramref name="pid"/> only if the process running under it is still the
+    /// one named. A pid is a number Windows reuses within milliseconds of a process
+    /// exiting; between the verdict and the freeze it can already belong to something
+    /// else, and suspending by number alone would hit that bystander.
+    /// </summary>
+    public static ActionResult SuspendProcess(int pid, string expectedName)
+    {
+        var identity = CheckIdentity(pid, expectedName);
+        return identity ?? SuspendProcess(pid);
+    }
+
+    /// <summary>Kill with the same identity check as <see cref="SuspendProcess(int, string)"/>.</summary>
+    public static ActionResult KillProcess(int pid, string expectedName)
+    {
+        var identity = CheckIdentity(pid, expectedName);
+        return identity ?? KillProcess(pid);
+    }
+
+    /// <summary>
+    /// Null when the live process at <paramref name="pid"/> matches <paramref name="expectedName"/>
+    /// (or no name was known, or the name could not be read -- a protected process denies
+    /// the query, and refusing to contain it for that reason would be its own fail-open);
+    /// otherwise the failure to report.
+    /// </summary>
+    private static ActionResult? CheckIdentity(int pid, string expectedName)
+    {
+        if (string.IsNullOrWhiteSpace(expectedName)) return null;
+        string expected = Path.GetFileNameWithoutExtension(expectedName);
+        string actual;
+        try
+        {
+            using var live = Process.GetProcessById(pid);
+            actual = live.ProcessName;
+        }
+        catch (ArgumentException) { return ActionResult.Fail($"no process with pid {pid}"); }
+        catch { return null; }   // could not read the name; do not block containment on that
+
+        return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : ActionResult.Fail($"pid {pid} is now '{actual}', not '{expectedName}' (pid reused); refusing to act on it");
+    }
+
     public static ActionResult SuspendProcess(int pid)
     {
         IntPtr h = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid);
@@ -234,10 +277,15 @@ public sealed class ResponseManager
                     _log.Action($"vault store failed for {Path.GetFileName(archive)}; falling back to a plain move");
                 }
 
+                // Not a runnable file any more: a ".quarantined" suffix so nothing opens it
+                // by association, and a DACL so a standard user cannot read it out again.
                 string dest = Path.Combine(_quarantineDir,
-                    $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Path.GetFileName(archive)}");
+                    $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Path.GetFileName(archive)}.quarantined");
                 File.Move(archive, dest, overwrite: false);
-                _log.Action($"quarantined archive: {Path.GetFileName(archive)}");
+                var acl = BruceEDR.Security.SecretFiles.Protect(dest);
+                _log.Action(acl is null
+                    ? $"quarantined archive (plain, ACL-restricted): {Path.GetFileName(archive)}"
+                    : $"quarantined archive (plain; ACL NOT applied: {acl}): {Path.GetFileName(archive)}");
             }
             catch (Exception ex) { _log.Error($"quarantine {Path.GetFileName(archive)}", ex); }
         }

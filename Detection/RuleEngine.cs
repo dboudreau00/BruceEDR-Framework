@@ -43,6 +43,14 @@ public sealed class RuleEngine
     public long BudgetExhaustedCount => System.Threading.Interlocked.Read(ref _budgetExhausted);
 
     /// <summary>
+    /// Invoked (at most once a minute) when a signal's evaluation ran out of budget. A
+    /// counter nobody reads is not an alert: one pathological regex can starve every pack
+    /// behind it -- C2, exfil -- on every signal, and that needs to be visible.
+    /// </summary>
+    public Action<string>? BudgetExhaustedAlert { get; set; }
+    private long _lastBudgetAlertTicks;
+
+    /// <summary>
     /// Wall-clock ceiling for evaluating ALL rules against ONE signal. Distinct from the
     /// per-match Regex timeout, which bounds a single pattern rather than the whole pack.
     /// </summary>
@@ -530,7 +538,27 @@ public sealed class RuleEngine
             }
         }
 
-        if (exhausted) System.Threading.Interlocked.Increment(ref _budgetExhausted);
+        if (exhausted)
+        {
+            long n = System.Threading.Interlocked.Increment(ref _budgetExhausted);
+            var alert = BudgetExhaustedAlert;
+            if (alert is not null)
+            {
+                long now = DateTime.UtcNow.Ticks;
+                long last = System.Threading.Interlocked.Read(ref _lastBudgetAlertTicks);
+                if (now - last > TimeSpan.TicksPerMinute &&
+                    System.Threading.Interlocked.CompareExchange(ref _lastBudgetAlertTicks, now, last) == last)
+                {
+                    try
+                    {
+                        alert($"rule evaluation exceeded its {EvaluationBudget.TotalMilliseconds:F0} ms budget on a " +
+                              $"{kind} signal; later packs were skipped for it ({n} signal(s) affected so far). " +
+                              "A rule with a pathological regex is the usual cause.");
+                    }
+                    catch { }
+                }
+            }
+        }
         return hits ?? (IReadOnlyList<RuleMatch>)Array.Empty<RuleMatch>();
     }
 

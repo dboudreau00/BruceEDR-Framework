@@ -95,6 +95,10 @@ public sealed class TriageCollector
             try
             {
                 ZipFile.CreateFromDirectory(stagingDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+                // The package carries full command lines -- tokens, -enc blobs, connection
+                // strings -- in the clear. It is evidence, not something every local
+                // account should be able to open.
+                BruceEDR.Security.SecretFiles.Protect(zipPath);
             }
             catch (Exception ex)
             {

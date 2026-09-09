@@ -77,7 +77,17 @@ public sealed class FileActivityMonitor : IDisposable
     }
 
     private void OnError(object sender, ErrorEventArgs e)
-        => _log.Error("file watcher", e.GetException());
+    {
+        var ex = e.GetException();
+        // The watcher's buffer overflowed and Windows DROPPED creates it never delivered.
+        // Say what that means -- archive staging in that window went unseen -- instead of
+        // a generic "file watcher" error that reads like a hiccup.
+        if (ex is InternalBufferOverflowException)
+            _log.Error("file watcher overflow: file creations were DROPPED (staged archives in that " +
+                       "window were not seen); a build or indexer is flooding a watched directory", ex);
+        else
+            _log.Error("file watcher", ex);
+    }
 
     private static IEnumerable<string> CandidateDirectories()
     {

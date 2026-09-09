@@ -71,7 +71,6 @@ public sealed class SettingsViewModel : ViewModelBase
 
         Publishers = string.Join(Environment.NewLine, c.Allowlist.Publishers);
         Thumbprints = string.Join(Environment.NewLine, c.Allowlist.Thumbprints);
-        RequireValidChain = c.Allowlist.RequireValidChain;
         AllowSubjectMatch = c.Allowlist.AllowSubjectMatch;
         CheckRevocation = c.Allowlist.CheckRevocation;
 
@@ -103,7 +102,6 @@ public sealed class SettingsViewModel : ViewModelBase
 
             onDisk.Allowlist.Publishers = SplitLines(Publishers);
             onDisk.Allowlist.Thumbprints = SplitLines(Thumbprints);
-            onDisk.Allowlist.RequireValidChain = RequireValidChain;
             onDisk.Allowlist.AllowSubjectMatch = AllowSubjectMatch;
             onDisk.Allowlist.CheckRevocation = CheckRevocation;
 
@@ -140,7 +138,6 @@ public sealed class SettingsViewModel : ViewModelBase
 
     private string _publishers = ""; public string Publishers { get => _publishers; set => Set(ref _publishers, value); }
     private string _thumbprints = ""; public string Thumbprints { get => _thumbprints; set => Set(ref _thumbprints, value); }
-    private bool _requireChain = true; public bool RequireValidChain { get => _requireChain; set => Set(ref _requireChain, value); }
     private bool _allowSubject = true; public bool AllowSubjectMatch { get => _allowSubject; set => Set(ref _allowSubject, value); }
     private bool _checkRevocation; public bool CheckRevocation { get => _checkRevocation; set => Set(ref _checkRevocation, value); }
 

@@ -416,8 +416,10 @@ public class ApiRunnerBodyTests
         using var temp = new ApiRunnerTempDir();
         string path = temp.Write("payload.bin", new byte[] { 1, 2, 3, 4 });
 
+        // File bodies are confined to a policy root; a null policy refuses them outright.
+        var policy = new ApiSafetyPolicy { FileBodyRoot = temp.Root };
         var request = new ApiRequest { Body = new ApiBody { Kind = ApiBodyKind.File, FilePath = path } };
-        Assert.True(ApiClient.TryBuildBody(request, "b", out var payload, out string contentType, out _));
+        Assert.True(ApiClient.TryBuildBody(request, "b", policy, out var payload, out string contentType, out _));
         Assert.Equal(new byte[] { 1, 2, 3, 4 }, payload);
         Assert.Equal("application/octet-stream", contentType);
     }
@@ -428,8 +430,9 @@ public class ApiRunnerBodyTests
         using var temp = new ApiRunnerTempDir();
         string path = Path.Combine(temp.Root, "does-not-exist.bin");
 
+        var policy = new ApiSafetyPolicy { FileBodyRoot = temp.Root };
         var request = new ApiRequest { Body = new ApiBody { Kind = ApiBodyKind.File, FilePath = path } };
-        Assert.False(ApiClient.TryBuildBody(request, "b", out _, out _, out string error));
+        Assert.False(ApiClient.TryBuildBody(request, "b", policy, out _, out _, out string error));
         Assert.Contains("not found", error, StringComparison.Ordinal);
     }
 

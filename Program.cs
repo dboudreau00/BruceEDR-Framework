@@ -40,7 +40,7 @@ if (HasFlag(args, "--selftest"))
 if (HasFlag(args, "--install"))
 {
     if (!RequireElevation()) { WaitForKeyIfOwnConsole(); return 1; }
-    int rc = ServiceControl.Install(ConfigLoader.Load(configPath));
+    int rc = ServiceControl.Install(ConfigLoader.Load(configPath), configPath);
     WaitForKeyIfOwnConsole();
     return rc;
 }

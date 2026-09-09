@@ -93,12 +93,15 @@ public sealed class BruceHost : IDisposable
     {
         public required int Pid { get; init; }
         public required IReadOnlyList<string> Hits { get; init; }
+        /// <summary>Profile generation the scan was claimed under; a mismatch on apply means pid reuse.</summary>
+        public long Generation { get; init; }
     }
 
     private sealed class ImageAnalysisCommand : Command
     {
         public required int Pid { get; init; }
         public required FileAnalysis Analysis { get; init; }
+        public long Generation { get; init; }
     }
 
     // Arbitrary read-only work that must run on the owner thread because it touches
@@ -121,6 +124,15 @@ public sealed class BruceHost : IDisposable
     // drains the control queue with priority over signals.
     private readonly BlockingCollection<Command> _signalQueue = new(boundedCapacity: 8192);
     private readonly BlockingCollection<Command> _controlQueue = new(boundedCapacity: 1024);
+
+    // ProcessStart/ProcessStop travel on their own queue, drained ahead of telemetry.
+    // The kernel FileIO provider is unfiltered (every create on the box), so a build or
+    // an indexer could fill the 8192-deep signal queue and drop the one event that is the
+    // PID-reuse barrier: the ProcessStart that tells the engine a pid has a new owner.
+    // Lose that and the new process inherits the old profile -- Contained, Score, forced
+    // verdict and all -- which is a fail-open. Lifecycle events are rare relative to file
+    // IO, so this queue is never the one under pressure.
+    private readonly BlockingCollection<Command> _lifecycleQueue = new(boundedCapacity: 4096);
 
     // Response work is split for the same reason, and it matters more here. Containment
     // (firewall, vaulting, kill, triage) MUST run; a memory scan is best-effort and can
@@ -300,6 +312,7 @@ public sealed class BruceHost : IDisposable
         SafeDispose(ref _procAccess);
 
         try { _signalQueue.CompleteAdding(); } catch { }
+        try { _lifecycleQueue.CompleteAdding(); } catch { }
         try { _controlQueue.CompleteAdding(); } catch { }
         _ownerThread?.Join(TimeSpan.FromSeconds(5));
 
@@ -321,6 +334,7 @@ public sealed class BruceHost : IDisposable
     {
         Stop();
         try { _signalQueue.Dispose(); } catch { }
+        try { _lifecycleQueue.Dispose(); } catch { }
         try { _controlQueue.Dispose(); } catch { }
         try { _responseQueue.Dispose(); } catch { }
         try { _scanQueue.Dispose(); } catch { }
@@ -344,7 +358,10 @@ public sealed class BruceHost : IDisposable
     {
         try
         {
-            if (!_signalQueue.TryAdd(new SignalCommand { Signal = s }))
+            var queue = s.Kind is SignalKind.ProcessStart or SignalKind.ProcessStop
+                ? _lifecycleQueue
+                : _signalQueue;
+            if (!queue.TryAdd(new SignalCommand { Signal = s }))
             {
                 Interlocked.Increment(ref _signalsDropped);
                 Metrics.IncDropped();
@@ -399,7 +416,7 @@ public sealed class BruceHost : IDisposable
         {
             SignalsProcessed = Interlocked.Read(ref _signalsProcessed),
             SignalsDropped = Interlocked.Read(ref _signalsDropped),
-            SignalsQueued = _signalQueue.Count,
+            SignalsQueued = _signalQueue.Count + _lifecycleQueue.Count,
             ResponsesRun = Interlocked.Read(ref _responsesRun),
             ResponseErrors = Interlocked.Read(ref _responseErrors),
             Warns = m.Warns,
@@ -503,7 +520,7 @@ public sealed class BruceHost : IDisposable
 
     private void OwnerLoop()
     {
-        var queues = new[] { _controlQueue, _signalQueue };
+        var queues = new[] { _controlQueue, _lifecycleQueue, _signalQueue };
         try
         {
             while (true)
@@ -512,6 +529,10 @@ public sealed class BruceHost : IDisposable
                 // actions and config reloads are never delayed behind queued telemetry.
                 while (_controlQueue.TryTake(out var ctrl))
                     DispatchSafe(ctrl);
+                // Then every pending start/stop, so a pid's ownership is settled before any
+                // of its telemetry is scored.
+                while (_lifecycleQueue.TryTake(out var life))
+                    DispatchSafe(life);
 
                 Command? cmd;
                 int idx;
@@ -545,12 +566,12 @@ public sealed class BruceHost : IDisposable
                 // Offload the (up to ~2s) memory scan to the response worker's best-effort
                 // scan queue so it never stalls the detection loop and never delays or
                 // displaces containment; hits fold back in via MemScanResultCommand.
-                if (sc.Signal.Pid > 0 && _engine.TryClaimMemoryScan(sc.Signal.Pid))
-                    ScheduleMemoryScan(sc.Signal.Pid);
+                if (sc.Signal.Pid > 0 && _engine.TryClaimMemoryScan(sc.Signal.Pid, out long scanGen))
+                    ScheduleMemoryScan(sc.Signal.Pid, scanGen);
                 // Same treatment for the PE parse: it reads the image off disk, so it goes
                 // on the droppable scan queue rather than the detection thread.
-                if (sc.Signal.Pid > 0 && _engine.TryClaimImageAnalysis(sc.Signal.Pid, out string imagePath))
-                    ScheduleImageAnalysis(sc.Signal.Pid, imagePath);
+                if (sc.Signal.Pid > 0 && _engine.TryClaimImageAnalysis(sc.Signal.Pid, out string imagePath, out long imageGen))
+                    ScheduleImageAnalysis(sc.Signal.Pid, imagePath, imageGen);
                 break;
             }
 
@@ -573,12 +594,12 @@ public sealed class BruceHost : IDisposable
                 break;
 
             case ImageAnalysisCommand ia:
-                foreach (var verdict in _engine.ApplyImageAnalysis(ia.Pid, ia.Analysis))
+                foreach (var verdict in _engine.ApplyImageAnalysis(ia.Pid, ia.Analysis, ia.Generation))
                     OnVerdict(verdict);
                 break;
 
             case MemScanResultCommand mr:
-                foreach (var verdict in _engine.ApplyMemoryHits(mr.Pid, mr.Hits))
+                foreach (var verdict in _engine.ApplyMemoryHits(mr.Pid, mr.Hits, mr.Generation))
                     OnVerdict(verdict);
                 break;
 
@@ -621,7 +642,7 @@ public sealed class BruceHost : IDisposable
     /// to say about this image", which is the normal outcome for a script host or a path
     /// that no longer exists.
     /// </summary>
-    private void ScheduleImageAnalysis(int pid, string imagePath)
+    private void ScheduleImageAnalysis(int pid, string imagePath, long generation)
     {
         var analyze = _analyzeImage;
         if (analyze is null) return;
@@ -632,19 +653,19 @@ public sealed class BruceHost : IDisposable
             try { analysis = analyze(imagePath); }
             catch { return; }
             if (analysis is null) return;
-            if (!TryPost(new ImageAnalysisCommand { Pid = pid, Analysis = analysis }))
+            if (!TryPost(new ImageAnalysisCommand { Pid = pid, Analysis = analysis, Generation = generation }))
                 _log.Info($"pid {pid}: image analysis discarded; control queue full");
         });
     }
 
-    private void ScheduleMemoryScan(int pid)
+    private void ScheduleMemoryScan(int pid, long generation)
     {
         EnqueueScan(() =>
         {
             IReadOnlyList<string> hits;
             try { hits = _scanner.Scan(pid); }
             catch { return; }
-            if (hits.Count > 0 && !TryPost(new MemScanResultCommand { Pid = pid, Hits = hits }))
+            if (hits.Count > 0 && !TryPost(new MemScanResultCommand { Pid = pid, Hits = hits, Generation = generation }))
                 _log.Info($"pid {pid}: memory scan hits discarded; control queue full");
         });
     }
@@ -674,21 +695,43 @@ public sealed class BruceHost : IDisposable
 
         var snap = verdict.Snapshot;
         var decision = _playbook.Decide(snap);
-        if (decision.Actions.Count == 0)
+        var actions = new List<PlaybookAction>(decision.Actions);
+        string matched = decision.MatchedRule;
+
+        // The seam this used to fall through. A watchlist conviction reaches here as a
+        // Quarantine verdict at score 0 with ContainmentRequired set. The playbook only
+        // sees score and trust, so no rule matched, the action list was empty, and the
+        // process the operator had named by hand was never frozen -- while its profile
+        // sat marked Contained. Operator policy is not subject to the playbook's filters:
+        // it gets the containment primitives unconditionally, and the playbook may still
+        // ADD triage, isolation or notification on top.
+        if (snap.ContainmentRequired)
         {
-            _log.Action($"pid {snap.Pid}: playbook '{decision.MatchedRule}' selected no containment action");
+            if (!actions.Contains(PlaybookAction.Suspend)) actions.Insert(0, PlaybookAction.Suspend);
+            if (!actions.Contains(PlaybookAction.FirewallBlock)) actions.Add(PlaybookAction.FirewallBlock);
+            matched = matched.Length == 0 ? "watchlist:" + snap.ForcedBy : matched + " + watchlist:" + snap.ForcedBy;
+        }
+
+        if (actions.Count == 0)
+        {
+            // The playbook chose not to contain a behavioural verdict. Say so plainly:
+            // Contained stays set (it gates the incident-update path) but nothing froze.
+            _log.Action($"pid {snap.Pid}: playbook '{matched}' selected no containment action; " +
+                        "the process is NOT frozen (verdict recorded, incident updates continue)");
             return;
         }
-        _log.Action($"pid {snap.Pid}: playbook '{decision.MatchedRule}' -> " +
-                    string.Join(", ", decision.Actions));
+        _log.Action($"pid {snap.Pid}: playbook '{matched}' -> " + string.Join(", ", actions));
 
         // Suspend runs inline on the owner thread, exactly as it did in v1: freezing the
         // target first is what makes every later step safe against PID reuse. Everything
         // slower is handed to the response worker.
         bool alreadySuspended = false;
-        if (decision.Actions.Contains(PlaybookAction.Suspend))
+        if (actions.Contains(PlaybookAction.Suspend))
         {
-            var suspend = ResponseManager.SuspendProcess(snap.Pid);
+            // Identity-checked: the pid must still belong to the process the verdict was
+            // about. Between the verdict and this call the pid can be recycled, and a
+            // suspend by number alone would freeze whatever now runs under it.
+            var suspend = ResponseManager.SuspendProcess(snap.Pid, snap.ProcessName);
             alreadySuspended = suspend.Ok;
             _engine.SetSuspendedByAnalyst(snap.Pid, suspend.Ok);
             _log.Action(suspend.Ok
@@ -702,9 +745,9 @@ public sealed class BruceHost : IDisposable
             if (!suspend.Ok) _engine.MarkContainmentFailed(snap.Pid);
         }
 
-        bool firewall = decision.Actions.Contains(PlaybookAction.FirewallBlock);
-        bool quarantineFiles = decision.Actions.Contains(PlaybookAction.QuarantineFiles);
-        bool kill = _autoKill || decision.Actions.Contains(PlaybookAction.Kill);
+        bool firewall = actions.Contains(PlaybookAction.FirewallBlock);
+        bool quarantineFiles = actions.Contains(PlaybookAction.QuarantineFiles);
+        bool kill = _autoKill || actions.Contains(PlaybookAction.Kill);
 
         // The playbook's action list is ORDERED, and that order carries a real guarantee:
         // triage (and host isolation) are collected before anything destructive runs. The
@@ -714,31 +757,42 @@ public sealed class BruceHost : IDisposable
         // meant CollectTriage packaged a process that had already been killed. When no Kill
         // is ordered but auto-kill is on, Contain still kills, so every delegated action
         // runs first.
-        int destructiveAt = decision.Actions.Count;
-        for (int i = 0; i < decision.Actions.Count; i++)
+        int destructiveAt = actions.Count;
+        for (int i = 0; i < actions.Count; i++)
         {
-            if (decision.Actions[i] != PlaybookAction.Kill) continue;
+            if (actions[i] != PlaybookAction.Kill) continue;
             destructiveAt = i;
             break;
         }
 
         var beforeContain = new List<PlaybookAction>();
         var afterContain = new List<PlaybookAction>();
-        for (int i = 0; i < decision.Actions.Count; i++)
+        for (int i = 0; i < actions.Count; i++)
         {
-            var a = decision.Actions[i];
+            var a = actions[i];
             if (a is not (PlaybookAction.IsolateHost or PlaybookAction.CollectTriage or PlaybookAction.NotifyWebhook))
                 continue;
             (i < destructiveAt ? beforeContain : afterContain).Add(a);
         }
         var extendedAction = ExtendedAction;
 
-        EnqueueResponse(() =>
+        bool queued = EnqueueResponse(() =>
         {
             RunExtendedActions(beforeContain, snap, extendedAction);
             _response.Contain(snap, alreadySuspended, kill, firewall, quarantineFiles);
             RunExtendedActions(afterContain, snap, extendedAction);
         });
+        if (!queued)
+        {
+            // The response queue was full, so firewall/quarantine/kill never ran -- and the
+            // suspend, if it happened, is the only containment this process got. Do not
+            // leave it marked Contained on the strength of a task that was discarded: clear
+            // the flag so fresh evidence re-escalates and the containment is retried.
+            _engine.MarkContainmentFailed(snap.Pid);
+            _log.Action($"pid {snap.Pid}: containment task DROPPED (response queue full); " +
+                        (alreadySuspended ? "process is suspended but not firewalled/quarantined; " : "process is NOT contained; ") +
+                        "it will be re-evaluated on its next signal");
+        }
     }
 
     /// <summary>

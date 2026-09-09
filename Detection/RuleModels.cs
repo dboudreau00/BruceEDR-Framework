@@ -208,6 +208,12 @@ public sealed record RuleContext
     /// </summary>
     public string ProcessName { get; init; } = "";
 
+    /// <summary>The subject's image path, from its profile, for kinds that do not carry one.</summary>
+    public string ImagePath { get; init; } = "";
+
+    /// <summary>The subject's command line, from its profile, for kinds that do not carry one.</summary>
+    public string CommandLine { get; init; } = "";
+
     /// <summary>Immediate parent's image name, e.g. <c>winword.exe</c>. Empty when unknown.</summary>
     public string ParentName { get; init; } = "";
 
@@ -361,8 +367,10 @@ internal static class RuleFields
             // name of their own, and without this every processName exclusion is inert.
             case RuleField.ProcessName:
                 return FieldValues.One(string.IsNullOrEmpty(s.ProcessName) ? ctx.ProcessName : s.ProcessName);
-            case RuleField.ImagePath: return FieldValues.One(s.ImagePath);
-            case RuleField.CommandLine: return FieldValues.One(s.CommandLine);
+            case RuleField.ImagePath:
+                return FieldValues.One(string.IsNullOrEmpty(s.ImagePath) ? ctx.ImagePath : s.ImagePath);
+            case RuleField.CommandLine:
+                return FieldValues.One(string.IsNullOrEmpty(s.CommandLine) ? ctx.CommandLine : s.CommandLine);
             case RuleField.FilePath: return FieldValues.One(s.FilePath);
             case RuleField.FileName: return FieldValues.One(LeafName(PathSource(s)));
             case RuleField.FileExtension: return FieldValues.One(Extension(PathSource(s)));
@@ -481,10 +489,20 @@ internal static class RuleFields
         (0x00020000u, "READ_CONTROL"),
         (0x00040000u, "WRITE_DAC"),
         (0x00080000u, "WRITE_OWNER"),
-        (0x00100000u, "SYNCHRONIZE")
+        (0x00100000u, "SYNCHRONIZE"),
+        (0x01000000u, "ACCESS_SYSTEM_SECURITY"),
+        (0x02000000u, "MAXIMUM_ALLOWED"),
+        (0x10000000u, "GENERIC_ALL"),
+        (0x20000000u, "GENERIC_EXECUTE"),
+        (0x40000000u, "GENERIC_WRITE"),
+        (0x80000000u, "GENERIC_READ")
     };
 
     private const uint ProcessAllAccess = 0x1FFFFFu;   // Vista+ value
+    private const uint MaximumAllowed   = 0x02000000u;
+    private const uint GenericAll       = 0x10000000u;
+    private const uint GenericWrite     = 0x40000000u;
+    private const uint GenericRead      = 0x80000000u;
 
     /// <summary>
     /// Expand an access mask into [decimal, 0xhex, ...symbolic flag names]. A mask of 0 still
@@ -498,6 +516,21 @@ internal static class RuleFields
             "0x" + mask.ToString("X", CultureInfo.InvariantCulture)
         };
         if ((mask & ProcessAllAccess) == ProcessAllAccess) list.Add("PROCESS_ALL_ACCESS");
+
+        // Implied rights. MAXIMUM_ALLOWED and GENERIC_ALL resolve to everything the caller
+        // can get, GENERIC_READ maps to VM_READ, GENERIC_WRITE to VM_WRITE/VM_OPERATION.
+        // Without these a rule written as `in ["PROCESS_VM_READ"]` never saw the opens
+        // that deliberately avoid naming that right.
+        if ((mask & (MaximumAllowed | GenericAll)) != 0)
+        {
+            list.Add("PROCESS_VM_READ"); list.Add("PROCESS_VM_WRITE");
+            list.Add("PROCESS_VM_OPERATION"); list.Add("PROCESS_CREATE_THREAD");
+        }
+        else
+        {
+            if ((mask & GenericRead) != 0) list.Add("PROCESS_VM_READ");
+            if ((mask & GenericWrite) != 0) { list.Add("PROCESS_VM_WRITE"); list.Add("PROCESS_VM_OPERATION"); }
+        }
         foreach (var (bit, name) in AccessRights)
             if ((mask & bit) == bit) list.Add(name);
         return list.ToArray();

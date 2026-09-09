@@ -934,7 +934,7 @@ public class ResponseV2PlaybookTests
     }
 
     [Fact]
-    public void Technique_Matching_Is_Case_Insensitive_But_Not_Prefix_Based()
+    public void Technique_Matching_Is_Case_Insensitive_And_Parent_Ids_Cover_Sub_Techniques()
     {
         var pb = new Playbook(new[]
         {
@@ -943,8 +943,20 @@ public class ResponseV2PlaybookTests
 
         Assert.Single(pb.Decide(Snap(50, techniques: new[] { "T1003" })).Actions);
 
-        // A sub-technique must not satisfy a rule written against the parent id.
-        Assert.Empty(pb.Decide(Snap(50, techniques: new[] { "T1003.001" })).Actions);
+        // A rule written against the parent fires on its sub-techniques: the LSASS rules
+        // report T1003.001, and a "credential theft" playbook rule that could not see that
+        // was not about credential theft.
+        Assert.Single(pb.Decide(Snap(50, techniques: new[] { "T1003.001" })).Actions);
+
+        // The boundary is the dot, not a string prefix.
+        Assert.Empty(pb.Decide(Snap(50, techniques: new[] { "T10031" })).Actions);
+
+        // The reverse is still exact: requiring the SUB-technique is not met by the parent.
+        var sub = new Playbook(new[]
+        {
+            new PlaybookRule { Name = "s", RequiredTechniques = new[] { "T1003.001" }, Actions = new[] { PlaybookAction.Log } }
+        });
+        Assert.Empty(sub.Decide(Snap(50, techniques: new[] { "T1003" })).Actions);
     }
 
     [Fact]
@@ -1427,6 +1439,10 @@ public class ResponseV2NetworkIsolationTests
     [InlineData("10.0.0.1-")]
     [InlineData("-10.0.0.1")]
     [InlineData("10.0.0.1-::1")]                          // mismatched families
+    [InlineData("0.0.0.0-255.255.255.255")]               // /0 written as a range
+    [InlineData("::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")]
+    [InlineData("0.0.0.0-10.0.0.1")]                      // unspecified low end
+    [InlineData("10.0.0.50-10.0.0.1")]                    // low above high
     public void Invalid_Remote_Addresses_Are_Rejected(string? value)
         => Assert.False(NetworkIsolation.IsValidRemoteAddress(value));
 

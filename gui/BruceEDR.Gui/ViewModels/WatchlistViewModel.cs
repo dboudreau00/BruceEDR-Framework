@@ -178,12 +178,18 @@ public sealed class WatchlistViewModel : ViewModelBase
 
             // Containment on sight is destructive and easy to mistype, so name the count
             // and make the operator confirm rather than burying it behind a Save button.
-            int contain = Rows.Count(r => r.Enabled &&
-                string.Equals(r.Action, "quarantine", StringComparison.OrdinalIgnoreCase));
+            var containing = Rows.Where(r => r.Enabled &&
+                string.Equals(r.Action, "quarantine", StringComparison.OrdinalIgnoreCase)).ToList();
+            int contain = containing.Count;
             if (contain > 0)
             {
+                // Name every entry with its match KIND. "windows" as a name is one process;
+                // "windows" as a path fragment is most of the machine, and the operator has
+                // to see which one they are about to arm.
+                string listing = string.Join("\n", containing.Take(12).Select(r => $"    {r.Match}: {r.Value}"));
+                if (contain > 12) listing += $"\n    ... and {contain - 12} more";
                 var answer = MessageBox.Show(
-                    $"{contain} entr{(contain == 1 ? "y is" : "ies are")} set to CONTAIN ON SIGHT.\n\n" +
+                    $"{contain} entr{(contain == 1 ? "y is" : "ies are")} set to CONTAIN ON SIGHT:\n\n{listing}\n\n" +
                     "Any process matching one will be suspended and network-blocked immediately, " +
                     "even if it is signed by a trusted publisher.\n\nArm the watchlist?",
                     "Confirm watchlist", MessageBoxButton.YesNo, MessageBoxImage.Warning);
