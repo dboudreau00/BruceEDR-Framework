@@ -89,10 +89,19 @@ Write-Host "-- self-test the staged build" -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { throw "self-test failed against the staged release" }
 
 # 5) Zip
+#    Not Compress-Archive: it writes entry names with backslash separators, which Windows
+#    and .NET happen to accept but Info-ZIP unzip on Linux/macOS (and many archive
+#    libraries) treat as literal filename characters -- extracting the release as a flat
+#    pile of files called "gui\BruceEDR.Gui.exe". ZipFile.CreateFromDirectory writes the
+#    forward slashes the zip spec calls for, so the layout survives on every platform.
 Write-Host "-- zip" -ForegroundColor Cyan
 $zip = Join-Path $artifacts "$name.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
-Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -CompressionLevel Optimal
+if (-not ('System.IO.Compression.ZipFile' -as [type])) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+}
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $stage, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 
 # cleanup intermediate publish dirs
 Remove-Item $conOut,$guiOut -Recurse -Force -ErrorAction SilentlyContinue
