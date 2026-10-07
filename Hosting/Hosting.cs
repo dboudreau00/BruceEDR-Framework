@@ -91,6 +91,12 @@ public sealed class Composition : IDisposable
         log.SetSink(sink);
 
         var verifier = new AuthenticodeVerifier(cfg.Allowlist);
+        if (!cfg.Allowlist.CheckRevocation)
+        {
+            log.Info("allowlist.checkRevocation is false: Authenticode trust will accept a " +
+                     "cryptographically valid chain even if the signer cert is revoked. " +
+                     "Set checkRevocation:true for production, or pin thumbprints and set allowSubjectMatch:false.");
+        }
         var scanner = BuildScanner(cfg.Detection, log);
 
         // --- optional analytics -------------------------------------------------
@@ -532,6 +538,11 @@ public sealed class Composition : IDisposable
 
             ApiPolicy = BuildApiPolicy(next.Api.Studio);
 
+            if (next.Response.AllowPlaybookIsolation != Config.Response.AllowPlaybookIsolation)
+                Log.Info(next.Response.AllowPlaybookIsolation
+                    ? "response.allowPlaybookIsolation ENABLED live: playbook IsolateHost actions will now run"
+                    : "response.allowPlaybookIsolation disabled live: playbook IsolateHost actions are skipped");
+
             if (ControlChanged(Config.Api.Control, next.Api.Control))
                 RestartControlServer(next);
 
@@ -589,7 +600,8 @@ public sealed class Composition : IDisposable
     /// The list is maintained by hand against <see cref="Build"/>; anything genuinely
     /// hot-reloaded (thresholds, autoKill, allowlist, rules, indicator feeds, API Studio
     /// safety policy, detection.kernelBlocking, telemetry.enableMetrics, the isolation
-    /// allowlist and triage output path) is deliberately absent.
+    /// allowlist, response.allowPlaybookIsolation and triage output path) is deliberately
+    /// absent.
     /// </summary>
     private static List<string> RestartRequiredChanges(BruceConfig old, BruceConfig next)
     {
@@ -670,7 +682,19 @@ public sealed class Composition : IDisposable
         {
             case PlaybookAction.IsolateHost:
             {
+                if (!Config.Response.AllowPlaybookIsolation)
+                {
+                    Log.Action(
+                        "host isolation refused: playbook ordered IsolateHost but " +
+                        "response.allowPlaybookIsolation is false (default). Set it to true " +
+                        "only after response.isolationAllowlist includes every management path " +
+                        "you need to recover the box. Console 'isolate' still works with confirmation.");
+                    break;
+                }
+
                 var allow = Config.Response.IsolationAllowlist ?? Array.Empty<string>();
+                // Never pass confirmTotalBlackout from a playbook — a total blackout is an
+                // interactive / lab decision, not something a JSON rule should unlock.
                 var r = Isolation.Isolate(allow);
                 Log.Action(r.Ok ? $"host isolated (allowlist: {allow.Length} entr(y/ies))"
                                 : "host isolation failed: " + r.Message);

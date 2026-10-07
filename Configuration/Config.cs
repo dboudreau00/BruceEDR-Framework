@@ -167,6 +167,15 @@ public sealed class ResponseConfig
     public string TriageOutputPath { get; set; } = "triage";
     /// <summary>Addresses that stay reachable when the host is isolated (management/RDP/AD).</summary>
     public string[] IsolationAllowlist { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Permit playbook rules to execute <c>IsolateHost</c>. Default false: having the
+    /// action in a playbook JSON is not enough on its own — that is how a mis-copied
+    /// playbook locks a fleet out of RDP/WinRM. The interactive console <c>isolate</c>
+    /// command is unaffected (it already requires typing yes). Empty allowlists are
+    /// still refused by <see cref="BruceEDR.Response.NetworkIsolation"/> regardless.
+    /// </summary>
+    public bool AllowPlaybookIsolation { get; set; } = false;
 }
 
 /// <summary>Configuration for both halves of the API feature: the control plane and API Studio.</summary>
@@ -212,6 +221,11 @@ public sealed class AllowlistConfig
 {
     public string[] Publishers { get; set; } = { "Microsoft Windows", "Microsoft Corporation" };
     public string[] Thumbprints { get; set; } = Array.Empty<string>();
+    /// <summary>
+    /// When true, a valid Authenticode chain whose signer <c>SimpleName</c> equals an
+    /// entry in <see cref="Publishers"/> is trusted. Weaker than thumbprint pinning:
+    /// prefer populating <see cref="Thumbprints"/> and setting this false on production.
+    /// </summary>
     public bool AllowSubjectMatch { get; set; } = true;
     // NOTE: there is deliberately no requireValidChain setting. Trust ALWAYS requires a
     // cryptographically valid Authenticode chain; a flag that appeared to relax that was

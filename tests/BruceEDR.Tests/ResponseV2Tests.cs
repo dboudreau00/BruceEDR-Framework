@@ -3,6 +3,7 @@ using System.Text;
 using BruceEDR.Core;
 using BruceEDR.Response;
 using Xunit;
+using BruceEDR.Configuration;
 
 namespace BruceEDR.Tests;
 
@@ -797,6 +798,31 @@ public class ResponseV2PlaybookTests
     public void Default_Never_Orders_Host_Isolation()
     {
         // Isolation can strand an administrator's session, so it must be opt-in only.
+        Assert.DoesNotContain(Playbook.Default().Rules,
+            r => r.Actions.Contains(PlaybookAction.IsolateHost));
+    }
+
+    [Fact]
+    public void ResponseConfig_Defaults_Keep_Playbook_Isolation_Off()
+    {
+        // Config-default pin only. The behavioural gate is covered at host level in
+        // CompositionGateTests, which builds the real Composition.
+        var cfg = new ResponseConfig();
+        Assert.False(cfg.AllowPlaybookIsolation);
+        Assert.Empty(cfg.IsolationAllowlist);
+    }
+
+    [Fact]
+    public void Allowlist_Defaults_Leave_Revocation_Off_For_First_Run()
+    {
+        var a = new AllowlistConfig();
+        Assert.False(a.CheckRevocation);
+        Assert.True(a.AllowSubjectMatch);
+    }
+
+    [Fact]
+    public void Default_Playbook_Still_Never_Orders_IsolateHost()
+    {
         Assert.DoesNotContain(Playbook.Default().Rules,
             r => r.Actions.Contains(PlaybookAction.IsolateHost));
     }

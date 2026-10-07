@@ -35,9 +35,10 @@ namespace BruceEDR.Api;
 //    CollectionRunner, so a direct SendAsync is paced instead of being unlimited.
 //    Two limiters in series simply take the slower of the two. The honest limit of
 //    this one: the budget is per ApiClient instance and nothing here is static, so a
-//    caller that constructs a fresh client per send (ApiStudioConsole.Send does) gets
-//    no pacing between those sends. It bounds a burst from one client, not the
-//    process. A policy with MaxRequestsPerSecond <= 0 turns it off entirely.
+//    caller that constructs a fresh client per send gets no pacing between those sends.
+//    ApiStudioConsole therefore holds one client per policy instance. It bounds a burst
+//    from one client, not the process. A policy with MaxRequestsPerSecond <= 0 turns it
+//    off entirely.
 //  * Nothing here mutates global state (no cookie container, no shared handler
 //    configuration), so two concurrent sends cannot contaminate each other.
 // ---------------------------------------------------------------------------

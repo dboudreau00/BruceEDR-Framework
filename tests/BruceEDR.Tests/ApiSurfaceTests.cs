@@ -1282,6 +1282,32 @@ public class ApiControlServerSecurityTests
     }
 
     [Fact]
+    public void Wrong_Length_Bearer_Never_Throws_And_Is_401()
+    {
+        // Regression: length mismatch must be a clean unauthorized, not an exception
+        // bubbling out of FixedTimeEquals into a 500.
+        string[] headers =
+        {
+            "Bearer short",
+            "Bearer " + Token[..^1],
+            "Bearer " + Token + "0",
+            "Bearer " + new string('a', 10_000),
+        };
+
+        foreach (string header in headers)
+        {
+            Exception? ex = Record.Exception(() =>
+            {
+                Assert.False(ControlServer.IsAuthorized(Token, header));
+                var (status, _, body) = Handle(header);
+                Assert.Equal(401, status);
+                Assert.Equal("{\"error\":\"unauthorized\"}", body);
+            });
+            Assert.Null(ex);
+        }
+    }
+
+    [Fact]
     public void Health_Is_The_Only_Route_Reachable_Without_A_Token()
     {
         Assert.Equal(200, Handle(null, "/health").status);

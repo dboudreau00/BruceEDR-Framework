@@ -281,12 +281,19 @@ last-good config. Scan-engine, telemetry-format and control-API changes take eff
 - **The quarantine vault has the same shape of caveat.** AES-256-GCM at rest stops a quarantined
   payload from being re-executed or re-detected as live, and the key sits beside the data — so it
   defeats accident and opportunism, not an attacker who already owns the host at your privilege.
+- **Authenticode revocation is off by default.** `allowlist.checkRevocation: false` skips
+  CRL/OCSP during `WinVerifyTrust`. Fine for offline labs; for production set it `true`,
+  or pin signer thumbprints and set `allowSubjectMatch: false` so a renamed subject cannot
+  inherit trust.
 - **`kernelBlocking: true` is aggressive.** The skeleton driver denies *any* open of a sensitive
   path while blocking is on, including legitimate apps. Leave it off until the trusted-PID
   allowlist extension (see the driver README) is added.
 - **Host isolation can lock you out.** `isolate` blocks all traffic except
-  `response.isolationAllowlist`. If that list is empty you will lose any remote session to the
-  machine. The console makes you confirm; a playbook does not.
+  `response.isolationAllowlist`. If that list is empty you will lose any remote session.
+  The console makes you confirm. Playbooks require a second explicit opt-in
+  (`response.allowPlaybookIsolation: true`); without it, `IsolateHost` is logged and
+  skipped. Never enable that flag until the allowlist includes every path you use to
+  administer the host (and prefer a jump host / out-of-band console).
 - **Beacon detection is evadable.** An attacker who randomises the sleep interval widely defeats
   the jitter test, and a beacon slower than the observation window is invisible. It is one signal
   among many, not a verdict.

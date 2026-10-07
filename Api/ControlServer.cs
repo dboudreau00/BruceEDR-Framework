@@ -272,9 +272,10 @@ public sealed class ControlServer : IDisposable
     /// <summary>
     /// Constant-time bearer-token check. Fails closed on an empty expected token, so a
     /// misconfigured or not-yet-started server can never be authenticated against with
-    /// an empty credential. <c>CryptographicOperations.FixedTimeEquals</c> still leaks
-    /// the token LENGTH through its early return; that is acceptable for a fixed-length
-    /// random token, and is why the generated token is a fixed 64 hex characters.
+    /// an empty credential. Both sides are SHA-256'd before
+    /// <c>CryptographicOperations.FixedTimeEquals</c> so the compare always runs on
+    /// equal-length digests: a wrong-length bearer cannot throw, and cannot short-circuit
+    /// the compare on length alone. Generated tokens remain 64 hex chars (32 random bytes).
     /// </summary>
     internal static bool IsAuthorized(string expectedToken, string? authorizationHeader)
     {
@@ -288,9 +289,11 @@ public sealed class ControlServer : IDisposable
         string presented = header[BearerScheme.Length..].Trim();
         if (presented.Length == 0) return false;
 
-        return CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(presented),
-            Encoding.UTF8.GetBytes(expectedToken));
+        // Digest both sides so FixedTimeEquals never sees unequal lengths (and never
+        // throws on a length mismatch on any runtime that chose that behaviour).
+        byte[] expectedDigest = SHA256.HashData(Encoding.UTF8.GetBytes(expectedToken));
+        byte[] presentedDigest = SHA256.HashData(Encoding.UTF8.GetBytes(presented));
+        return CryptographicOperations.FixedTimeEquals(presentedDigest, expectedDigest);
     }
 
     /// <summary>

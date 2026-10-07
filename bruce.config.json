@@ -43,7 +43,8 @@
     "quarantineVaultPath": "quarantine",
     "playbookPath": "",
     "triageOutputPath": "triage",
-    "isolationAllowlist": []
+    "isolationAllowlist": [],
+    "allowPlaybookIsolation": false
   },
   "api": {
     "enableSurfaceInventory": true,

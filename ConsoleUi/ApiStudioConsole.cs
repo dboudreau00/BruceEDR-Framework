@@ -25,6 +25,8 @@ public sealed class ApiStudioConsole
     private ApiRunResult? _lastRun;
     private ApiResponse? _lastResponse;
     private ApiRequest? _lastRequest;
+    private ApiClient? _sharedClient;
+    private ApiSafetyPolicy? _sharedClientPolicy;
 
     public ApiStudioConsole(Composition composition, Logger log)
     {
@@ -181,9 +183,8 @@ public sealed class ApiStudioConsole
         var r = Pick(arg);
         if (r is null) return;
 
-        using var client = new ApiClient(Policy);
         ApiResponse response;
-        try { response = client.SendAsync(r, Variables()).GetAwaiter().GetResult(); }
+        try { response = SharedClient().SendAsync(r, Variables()).GetAwaiter().GetResult(); }
         catch (Exception ex) { Write("send failed: " + ex.Message); return; }
 
         _lastRequest = r;
@@ -250,8 +251,7 @@ public sealed class ApiStudioConsole
         bool analyze = !arg.Contains("--no-analyze", StringComparison.OrdinalIgnoreCase);
         var env = new ApiEnvironment { Name = "console", Variables = new Dictionary<string, string>(_variables) };
 
-        using var client = new ApiClient(Policy);
-        var runner = new CollectionRunner(client);
+        var runner = new CollectionRunner(SharedClient());
 
         Write($"running {reqs.Count} request(s) at up to {Policy.MaxRequestsPerSecond:F1} req/s...");
         ApiRunResult result;
@@ -392,6 +392,23 @@ public sealed class ApiStudioConsole
             return null;
         }
         return reqs[n - 1];
+    }
+
+    /// <summary>
+    /// One client per console session so <see cref="ApiSafetyPolicy.MaxRequestsPerSecond"/>
+    /// actually paces interactive <c>api send</c> calls. Recreated when hot-reload swaps
+    /// the policy instance on <see cref="Composition"/>.
+    /// </summary>
+    private ApiClient SharedClient()
+    {
+        var policy = Policy;
+        if (_sharedClient is null || !ReferenceEquals(_sharedClientPolicy, policy))
+        {
+            _sharedClient?.Dispose();
+            _sharedClient = new ApiClient(policy);
+            _sharedClientPolicy = policy;
+        }
+        return _sharedClient;
     }
 
     private static string[] Split(string s, int max)
