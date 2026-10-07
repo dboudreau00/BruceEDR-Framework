@@ -2,6 +2,43 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.1.1] - 2026-10-06
+
+A small follow-up to 3.1.0: one behaviour change you need to know about, a few hardening
+fixes from an external review, and CI.
+
+### Changed - read before upgrading
+
+- **Playbook `IsolateHost` is now opt-in.** A playbook that orders `IsolateHost` is skipped,
+  with a logged reason, unless `response.allowPlaybookIsolation` is `true` (default
+  `false`). Having the action in a JSON file was enough to cut a host off the network, which is
+  how a mis-copied playbook locks a fleet out of RDP and WinRM. The shipped default playbook
+  never orders it, and the console `isolate` command is unchanged (it still asks you to type
+  `yes`). Empty allowlists are still refused by the isolation primitive whatever this flag says.
+  If you rely on playbook isolation, fill in `response.isolationAllowlist` first, then set the
+  flag. It reloads live, and the reload says so in the log.
+
+### Fixed
+
+- **Control API bearer check** hashes both sides with SHA-256 before the constant-time compare,
+  so the compare always sees equal-length inputs and the token length is no longer observable
+  through an early return. Wrong-length bearers (short, long, and 10 KB) are pinned to a clean
+  401.
+- **API Studio `api send` is now paced.** The console built a new client for every send, and the
+  rate limit lives on the client, so interactive sends were never throttled. One client is now
+  shared for the console session and rebuilt when a reload swaps the safety policy.
+
+### Added
+
+- A startup log line when `allowlist.checkRevocation` is false (the default), and README and
+  XML-doc guidance: for production turn revocation on, or pin thumbprints and set
+  `allowSubjectMatch` to false.
+- `.github/workflows/verify.yml`: runs `tools/verify.ps1` (build, tests, rule validation, scenario
+  replay) on `windows-latest` for pushes to main and pull requests.
+- Host-level tests that build the real composition and prove the isolation gate and the
+  revocation notice, rather than only pinning config defaults. The gate test was
+  mutation-checked: with the gate disabled it fails.
+
 ## [3.1.0] — 2026-09-09
 
 A hardening release driven by two external reviews of 3.0.0. The headline: **watchlist
