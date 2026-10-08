@@ -1,0 +1,40 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <!--
+    Builds BruceEDR-v<Version>-win-x64.msi from a staged release folder: the one
+    publish-release.ps1 self-tests and zips, so the MSI ships exactly what was tested.
+
+      dotnet build installer/BruceEDR.Installer.wixproj -c Release -p:StageDir=<staged folder>
+
+    Deliberately not part of BruceEDR.sln: the solution build and the tests must not need a
+    staged release to exist.
+  -->
+  <PropertyGroup>
+    <OutputName>BruceEDR-v$(Version)-win-x64</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <StageDir Condition="'$(StageDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\BruceEDR-v$(Version)-win-x64</StageDir>
+    <DefineConstants>ProductVersion=$(Version)</DefineConstants>
+    <!-- ICE61 is the expected consequence of MajorUpgrade AllowSameVersionUpgrades="yes"
+         (a rebuilt package replaces its own version); it flags nothing else. -->
+    <SuppressIces>ICE61</SuppressIces>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <BindPath Include="$(StageDir)" BindName="stage" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+  </ItemGroup>
+
+  <Target Name="RequireStage" BeforeTargets="Build">
+    <Error Condition="!Exists('$(StageDir)\BruceEDR.Gui.exe') Or !Exists('$(StageDir)\BruceEDR.exe')"
+           Text="No staged release at '$(StageDir)'. Run publish-release.ps1, or pass -p:StageDir=&lt;folder containing BruceEDR.exe and BruceEDR.Gui.exe&gt;." />
+    <!-- Single-file publish leaves WPF's native libraries beside the exe; without them the
+         desktop app cannot start. -->
+    <Error Condition="!Exists('$(StageDir)\wpfgfx_cor3.dll') Or !Exists('$(StageDir)\PresentationNative_cor3.dll')"
+           Text="The stage at '$(StageDir)' lacks WPF's native DLLs (wpfgfx_cor3.dll, PresentationNative_cor3.dll); the desktop app would not start." />
+  </Target>
+
+</Project>

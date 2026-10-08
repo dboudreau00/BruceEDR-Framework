@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- One product version for every assembly and the installer. publish-release.ps1
+         passes -p:Version=<release> so a release build always carries its own number. -->
+    <Version>3.2.0</Version>
+  </PropertyGroup>
+</Project>

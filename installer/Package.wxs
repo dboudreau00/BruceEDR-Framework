@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  BruceEDR installer.
+
+  Installs the desktop app and the agent into C:\Program Files\BruceEDR and adds Start Menu
+  and desktop shortcuts to the desktop app. It does NOT install or start the Windows service
+  and it does not start monitoring: the app opens on its set-up screen, in monitor mode, and
+  nothing is watched until someone presses Start.
+
+  The folder is fixed on purpose: the uninstall clean-up runs BruceEDR.exe as SYSTEM, so it
+  must live where only administrators can write. Hence no folder page, and a private
+  directory property that a command line cannot override.
+
+  Any removal, upgrade included, first removes the service and its watchdog task if
+  the agent's install command created them, so no file is in use when it is replaced. A full
+  uninstall then also removes every Windows Firewall rule BruceEDR added. The config file is
+  permanent and never overwritten, so an operator's settings survive upgrades and repairs.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="BruceEDR"
+           Manufacturer="elemosecurity"
+           Version="$(ProductVersion)"
+           UpgradeCode="{1DEEB71C-1106-4C6B-9280-8E222FFE3F18}"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <SummaryInformation Description="BruceEDR $(ProductVersion) for Windows x64" />
+    <!-- Same-version upgrades: a rebuilt package of one version replaces it instead of
+         installing beside it as a second product. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of BruceEDR is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="BruceIcon" SourceFile="$(sys.SOURCEFILEDIR)..\gui\BruceEDR.Gui\Assets\bruce.ico" />
+    <Property Id="ARPPRODUCTICON" Value="BruceIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/dboudreau00/BruceEDR-Framework" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/dboudreau00/BruceEDR-Framework/issues" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="InstallDir" Name="BruceEDR" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="BruceEDR" Level="1" AllowAbsent="no"
+             Description="The desktop app, the agent, detection rules and documentation.">
+      <Files Include="!(bindpath.stage)\**" Directory="InstallDir">
+        <Exclude Files="!(bindpath.stage)\bruce.config.json" />
+      </Files>
+      <ComponentRef Id="Config" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <DirectoryRef Id="InstallDir">
+      <!-- The operator's policy. Permanent + NeverOverwrite: an upgrade removes the old
+           product before installing the new one, so anything less would reset it. -->
+      <Component Id="Config" Permanent="yes" NeverOverwrite="yes">
+        <File Id="BruceConfig" Source="!(bindpath.stage)\bruce.config.json" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Shortcut components key on HKCU: the ICEs treat the Start Menu and desktop as
+         profile folders even in a per-machine package (ICE38/ICE43/ICE57). -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="StartMenuBruce" Name="BruceEDR" Description="Set up and run BruceEDR"
+                  Target="[InstallDir]BruceEDR.Gui.exe" WorkingDirectory="InstallDir" Icon="BruceIcon" />
+        <RegistryValue Root="HKCU" Key="Software\BruceEDR" Name="StartMenuShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut">
+        <Shortcut Id="DesktopBruce" Name="BruceEDR" Description="Set up and run BruceEDR"
+                  Target="[InstallDir]BruceEDR.Gui.exe" WorkingDirectory="InstallDir" Icon="BruceIcon" />
+        <RegistryValue Root="HKCU" Key="Software\BruceEDR" Name="DesktopShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- Wizard: welcome with the licence, then install. No folder page (see the top). The
+         finish page offers to open the app, which opens on its set-up screen; it does not
+         start monitoring. -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)License.rtf" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open BruceEDR to set it up (nothing is monitored until you press Start)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <CustomAction Id="OpenBruceAfterInstall" BinaryRef="Wix4UtilCA_X64" DllEntry="WixShellExec" Impersonate="yes" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Property="WixShellExecTarget" Value="[InstallDir]BruceEDR.Gui.exe"
+               Order="1" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenBruceAfterInstall"
+               Order="2" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+
+    <!-- Clean-up. Never fatal: a failed step is logged and the removal goes on. The service
+         goes on ANY removal, upgrade included, so its exe is not locked when replaced; the
+         firewall clean-up only on a full uninstall. -->
+    <SetProperty Id="RemoveBruceService" Value="&quot;[InstallDir]BruceEDR.exe&quot; --uninstall --no-pause"
+                 Before="RemoveBruceService" Sequence="execute"
+                 Condition="REMOVE~=&quot;ALL&quot;" />
+    <CustomAction Id="RemoveBruceService" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <SetProperty Id="RemoveBruceFirewallRules" Value="&quot;[InstallDir]BruceEDR.exe&quot; --cleanup --no-pause"
+                 Before="RemoveBruceFirewallRules" Sequence="execute"
+                 Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    <CustomAction Id="RemoveBruceFirewallRules" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RemoveBruceService" Before="RemoveFiles"
+              Condition="REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="RemoveBruceFirewallRules" After="RemoveBruceService"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+  </Package>
+</Wix>

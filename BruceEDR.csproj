@@ -54,6 +54,8 @@
        part of the C# compilation. Exclude it from item globs for a clean project. -->
   <ItemGroup>
     <None Remove="kernel/**/*" />
+    <Compile Remove="installer/**/*.cs" />
+    <None Remove="installer/**/*" />
   </ItemGroup>
 
   <ItemGroup>
