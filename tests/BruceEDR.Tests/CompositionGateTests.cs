@@ -37,7 +37,16 @@ public sealed class CompositionGateTests : IDisposable
         public void Dispose() { }
     }
 
-    private Composition Build(CaptureSink sink, bool allowPlaybookIsolation = false, bool checkRevocation = false)
+    private Composition Build(CaptureSink sink, bool allowPlaybookIsolation = false, bool checkRevocation = false,
+        string mode = "monitor")
+    {
+        WriteConfig(allowPlaybookIsolation, checkRevocation, mode);
+        return Composition.Build(ConfigPath, sink);
+    }
+
+    private string ConfigPath => Path.Combine(_dir, "bruce.config.json");
+
+    private void WriteConfig(bool allowPlaybookIsolation, bool checkRevocation, string mode)
     {
         var config = new
         {
@@ -46,6 +55,7 @@ public sealed class CompositionGateTests : IDisposable
             intel = new { enabled = false },
             response = new
             {
+                mode,
                 useEncryptedVault = false,
                 isolationAllowlist = Array.Empty<string>(),
                 allowPlaybookIsolation,
@@ -57,9 +67,7 @@ public sealed class CompositionGateTests : IDisposable
                 auditPath = Path.Combine(_dir, "audit.log"),
             },
         };
-        string path = Path.Combine(_dir, "bruce.config.json");
-        File.WriteAllText(path, JsonSerializer.Serialize(config));
-        return Composition.Build(path, sink);
+        File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config));
     }
 
     private static ProfileSnapshot Snapshot() => new()
@@ -125,5 +133,61 @@ public sealed class CompositionGateTests : IDisposable
         using var comp = Build(sink, checkRevocation: true);
 
         Assert.DoesNotContain(sink.Snapshot(), e => e.Message.Contains("allowlist.checkRevocation"));
+    }
+
+    [Fact]
+    public void Monitor_Mode_Reaches_The_Host_And_Is_Announced_At_Startup()
+    {
+        var sink = new CaptureSink();
+        using var comp = Build(sink, mode: "monitor");
+
+        Assert.True(comp.Host.MonitorOnly);
+        Assert.Contains(sink.Snapshot(), e => e.Level == "INFO" && e.Message.StartsWith("response mode: monitor"));
+    }
+
+    [Fact]
+    public void Enforce_Mode_Reaches_The_Host_And_Is_Announced_At_Startup()
+    {
+        var sink = new CaptureSink();
+        using var comp = Build(sink, mode: "enforce");
+
+        Assert.False(comp.Host.MonitorOnly);
+        Assert.Contains(sink.Snapshot(), e => e.Level == "INFO" && e.Message.StartsWith("response mode: ENFORCE"));
+    }
+
+    [Fact]
+    public void A_Config_Reload_Switches_The_Mode_Live_In_Both_Directions()
+    {
+        var sink = new CaptureSink();
+        using var comp = Build(sink, mode: "monitor");
+        Assert.True(comp.Host.MonitorOnly);
+
+        WriteConfig(allowPlaybookIsolation: false, checkRevocation: false, mode: "enforce");
+        comp.ReloadConfig();
+        Assert.False(comp.Host.MonitorOnly);
+
+        WriteConfig(allowPlaybookIsolation: false, checkRevocation: false, mode: "monitor");
+        comp.ReloadConfig();
+
+        // The composition's own file watcher (500 ms debounce) may still apply a reload it
+        // read before the last write, so assert only once it has had time to run: it reads
+        // the file when it fires, and the final state must be the last thing written.
+        Thread.Sleep(1200);
+        Assert.True(comp.Host.MonitorOnly);
+    }
+
+    [Fact]
+    public void Monitor_Mode_Keeps_The_Kernel_Driver_Non_Blocking_Even_When_KernelBlocking_Is_Set()
+    {
+        // No driver is installed in a test run, so the connect fails and the message is not
+        // logged; this pins the rule itself, through the same helper the connect path uses.
+        var effective = typeof(Composition).GetMethod("EffectiveKernelBlocking",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var cfg = new BruceEDR.Configuration.BruceConfig();
+        cfg.Detection.KernelBlocking = true;
+        cfg.Response.Mode = "monitor";
+        Assert.False((bool)effective.Invoke(null, new object[] { cfg })!);
+        cfg.Response.Mode = "enforce";
+        Assert.True((bool)effective.Invoke(null, new object[] { cfg })!);
     }
 }

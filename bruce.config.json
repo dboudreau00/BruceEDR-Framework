@@ -39,6 +39,7 @@
     "hitScore": 60
   },
   "response": {
+    "mode": "monitor",
     "useEncryptedVault": true,
     "quarantineVaultPath": "quarantine",
     "playbookPath": "",

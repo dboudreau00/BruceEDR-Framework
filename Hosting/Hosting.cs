@@ -57,6 +57,16 @@ public sealed class Composition : IDisposable
     private MinifilterClient? _minifilter;
     private ControlServer? _control;
 
+    /// <summary>
+    /// Gate for playbook IsolateHost. Held apart from <see cref="Config"/>, which a reload only
+    /// replaces at the very end, so turning isolation off takes effect even if a later reload
+    /// step throws.
+    /// </summary>
+    private volatile bool _allowPlaybookIsolation;
+
+    /// <summary>The driver only blocks in enforce mode: monitor mode promises nothing is blocked.</summary>
+    private static bool EffectiveKernelBlocking(BruceConfig c) => c.Detection.KernelBlocking && c.Response.IsEnforcing;
+
     private Composition(string configPath, BruceConfig config, Logger log,
         AuthenticodeVerifier verifier, CompositeSink sink, IMemoryScanner scanner, BruceHost host,
         ApiSurfaceInventory surface, QuarantineVault? vault, RingBufferSink events,
@@ -65,6 +75,7 @@ public sealed class Composition : IDisposable
     {
         _configPath = configPath;
         Config = config;
+        _allowPlaybookIsolation = config.Response.AllowPlaybookIsolation;
         Log = log;
         _verifier = verifier;
         _sink = sink;
@@ -97,6 +108,9 @@ public sealed class Composition : IDisposable
                      "cryptographically valid chain even if the signer cert is revoked. " +
                      "Set checkRevocation:true for production, or pin thumbprints and set allowSubjectMatch:false.");
         }
+        log.Info(cfg.Response.IsEnforcing
+            ? "response mode: ENFORCE (playbook actions run automatically)"
+            : "response mode: monitor (detections are logged; nothing is suspended, blocked, quarantined or killed automatically)");
         var scanner = BuildScanner(cfg.Detection, log);
 
         // --- optional analytics -------------------------------------------------
@@ -177,6 +191,7 @@ public sealed class Composition : IDisposable
         var hostOptions = new BruceHostOptions
         {
             AutoKill = cfg.Detection.AutoKill,
+            MonitorOnly = !cfg.Response.IsEnforcing,
             EnableExtendedMonitors = cfg.Detection.EnableExtendedMonitors,
             Tree = tree,
             Surface = cfg.Api.EnableSurfaceInventory ? surface : null,
@@ -411,15 +426,18 @@ public sealed class Composition : IDisposable
             client.ClearPolicy();
             foreach (var fragment in IocDatabase.KernelBlockPrefixes)
                 client.AddSensitivePath(fragment);
-            client.SetBlocking(cfg.Detection.KernelBlocking);
+            bool blocking = EffectiveKernelBlocking(cfg);
+            client.SetBlocking(blocking);
             _minifilter = client;
             // "monitor mode" overstated the non-blocking case: the client only pushes policy
             // and never reads from the port, so with blocking off the driver reports nothing
             // to user mode at all -- it is not monitoring anything we can see.
-            Log.Info(cfg.Detection.KernelBlocking
+            Log.Info(blocking
                 ? "kernel enforcement ENABLED (driver denies sensitive-path opens; denials are " +
                   "logged by the driver only, not surfaced here)"
-                : "minifilter connected, enforcement OFF (policy pushed; no kernel telemetry consumed)");
+                : cfg.Detection.KernelBlocking
+                    ? "minifilter connected, enforcement OFF: detection.kernelBlocking is on, but response.mode is monitor, which never blocks"
+                    : "minifilter connected, enforcement OFF (policy pushed; no kernel telemetry consumed)");
         }
         catch (Exception ex) { Log.Error("minifilter setup", ex); }
     }
@@ -504,6 +522,21 @@ public sealed class Composition : IDisposable
     {
         try
         {
+            // Safety switches first. Config is only replaced at the end, so if a later step
+            // throws, the agent must not be left enforcing, isolating or kernel-blocking on a
+            // setting the file no longer has.
+            Host.SetMonitorOnly(!next.Response.IsEnforcing);
+            if (next.Response.AllowPlaybookIsolation != _allowPlaybookIsolation)
+                Log.Info(next.Response.AllowPlaybookIsolation
+                    ? "response.allowPlaybookIsolation ENABLED live: playbook IsolateHost actions will now run"
+                    : "response.allowPlaybookIsolation disabled live: playbook IsolateHost actions are skipped");
+            _allowPlaybookIsolation = next.Response.AllowPlaybookIsolation;
+            // The block toggle is the one minifilter setting that reloads live: the client is
+            // held in _minifilter for the process lifetime, so the new value is a single
+            // message to the driver. The sensitive-path policy around it is still startup-only.
+            if (EffectiveKernelBlocking(next) != EffectiveKernelBlocking(Config))
+                ApplyKernelBlocking(EffectiveKernelBlocking(next));
+
             _verifier.UpdateAllowlist(next.Allowlist);
             Host.ApplyDetectionConfig(
                 next.Detection.WarnThreshold, next.Detection.QuarantineThreshold,
@@ -538,19 +571,8 @@ public sealed class Composition : IDisposable
 
             ApiPolicy = BuildApiPolicy(next.Api.Studio);
 
-            if (next.Response.AllowPlaybookIsolation != Config.Response.AllowPlaybookIsolation)
-                Log.Info(next.Response.AllowPlaybookIsolation
-                    ? "response.allowPlaybookIsolation ENABLED live: playbook IsolateHost actions will now run"
-                    : "response.allowPlaybookIsolation disabled live: playbook IsolateHost actions are skipped");
-
             if (ControlChanged(Config.Api.Control, next.Api.Control))
                 RestartControlServer(next);
-
-            // The block toggle is the one minifilter setting that reloads live: the client is
-            // held in _minifilter for the process lifetime, so the new value is a single
-            // message to the driver. The sensitive-path policy around it is still startup-only.
-            if (next.Detection.KernelBlocking != Config.Detection.KernelBlocking)
-                ApplyKernelBlocking(next.Detection.KernelBlocking);
 
             // Everything else is consumed once, while the composition is built: sinks, the
             // control server, the scanner, the vault, the playbook, monitor selection and the
@@ -600,8 +622,8 @@ public sealed class Composition : IDisposable
     /// The list is maintained by hand against <see cref="Build"/>; anything genuinely
     /// hot-reloaded (thresholds, autoKill, allowlist, rules, indicator feeds, API Studio
     /// safety policy, detection.kernelBlocking, telemetry.enableMetrics, the isolation
-    /// allowlist, response.allowPlaybookIsolation and triage output path) is deliberately
-    /// absent.
+    /// allowlist, response.mode, response.allowPlaybookIsolation and triage output path) is
+    /// deliberately absent.
     /// </summary>
     private static List<string> RestartRequiredChanges(BruceConfig old, BruceConfig next)
     {
@@ -682,7 +704,7 @@ public sealed class Composition : IDisposable
         {
             case PlaybookAction.IsolateHost:
             {
-                if (!Config.Response.AllowPlaybookIsolation)
+                if (!_allowPlaybookIsolation)
                 {
                     Log.Action(
                         "host isolation refused: playbook ordered IsolateHost but " +
@@ -1061,13 +1083,30 @@ public static class ServiceControl
         return false;
     }
 
+    /// <summary>sc.exe exit code when the named service does not exist.</summary>
+    private const int ErrorServiceDoesNotExist = 1060;
+
     public static int Uninstall(BruceConfig cfg)
     {
         string svc = cfg.Service.ServiceName;
-        Sc("stop", svc);
-        int rc = Sc("delete", svc);
+        // The watchdog restarts a stopped service, and schtasks /Delete does not end an
+        // instance that is already running, so end it first: otherwise it races the removal
+        // and keeps BruceEDR.exe locked while an uninstaller tries to delete it.
+        RunTool("schtasks", "/End", "/TN", WatchdogTask);
         RunTool("schtasks", "/Delete", "/TN", WatchdogTask, "/F");
-        Console.WriteLine($"Service '{svc}' removed.");
+        if (IsRunning(svc))
+        {
+            Sc("stop", svc);
+            if (!WaitForState(svc, StateStopped, TimeSpan.FromSeconds(20)))
+                ForceKill(svc);                       // hung: won't honor SERVICE_CONTROL_STOP
+        }
+        int rc = Sc("delete", svc);
+        if (rc == ErrorServiceDoesNotExist)
+        {
+            Console.WriteLine($"Service '{svc}' is not installed; nothing to remove.");
+            return 0;
+        }
+        Console.WriteLine(rc == 0 ? $"Service '{svc}' removed." : $"Service '{svc}' could not be removed (sc exit {rc}).");
         return rc;
     }
 

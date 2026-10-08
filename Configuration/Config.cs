@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace BruceEDR.Configuration;
 
@@ -34,6 +35,8 @@ public sealed class BruceConfig
 
         if (string.IsNullOrWhiteSpace(Telemetry.Format)) Telemetry.Format = "native";
         if (string.IsNullOrWhiteSpace(Response.QuarantineVaultPath)) Response.QuarantineVaultPath = "quarantine";
+        // Only an explicit "enforce" arms automatic response; a typo stays hands-off.
+        Response.Mode = Response.IsEnforcing ? ResponseModes.Enforce : ResponseModes.Monitor;
 
         foreach (var w in Watchlist.Entries)
         {
@@ -156,8 +159,28 @@ public sealed class IntelConfig
     public int HitScore { get; set; } = 60;
 }
 
+/// <summary>Values for <see cref="ResponseConfig.Mode"/>.</summary>
+public static class ResponseModes
+{
+    public const string Monitor = "monitor";
+    public const string Enforce = "enforce";
+}
+
 public sealed class ResponseConfig
 {
+    /// <summary>
+    /// "monitor" (the default): detect, score and log what the playbook WOULD do, but never
+    /// suspend, firewall-block, quarantine, kill or isolate anything automatically.
+    /// "enforce": run the playbook. Any other value is treated as monitor. Actions an
+    /// analyst takes by hand (GUI buttons, console commands) are not affected.
+    /// </summary>
+    public string Mode { get; set; } = ResponseModes.Monitor;
+
+    /// <summary>True only for an explicit "enforce".</summary>
+    [JsonIgnore]
+    public bool IsEnforcing
+        => string.Equals(Mode?.Trim(), ResponseModes.Enforce, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Encrypt quarantined files at rest so a payload cannot simply be re-run.</summary>
     public bool UseEncryptedVault { get; set; } = true;
     public string QuarantineVaultPath { get; set; } = "quarantine";

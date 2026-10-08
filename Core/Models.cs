@@ -159,6 +159,13 @@ public sealed record ProfileSnapshot
     public string ForcedBy { get; init; } = "";
 
     /// <summary>
+    /// True when a Quarantine verdict was only reported because response.mode was monitor.
+    /// <see cref="Contained"/> is still set (it is the one-shot gate against repeat verdicts),
+    /// but nothing was frozen, blocked or quarantined: read the pair as "would contain".
+    /// </summary>
+    public bool ContainmentSkipped { get; init; }
+
+    /// <summary>
     /// Identity of the profile instance this snapshot was taken from. Async work (memory
     /// scans, PE analysis) carries it back so a result cannot land on a different process
     /// that has since reused the pid.
@@ -189,6 +196,8 @@ public sealed class ThreatProfile
     public bool Trusted { get; set; }
     public bool SignatureChecked { get; set; }
     public bool Contained { get; set; }
+    /// <summary>Contained by a verdict that monitor mode only reported. See ProfileSnapshot.ContainmentSkipped.</summary>
+    public bool ContainmentSkipped { get; set; }
     public bool SuspendedByAnalyst { get; set; }
     public bool Terminated { get; set; }
     public bool MemoryScanned { get; set; }

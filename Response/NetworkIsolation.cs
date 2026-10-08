@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using Microsoft.Win32;
 using BruceEDR.Core;
 
 namespace BruceEDR.Response;
@@ -156,10 +157,54 @@ public sealed class NetworkIsolation
                 AllowedRemoteAddresses = allowed.ToArray()
             };
         }
+        WriteAppliedMarker();
 
         _log.Action($"host isolated; allowlist: {(allowed.Count == 0 ? "(none)" : string.Join(", ", allowed))}");
         return ActionResult.Success(
             $"host isolated (allowlist: {(allowed.Count == 0 ? "none" : string.Join(", ", allowed))})");
+    }
+
+    // Proof, kept outside the process, that isolation CHANGED the firewall policy. The allow
+    // rules are installed before the policy, so their presence alone does not show it was
+    // changed, and the policy itself cannot tell isolation from a host whose baseline already
+    // blocks outbound. Cleanup restores the policy only when this marker exists.
+    private const string MarkerKey = @"SOFTWARE\BruceEDR";
+    private const string MarkerValue = "IsolationApplied";
+
+    /// <summary>True when BruceEDR changed the firewall policy to isolate this host and has not released it.</summary>
+    public static bool WasAppliedByBruceEdr()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(MarkerKey);
+            return key?.GetValue(MarkerValue) is not null;
+        }
+        catch { return false; }
+    }
+
+    private void WriteAppliedMarker()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.CreateSubKey(MarkerKey);
+            key.SetValue(MarkerValue, _clock.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+        }
+        catch (Exception ex) { _log.Error("isolation marker (an uninstall will not lift this isolation by itself)", ex); }
+    }
+
+    private static void ClearAppliedMarker()
+    {
+        try
+        {
+            using (var key = Registry.LocalMachine.OpenSubKey(MarkerKey, writable: true))
+            {
+                if (key is null) return;
+                key.DeleteValue(MarkerValue, throwOnMissingValue: false);
+                if (key.ValueCount > 0 || key.SubKeyCount > 0) return;
+            }
+            Registry.LocalMachine.DeleteSubKey(MarkerKey, throwOnMissingSubKey: false);
+        }
+        catch { /* a stale marker only means a later cleanup restores the default policy */ }
     }
 
     /// <summary>
@@ -209,6 +254,7 @@ public sealed class NetworkIsolation
             {
                 _state = new IsolationState { Active = false, AppliedUtc = _state.AppliedUtc };
             }
+            ClearAppliedMarker();
         }
 
         if (failures.Count == 0)

@@ -23,7 +23,10 @@ if (!Environment.Is64BitProcess)
 string configPath = ResolveConfigPath(args);
 
 // ------------------------------------------------------------------- modes
-if (HasFlag(args, "--help") || HasFlag(args, "-h"))
+// Precedence lives in LaunchModes.Resolve so it is tested; each branch below handles one mode.
+var mode = LaunchModes.Resolve(args, WindowsServiceHelpers.IsWindowsService());
+
+if (mode == LaunchMode.Help)
 {
     PrintUsage();
     return 0;
@@ -32,33 +35,45 @@ if (HasFlag(args, "--help") || HasFlag(args, "-h"))
 // Offline verification: validate the shipped rule packs and replay every detection
 // scenario. Needs no elevation and starts no monitor, so it is safe in CI and is the
 // inner loop for anyone authoring a rule.
-if (HasFlag(args, "--selftest"))
+if (mode == LaunchMode.SelfTest)
     return BruceEDR.Hosting.SelfTest.Run(
         OptionValue(args, "--rules"),
         OptionValue(args, "--scenarios"));
 
-if (HasFlag(args, "--install"))
+if (mode == LaunchMode.Install)
 {
     if (!RequireElevation()) { WaitForKeyIfOwnConsole(); return 1; }
     int rc = ServiceControl.Install(ConfigLoader.Load(configPath), configPath);
     WaitForKeyIfOwnConsole();
     return rc;
 }
-if (HasFlag(args, "--uninstall"))
+if (mode == LaunchMode.Uninstall)
 {
     if (!RequireElevation()) { WaitForKeyIfOwnConsole(); return 1; }
-    int rc = ServiceControl.Uninstall(ConfigLoader.Load(configPath));
+    // Not strict: a broken config must not leave a service and a SYSTEM task registered
+    // against an exe the uninstaller is about to delete.
+    int rc = ServiceControl.Uninstall(ConfigLoader.Load(configPath, strict: false));
     WaitForKeyIfOwnConsole();
     return rc;
 }
-if (HasFlag(args, "--watchdog"))
+if (mode == LaunchMode.Watchdog)
 {
     if (!RequireElevation()) { WaitForKeyIfOwnConsole(); return 1; }
     return Watchdog.Run(configPath);
 }
+// Outbound blocks outlive the agent. This removes every rule BruceEDR created (and lifts
+// isolation BruceEDR applied); the MSI uninstaller runs it too.
+if (mode == LaunchMode.Cleanup)
+{
+    if (!RequireElevation()) { WaitForKeyIfOwnConsole(); return 1; }
+    var cleaned = BruceEDR.Response.FirewallCleanup.RemoveAll(new BruceEDR.Core.Logger());
+    Console.WriteLine(cleaned.Ok ? cleaned.Message : "cleanup incomplete: " + cleaned.Message);
+    WaitForKeyIfOwnConsole();
+    return cleaned.Ok ? 0 : 1;
+}
 
 // Running under the SCM -> Windows Service host (no interactive console).
-if (WindowsServiceHelpers.IsWindowsService())
+if (mode == LaunchMode.Service)
 {
     var svcCfg = ConfigLoader.Load(configPath);
     Host.CreateDefaultBuilder(args)
@@ -73,8 +88,17 @@ if (WindowsServiceHelpers.IsWindowsService())
     return 0;
 }
 
+// A bare launch (a double-click in Explorer) never starts monitoring. It opens the
+// desktop app, which has its own set-up and Start steps. The live console agent is
+// opt-in with --console.
+if (mode == LaunchMode.DesktopApp)
+    return OpenDesktopApp(OptionValue(args, "--config"));
+// Default deny: only an explicit --console reaches the live agent below.
+if (mode != LaunchMode.Console)
+    return 1;
+
 // ---------------------------------------------------- interactive console mode
-// Not elevated (e.g. double-clicked from Explorer): request UAC and relaunch,
+// Not elevated (e.g. --console from a normal terminal): request UAC and relaunch,
 // so the app doesn't just flash a console and vanish.
 if (!IsElevated())
 {
@@ -91,6 +115,11 @@ if (!IsElevated())
     return 1;
 }
 
+// One click in a QuickEdit console starts a selection that blocks every console write,
+// and the agent's threads write while they work: the whole agent would stall until Esc.
+// The previous mode is restored on the way out, since the console may be the caller's.
+uint? savedInputMode = NativeConsole.DisableQuickEdit();
+
 Composition? composition = null;
 int shuttingDown = 0;
 void Shutdown()
@@ -98,6 +127,7 @@ void Shutdown()
     if (Interlocked.Exchange(ref shuttingDown, 1) == 1) return;
     try { composition?.Dispose(); }
     catch (Exception ex) { Console.Error.WriteLine(ex.Message); }
+    NativeConsole.RestoreInputMode(savedInputMode);
 }
 
 Console.CancelKeyPress += (_, e) =>
@@ -125,6 +155,8 @@ try
     composition.Log.Info($"BruceEDR active (console mode). Monitors: {composition.Host.ActiveMonitors}.");
     composition.Log.Info($"Config: {configPath}");
     composition.Log.Info("Type 'help' for commands, 'quit' to exit.");
+    if (savedInputMode is not null)
+        composition.Log.Info("QuickEdit selection is off while the agent runs, so a click in this window cannot pause it.");
 
     var console = new AnalystConsole(composition.Host, composition.Log,
         reloadConfig: composition.ReloadConfig,
@@ -147,9 +179,6 @@ catch (Exception ex)
 }
 
 // -------------------------------------------------------------------- locals
-static bool HasFlag(string[] args, string flag)
-    => args.Any(a => string.Equals(a, flag, StringComparison.OrdinalIgnoreCase));
-
 static string ResolveConfigPath(string[] args)
     => OptionValue(args, "--config") ?? Path.Combine(AppContext.BaseDirectory, "bruce.config.json");
 
@@ -213,13 +242,58 @@ static bool RelaunchElevated(string[] args)
     catch { return false; }
 }
 
+// Opens BruceEDR.Gui.exe from beside this exe (installed layout) or from gui\ (older
+// release zips). The GUI's manifest asks for elevation itself. An explicit --config is
+// forwarded, so an old shortcut that names a config still gets that config.
+static int OpenDesktopApp(string? explicitConfig)
+{
+    string dir = AppContext.BaseDirectory;
+    string? gui = new[] { Path.Combine(dir, "BruceEDR.Gui.exe"), Path.Combine(dir, "gui", "BruceEDR.Gui.exe") }
+        .FirstOrDefault(File.Exists);
+    if (gui is not null)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(gui)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(gui)!,
+                Arguments = explicitConfig is null ? "" : $"--config \"{Path.GetFullPath(explicitConfig)}\""
+            });
+            if (!ConsoleOwnedBySelf())
+                Console.WriteLine("Opened the BruceEDR desktop app. To run the agent in this terminal instead, use --console.");
+            return 0;
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            Console.WriteLine("The administrator prompt was declined; BruceEDR was not opened.");
+            WaitForKeyIfOwnConsole();
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("Could not open the BruceEDR desktop app: " + ex.Message);
+        }
+    }
+
+    Console.WriteLine("BruceEDR does not start monitoring from a double-click.");
+    Console.WriteLine("Open BruceEDR.Gui.exe to set it up and start it, or run");
+    Console.WriteLine("  BruceEDR.exe --console");
+    Console.WriteLine("from an elevated terminal for the live console agent. --help lists every option.");
+    WaitForKeyIfOwnConsole();
+    return 1;
+}
+
 // Keep a double-clicked window open long enough to read the message. If we were
 // launched from an existing terminal, don't block (the shell window persists).
 static void WaitForKeyIfOwnConsole()
 {
     try
     {
-        if (Console.IsInputRedirected) return;
+        // Installers and scripts: an MSI custom action can run us on a hidden console that
+        // nobody can press Enter on, which would hang the uninstall.
+        if (Console.IsInputRedirected || Console.IsOutputRedirected) return;
+        if (Environment.GetCommandLineArgs().Any(a => string.Equals(a, "--no-pause", StringComparison.OrdinalIgnoreCase))) return;
         if (!ConsoleOwnedBySelf()) return;
         Console.WriteLine();
         Console.Write("Press Enter to close...");
@@ -244,19 +318,55 @@ static void PrintUsage()
     Console.WriteLine(
         "BruceEDR - user-mode behavioural EDR agent\n" +
         "Usage:\n" +
-        "  BruceEDR.exe                    run interactively with the analyst console\n" +
+        "  BruceEDR.exe                    open the desktop app (never starts monitoring by itself)\n" +
+        "  BruceEDR.exe --console          run the live agent here with the analyst console\n" +
         "  BruceEDR.exe --install          install + start the Windows Service (+ watchdog task)\n" +
         "  BruceEDR.exe --uninstall        stop + remove the service and watchdog task\n" +
         "  BruceEDR.exe --watchdog         run the heartbeat watchdog (used by the scheduled task)\n" +
+        "  BruceEDR.exe --cleanup          remove every firewall rule BruceEDR created (admin)\n" +
         "  BruceEDR.exe --selftest         validate rule packs + replay detection scenarios (no admin)\n" +
         "      --rules <dir>                    override the detection rule directory\n" +
         "      --scenarios <dir>                override the replay scenario directory\n" +
         "  BruceEDR.exe --config <path>    use a specific bruce.config.json\n" +
+        "      --no-pause                       never wait for Enter on exit (installers, scripts)\n" +
         "  (started by the SCM)                 runs as a Windows Service automatically\n");
 }
 
 static class NativeConsole
 {
+    private const int StdInputHandle = -10;
+    private const uint EnableQuickEditMode = 0x0040;
+    private const uint EnableExtendedFlags = 0x0080;
+
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern uint GetConsoleProcessList(uint[] lpdwProcessList, uint dwProcessCount);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetStdHandle(int nStdHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+
+    /// <summary>Turns QuickEdit off. Returns the mode to restore, or null when nothing changed.</summary>
+    public static uint? DisableQuickEdit()
+    {
+        try
+        {
+            IntPtr h = GetStdHandle(StdInputHandle);
+            if (h == IntPtr.Zero || h == new IntPtr(-1)) return null;
+            if (!GetConsoleMode(h, out uint mode) || (mode & EnableQuickEditMode) == 0) return null;
+            return SetConsoleMode(h, (mode & ~EnableQuickEditMode) | EnableExtendedFlags) ? mode : null;
+        }
+        catch { return null; }
+    }
+
+    public static void RestoreInputMode(uint? mode)
+    {
+        if (mode is null) return;
+        // QuickEdit changes are ignored unless ENABLE_EXTENDED_FLAGS accompanies them.
+        try { SetConsoleMode(GetStdHandle(StdInputHandle), mode.Value | EnableExtendedFlags); } catch { }
+    }
 }

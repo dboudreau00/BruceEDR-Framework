@@ -17,13 +17,36 @@ namespace BruceEDR.Core;
 ///
 /// LIMITATION: sink failures are swallowed, so a broken sink degrades to console-only
 /// silently. Anything that must not be lost also needs an off-box sink (syslog/webhook).
+///
+/// The console echo is rate limited (<see cref="ConsoleLinesPerSecond"/>); the sink never
+/// is. A flood of lines is unreadable, and every console write happens under the lock
+/// that the detection thread also takes, so a slow or blocked console stalls the agent.
 /// </summary>
 public sealed class Logger
 {
+    /// <summary>Console lines shown per second before the rest are counted and summarised.</summary>
+    internal const int ConsoleLinesPerSecond = 40;
+
     private readonly object _gate = new();
+    private readonly TextWriter? _console;     // null: Console.Out, resolved at write time
+    private readonly Func<long> _millis;
     private volatile IEventSink? _sink;
 
-    public Logger(IEventSink? sink = null) => _sink = sink;
+    // Echo budget, guarded by _gate.
+    private bool _windowOpen;
+    private long _windowStart;
+    private int _shownInWindow;
+    private int _suppressedInWindow;
+
+    public Logger(IEventSink? sink = null) : this(sink, null, null) { }
+
+    /// <summary>Test seam: a captured console and a fake millisecond clock.</summary>
+    internal Logger(IEventSink? sink, TextWriter? console, Func<long>? millis)
+    {
+        _sink = sink;
+        _console = console;
+        _millis = millis ?? (() => Environment.TickCount64);
+    }
 
     public void SetSink(IEventSink? sink) => _sink = sink;
 
@@ -34,7 +57,16 @@ public sealed class Logger
     }
 
     /// <summary>Console-only echo for interactive analyst-console output. Not forwarded.</summary>
-    public void Raw(string text) { lock (_gate) { SafeWrite(text); } }
+    public void Raw(string text)
+    {
+        lock (_gate)
+        {
+            // The analyst is reading now: report anything the budget held back first, rather
+            // than waiting for the next log line to roll the window over.
+            FlushSuppressed();
+            SafeWrite(text);
+        }
+    }
 
     public void Action(string message)
     {
@@ -45,7 +77,7 @@ public sealed class Logger
     public void Error(string context, Exception ex)
     {
         string message = $"{context}: {ex.GetType().Name}: {ex.Message}";
-        WriteLine(ConsoleColor.Magenta, "[ERR] " + message);
+        WriteLine(ConsoleColor.Magenta, "[ERR] " + message, always: true);
         Emit(new BruceEvent { Level = "ERROR", Category = "system", Message = message });
     }
 
@@ -61,10 +93,13 @@ public sealed class Logger
         var s = d.Snapshot;
         lock (_gate)
         {
-            SetColor(ConsoleColor.Red);
-            SafeWrite($"[QUARANTINE] pid {s.Pid} {s.ProcessName} score={s.Score} :: {d.Trigger}");
-            foreach (var r in s.Reasons) SafeWrite("    " + r);
-            ResetColor();
+            if (AdmitConsoleLine(always: true))
+            {
+                SetColor(ConsoleColor.Red);
+                SafeWrite($"[QUARANTINE] pid {s.Pid} {s.ProcessName} score={s.Score} :: {d.Trigger}");
+                foreach (var r in s.Reasons) SafeWrite("    " + r);
+                ResetColor();
+            }
         }
         Emit(ToEvent("QUARANTINE", d));
     }
@@ -95,30 +130,64 @@ public sealed class Logger
         try { sink.Emit(e); } catch { /* never let telemetry break the agent */ }
     }
 
-    private void WriteLine(ConsoleColor color, string message)
+    private void WriteLine(ConsoleColor color, string message, bool always = false)
     {
         lock (_gate)
         {
+            if (!AdmitConsoleLine(always)) return;
             SetColor(color);
             SafeWrite(message);
             ResetColor();
         }
     }
 
-    private static void SafeWrite(string text)
+    // Caller holds _gate. One-second windows: the first ConsoleLinesPerSecond entries print,
+    // the rest are counted and reported when the next window opens. Raw is never limited,
+    // and neither are QUARANTINE and ERROR lines (always), which an operator must see.
+    // Redirected output is a file or a pipe being read by a program, so it gets everything.
+    private bool AdmitConsoleLine(bool always = false)
     {
-        try { Console.WriteLine(text); } catch { }
+        if (_console is null && Console.IsOutputRedirected) return true;
+        long now = _millis();
+        if (!_windowOpen || now - _windowStart >= 1000)
+        {
+            FlushSuppressed();
+            _windowOpen = true;
+            _windowStart = now;
+            _shownInWindow = 0;
+        }
+        if (always) return true;
+        if (_shownInWindow < ConsoleLinesPerSecond)
+        {
+            _shownInWindow++;
+            return true;
+        }
+        _suppressedInWindow++;
+        return false;
     }
 
-    private static void SetColor(ConsoleColor c)
+    // Caller holds _gate.
+    private void FlushSuppressed()
     {
-        if (Console.IsOutputRedirected) return;
+        if (_suppressedInWindow == 0) return;
+        SafeWrite($"[*] console: {_suppressedInWindow} line(s) not shown to keep up; every event still reached the log sinks");
+        _suppressedInWindow = 0;
+    }
+
+    private void SafeWrite(string text)
+    {
+        try { (_console ?? Console.Out).WriteLine(text); } catch { }
+    }
+
+    private void SetColor(ConsoleColor c)
+    {
+        if (_console is not null || Console.IsOutputRedirected) return;
         try { Console.ForegroundColor = c; } catch { }
     }
 
-    private static void ResetColor()
+    private void ResetColor()
     {
-        if (Console.IsOutputRedirected) return;
+        if (_console is not null || Console.IsOutputRedirected) return;
         try { Console.ResetColor(); } catch { }
     }
 }

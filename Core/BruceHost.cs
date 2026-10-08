@@ -17,6 +17,11 @@ namespace BruceEDR.Core;
 public sealed class BruceHostOptions
 {
     public bool AutoKill { get; init; }
+    /// <summary>
+    /// Record verdicts and log what the playbook would do, but run no automatic response.
+    /// Analyst actions (Suspend/Resume/Kill requested by a person) still work.
+    /// </summary>
+    public bool MonitorOnly { get; init; }
     /// <summary>Start the registry / DNS / AMSI / process-access ETW sessions.</summary>
     public bool EnableExtendedMonitors { get; init; } = true;
     /// <summary>Shared with the engine; the host feeds it and reads lineage for alerts.</summary>
@@ -70,6 +75,9 @@ public sealed class BruceHost : IDisposable
         public required int Pid { get; init; }
         public required TaskCompletionSource<ActionResult> Result { get; init; }
     }
+
+    /// <summary>Enforcement was switched on: re-arm processes monitor mode only reported.</summary>
+    private sealed class RearmSkippedCommand : Command { }
 
     private sealed class ConfigCommand : Command
     {
@@ -159,6 +167,16 @@ public sealed class BruceHost : IDisposable
     private readonly Playbook _playbook;
 
     private volatile bool _autoKill;
+    private volatile bool _monitorOnly;
+
+    /// <summary>
+    /// How long one incident waits after a failed suspend before containment is tried again.
+    /// The engine re-arms a process whose suspend failed, so without a pause every later signal
+    /// re-ran suspend + firewall block (two netsh spawns) and printed a fresh QUARANTINE.
+    /// </summary>
+    internal const long ContainmentRetryMs = 60_000;
+    private readonly Dictionary<string, long> _containmentRetryAt = new(StringComparer.Ordinal);  // owner thread only
+    private long _verdictsInBackoff;
     private long _signalsProcessed;
     private long _signalsDropped;
     private long _responsesRun;
@@ -200,6 +218,7 @@ public sealed class BruceHost : IDisposable
     {
         _options = options;
         _autoKill = options.AutoKill;
+        _monitorOnly = options.MonitorOnly;
         _engine = engine;
         _response = response;
         _scanner = scanner;
@@ -207,6 +226,46 @@ public sealed class BruceHost : IDisposable
         _playbook = options.Playbook ?? Playbook.Default();
         Metrics = options.Metrics ?? new BruceMetrics();
         ExtendedAction = options.ExtendedAction;
+    }
+
+    /// <summary>True while automatic response is off (response.mode = monitor).</summary>
+    public bool MonitorOnly => _monitorOnly;
+
+    /// <summary>Switches automatic response on or off. Read on the owner thread per verdict.</summary>
+    public void SetMonitorOnly(bool monitorOnly)
+    {
+        if (_monitorOnly == monitorOnly) return;
+        _monitorOnly = monitorOnly;
+        _log.Info(monitorOnly
+            ? "response mode: monitor (automatic response OFF)"
+            : "response mode: ENFORCE (playbook actions now run automatically)");
+        // Processes monitor mode only reported are still marked Contained, which would turn
+        // every later verdict into an incident update: re-arm them on the owner thread.
+        if (!monitorOnly) TryPost(new RearmSkippedCommand());
+    }
+
+    /// <summary>Quarantine verdicts held back by the failed-containment pause, since start.</summary>
+    public long VerdictsInBackoff => Interlocked.Read(ref _verdictsInBackoff);
+
+    private static string IncidentKey(ProfileSnapshot s)
+        => s.IncidentId.Length > 0 ? s.IncidentId : s.Pid + ":" + s.ProcessName;
+
+    private bool InContainmentBackoff(ProfileSnapshot s)
+    {
+        string key = IncidentKey(s);
+        if (!_containmentRetryAt.TryGetValue(key, out long retryAt)) return false;
+        if (Environment.TickCount64 < retryAt) return true;
+        _containmentRetryAt.Remove(key);
+        return false;
+    }
+
+    private void StartContainmentBackoff(ProfileSnapshot s)
+    {
+        long now = Environment.TickCount64;
+        if (_containmentRetryAt.Count > 4096)
+            foreach (var stale in _containmentRetryAt.Where(kv => kv.Value <= now).Select(kv => kv.Key).ToList())
+                _containmentRetryAt.Remove(stale);
+        _containmentRetryAt[IncidentKey(s)] = now + ContainmentRetryMs;
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -603,6 +662,14 @@ public sealed class BruceHost : IDisposable
                     OnVerdict(verdict);
                 break;
 
+            case RearmSkippedCommand:
+            {
+                int rearmed = _engine.RearmSkippedContainment();
+                if (rearmed > 0)
+                    _log.Info($"enforce mode: {rearmed} process(es) flagged in monitor mode will be contained if they act again");
+                break;
+            }
+
             case ConfigCommand cc:
                 _engine.UpdateThresholds(cc.Warn, cc.Quarantine, cc.WindowSeconds, cc.TrustDiscount);
                 _autoKill = cc.AutoKill;
@@ -690,10 +757,22 @@ public sealed class BruceHost : IDisposable
             return;
         }
 
+        var snap = verdict.Snapshot;
+
+        // A process whose suspend just failed is re-armed by the engine and re-escalates on
+        // every signal. Retrying a futile suspend (protected process, access denied) on each
+        // one floods the log and spawns netsh per event, so the incident gets one attempt per
+        // ContainmentRetryMs. Re-arm again so it is still contained once the pause is over.
+        if (!_monitorOnly && InContainmentBackoff(snap))
+        {
+            Interlocked.Increment(ref _verdictsInBackoff);
+            _engine.MarkContainmentFailed(snap.Pid);
+            return;
+        }
+
         Metrics.IncDetections("QUARANTINE");
         _log.Quarantine(verdict);
 
-        var snap = verdict.Snapshot;
         var decision = _playbook.Decide(snap);
         var actions = new List<PlaybookAction>(decision.Actions);
         string matched = decision.MatchedRule;
@@ -710,6 +789,22 @@ public sealed class BruceHost : IDisposable
             if (!actions.Contains(PlaybookAction.Suspend)) actions.Insert(0, PlaybookAction.Suspend);
             if (!actions.Contains(PlaybookAction.FirewallBlock)) actions.Add(PlaybookAction.FirewallBlock);
             matched = matched.Length == 0 ? "watchlist:" + snap.ForcedBy : matched + " + watchlist:" + snap.ForcedBy;
+        }
+
+        if (_monitorOnly)
+        {
+            // Monitor mode: the verdict and incident are recorded exactly as in enforce mode,
+            // but nothing touches the process. Naming what enforce mode would have run lets an
+            // operator judge the playbook against their own machine before arming it.
+            _engine.MarkContainmentSkipped(snap.Pid);
+            var would = new List<PlaybookAction>(actions);
+            // Auto-kill only acts inside a containment, so it is only named when one would run.
+            if (_autoKill && would.Count > 0 && !would.Contains(PlaybookAction.Kill)) would.Add(PlaybookAction.Kill);
+            _log.Action(would.Count == 0
+                ? $"pid {snap.Pid}: monitor mode, no action (playbook '{matched}' selected none)"
+                : $"pid {snap.Pid}: monitor mode, nothing done; enforce would run '{matched}' -> " +
+                  string.Join(", ", would));
+            return;
         }
 
         if (actions.Count == 0)
@@ -736,7 +831,8 @@ public sealed class BruceHost : IDisposable
             _engine.SetSuspendedByAnalyst(snap.Pid, suspend.Ok);
             _log.Action(suspend.Ok
                 ? $"pid {snap.Pid} suspended"
-                : $"pid {snap.Pid} suspend failed: {suspend.Message}");
+                : $"pid {snap.Pid} suspend failed: {suspend.Message} (next attempt for this incident in {ContainmentRetryMs / 1000} s at the earliest)");
+            if (!suspend.Ok) StartContainmentBackoff(snap);
             // Contained is set the moment the Quarantine verdict is emitted, i.e. before
             // containment is attempted. If the freeze failed (access denied, a protected
             // process) the process is NOT contained, and leaving the flag set would
@@ -869,7 +965,7 @@ public sealed class BruceHost : IDisposable
     {
         var sb = new StringBuilder();
         sb.AppendLine($"pid {s.Pid}  {s.ProcessName}  score={s.Score}");
-        sb.AppendLine($"  trusted={s.Trusted} contained={s.Contained} " +
+        sb.AppendLine($"  trusted={s.Trusted} contained={(s.ContainmentSkipped ? "no (monitor mode: would contain)" : s.Contained.ToString())} " +
                       $"suspended={s.SuspendedByAnalyst} terminated={s.Terminated}");
         sb.AppendLine($"  image: {s.ImagePath}");
         if (s.StagedArchives.Count > 0)

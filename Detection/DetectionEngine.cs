@@ -290,7 +290,9 @@ public sealed class DetectionEngine
         foreach (var p in _profiles.Values)
         {
             if (onlyContained) { if (!p.Contained) continue; }
-            else if (p.Score < _warn) continue;
+            // A watchlist conviction is contained at score 0, so "all flagged" must not filter
+            // on score alone: it hid those processes from the GUI table and `list all`.
+            else if (p.Score < _warn && !p.Contained) continue;
             list.Add(ToSnapshot(p));
         }
         list.Sort((a, b) => b.Score.CompareTo(a.Score));
@@ -325,6 +327,45 @@ public sealed class DetectionEngine
         p.ReportedTechniques = 0;
         return true;
     }
+
+    /// <summary>
+    /// Records that a Quarantine verdict was only reported (response.mode = monitor). Contained
+    /// stays set, because it is what stops the verdict repeating on every signal, but snapshots
+    /// now say containment was skipped, and <see cref="RearmSkippedContainment"/> can hand the
+    /// process back to enforcement.
+    /// </summary>
+    public bool MarkContainmentSkipped(int pid)
+    {
+        if (!_profiles.TryGetValue(pid, out var p) || !p.Contained) return false;
+        p.ContainmentSkipped = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Enforcement was switched on. Every live process whose containment monitor mode skipped
+    /// is re-armed, so its next signal escalates through the playbook instead of being treated
+    /// as an update to an incident that was never contained. Exited rows keep the flag so the
+    /// pruner can drop them. Returns how many processes were re-armed.
+    /// </summary>
+    public int RearmSkippedContainment()
+    {
+        int rearmed = 0;
+        foreach (var p in _profiles.Values)
+        {
+            if (!p.ContainmentSkipped || p.Exited || p.Terminated) continue;
+            p.ContainmentSkipped = false;
+            p.Contained = false;
+            p.ReportedTechniques = 0;
+            rearmed++;
+        }
+        return rearmed;
+    }
+
+    // A profile is kept past pruning while it holds real containment state. A process that
+    // has exited after monitor mode merely reported it holds none, and keeping it would grow
+    // the store with every short-lived process a monitor-mode workstation flags.
+    private static bool HoldsContainment(ThreatProfile p)
+        => p.Contained && !p.Terminated && !(p.Exited && p.ContainmentSkipped);
 
     public bool SetTerminated(int pid)
     {
@@ -1037,6 +1078,7 @@ public sealed class DetectionEngine
         PeakScore = p.PeakScore,
         ContainmentRequired = p.ForcedVerdict == Verdict.Quarantine,
         ForcedBy = p.WatchlistRuleId,
+        ContainmentSkipped = p.ContainmentSkipped,
         Generation = p.Generation,
         StartedUtc = p.StartedUtc
     };
@@ -1065,7 +1107,7 @@ public sealed class DetectionEngine
         DateTime oldest = DateTime.MaxValue;
         foreach (var kv in _profiles)
         {
-            if (kv.Value.Contained && !kv.Value.Terminated) continue;
+            if (HoldsContainment(kv.Value)) continue;
             if (kv.Value.LastUpdatedUtc >= oldest) continue;
             oldest = kv.Value.LastUpdatedUtc;
             victim = kv.Key;
@@ -1088,8 +1130,7 @@ public sealed class DetectionEngine
         List<int>? dead = null;
         foreach (var kv in _profiles)
         {
-            bool retain = kv.Value.Contained && !kv.Value.Terminated;
-            if (retain) continue;
+            if (HoldsContainment(kv.Value)) continue;
             if (kv.Value.LastUpdatedUtc >= cutoff) continue;
             (dead ??= new List<int>()).Add(kv.Key);
         }

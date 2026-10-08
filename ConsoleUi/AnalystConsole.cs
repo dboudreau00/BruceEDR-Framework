@@ -131,7 +131,7 @@ public sealed class AnalystConsole
             var s = snaps[i];
             string state = s.Terminated ? "terminated"
                          : s.SuspendedByAnalyst ? "suspended"
-                         : s.Contained ? "contained" : "flagged";
+                         : s.Contained ? (s.ContainmentSkipped ? "would contain" : "contained") : "flagged";
             if (s.Trusted) state += "/trusted";
             _log.Raw($"  {i + 1,-3} {s.Pid,-7} {s.Score,-6} {state,-20} {s.ProcessName}");
         }
