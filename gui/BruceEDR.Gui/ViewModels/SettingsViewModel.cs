@@ -1,8 +1,11 @@
 using System.Diagnostics;
 using System.IO;
+using System.Windows;
 using System.Windows.Input;
 using BruceEDR.Configuration;
+using BruceEDR.Core;
 using BruceEDR.Gui.Services;
+using BruceEDR.Response;
 
 namespace BruceEDR.Gui.ViewModels;
 
@@ -19,6 +22,36 @@ public sealed class SettingsViewModel : ViewModelBase
         ReloadCommand = new RelayCommand(() => LoadFrom(ConfigLoader.Load(_configPath)));
         OpenLogCommand = new RelayCommand(() => OpenFile(AppLog.LogPath));
         OpenConfigCommand = new RelayCommand(() => OpenFile(_configPath));
+        RemoveFirewallRulesCommand = new RelayCommand(RemoveFirewallRules, () => !_cleaning);
+    }
+
+    private bool _cleaning;
+
+    /// <summary>
+    /// Outbound blocks stay in Windows Firewall after BruceEDR stops; this is the one-click
+    /// way back when an app lost its network access. Runs off the UI thread (COM + netsh).
+    /// </summary>
+    private void RemoveFirewallRules()
+    {
+        var answer = MessageBox.Show(
+            "This deletes every outbound firewall block BruceEDR added, and lifts host isolation " +
+            "if BruceEDR put it in place. Any process BruceEDR cut off the network gets its " +
+            "network access back.\n\nRemove BruceEDR's firewall rules?",
+            "Remove BruceEDR firewall rules", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes) return;
+
+        _cleaning = true;
+        CommandManager.InvalidateRequerySuggested();
+        FirewallMessage = "Removing firewall rules...";
+        Task.Run(() => FirewallCleanup.RemoveAll(new Logger())).ContinueWith(t =>
+        {
+            var r = t.IsCompletedSuccessfully ? t.Result
+                  : ActionResult.Fail(t.Exception?.GetBaseException().Message ?? "cleanup failed");
+            AppLog.Info("firewall cleanup: " + r.Message);
+            FirewallMessage = (r.Ok ? "Done: " : "Not finished: ") + r.Message;
+            _cleaning = false;
+            CommandManager.InvalidateRequerySuggested();
+        }, TaskScheduler.FromCurrentSynchronizationContext());
     }
 
     /// <summary>Wire the persisted interface preferences (owned by the window).</summary>
@@ -57,10 +90,12 @@ public sealed class SettingsViewModel : ViewModelBase
     public ICommand ReloadCommand { get; }
     public ICommand OpenLogCommand { get; }
     public ICommand OpenConfigCommand { get; }
+    public ICommand RemoveFirewallRulesCommand { get; }
 
     public void LoadFrom(BruceConfig c)
     {
         _config = c;
+        Enforce = c.Response.IsEnforcing;
         WarnThreshold = c.Detection.WarnThreshold;
         QuarantineThreshold = c.Detection.QuarantineThreshold;
         TrustDiscount = c.Detection.TrustDiscount;
@@ -92,6 +127,10 @@ public sealed class SettingsViewModel : ViewModelBase
             // config object loaded from the same path, so writing this editor's snapshot
             // wholesale would silently roll back entries it had already saved.
             var onDisk = ConfigLoader.Load(_configPath);
+            // Declining enforce keeps monitor mode; the rest of the edits are still saved.
+            bool declined = Enforce && !onDisk.Response.IsEnforcing && !SetupViewModel.ConfirmEnforceMode("Turn on enforce mode");
+            if (declined) Enforce = false;
+            onDisk.Response.Mode = Enforce ? ResponseModes.Enforce : ResponseModes.Monitor;
             onDisk.Detection.WarnThreshold = WarnThreshold;
             onDisk.Detection.QuarantineThreshold = QuarantineThreshold;
             onDisk.Detection.TrustDiscount = TrustDiscount;
@@ -116,7 +155,9 @@ public sealed class SettingsViewModel : ViewModelBase
             // reflect any clamping the save applied
             _config = onDisk;
             LoadFrom(_config);
-            SaveMessage = "Saved. Thresholds and allowlist apply live; scan engine and telemetry take effect on restart.";
+            SaveMessage = declined
+                ? "Saved, still in monitor mode: enforce mode was not turned on."
+                : "Saved. Response mode, thresholds and allowlist apply live; scan engine and telemetry take effect on restart.";
         }
         catch (Exception ex)
         {
@@ -132,6 +173,7 @@ public sealed class SettingsViewModel : ViewModelBase
     private int _quar; public int QuarantineThreshold { get => _quar; set => Set(ref _quar, value); }
     private int _trust; public int TrustDiscount { get => _trust; set => Set(ref _trust, value); }
     private int _window; public int CorrelationWindowSeconds { get => _window; set => Set(ref _window, value); }
+    private bool _enforce; public bool Enforce { get => _enforce; set => Set(ref _enforce, value); }
     private bool _autoKill; public bool AutoKill { get => _autoKill; set => Set(ref _autoKill, value); }
     private bool _useYara; public bool UseYara { get => _useYara; set => Set(ref _useYara, value); }
     private bool _kernelBlocking; public bool KernelBlocking { get => _kernelBlocking; set => Set(ref _kernelBlocking, value); }
@@ -149,4 +191,5 @@ public sealed class SettingsViewModel : ViewModelBase
     private string _webhookUrl = ""; public string WebhookUrl { get => _webhookUrl; set => Set(ref _webhookUrl, value); }
 
     private string _saveMessage = ""; public string SaveMessage { get => _saveMessage; set => Set(ref _saveMessage, value); }
+    private string _firewallMessage = ""; public string FirewallMessage { get => _firewallMessage; set => Set(ref _firewallMessage, value); }
 }

@@ -11,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using BruceEDR.Analysis;
 using BruceEDR.Api;
+using BruceEDR.Configuration;
 using BruceEDR.Core;
 using BruceEDR.Detection;
 using BruceEDR.Hosting;
@@ -28,7 +29,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private BruceHost? _host;
     private DispatcherTimer? _timer;
     private int _refreshing;   // guards against overlapping refreshes
-    private bool _started;     // Start() is one-shot even if the window reloads
+    private bool _stopping;    // a Stop is disposing the previous engine off the UI thread
+    private Task? _stopTask;
 
     private GeoIpDatabase _geo = GeoIpDatabase.Empty;
 
@@ -49,6 +51,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// <summary>Simplified world outline. Empty when the asset is missing; the map still draws.</summary>
     public WorldMap World { get; private set; } = WorldMap.Empty;
     public SettingsViewModel Settings { get; }
+    /// <summary>The set-up stage shown before anything is monitored.</summary>
+    public SetupViewModel Setup { get; }
     /// <summary>Editor for the operator watchlist; writes the same config the engine reloads.</summary>
     public WatchlistViewModel WatchlistEditor { get; }
 
@@ -65,6 +69,22 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _configPath = configPath;
         Settings = new SettingsViewModel(configPath);
         WatchlistEditor = new WatchlistViewModel(configPath);
+        Setup = new SetupViewModel(configPath);
+        Setup.Load();
+        // Settings and the watchlist edit the config file, so they work before an engine
+        // exists. Opening the window builds nothing and monitors nothing.
+        try
+        {
+            var initial = ConfigLoader.Load(configPath);
+            Settings.LoadFrom(initial);
+            WatchlistEditor.LoadFrom(initial);
+        }
+        catch (Exception ex) { AppLog.Error("initial config load", ex); }
+
+        StartCommand = new RelayCommand(StartFromSetup, () => !IsLive && !_stopping && !_starting && Setup.CanStart);
+        StopCommand = new RelayCommand(StopEngine, () => IsLive);
+        OpenSetupCommand = new RelayCommand(() => { Setup.Load(); IsSetupOpen = true; }, () => !IsLive);
+        ReviewSettingsCommand = new RelayCommand(ReviewSettings);
 
         ReleaseCommand = new RelayCommand(() => Act(p => _host!.Resume(p)), () => HasSelection && IsRunning);
         SuspendCommand = new RelayCommand(() => Act(p => _host!.Suspend(p)), () => HasSelection && IsRunning);
@@ -101,20 +121,45 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly ICollectionView _surfaceView;
 
     // -------------------------------------------------------------- lifecycle
-    public void Start()
+    /// <summary>
+    /// Builds the engine and goes live. Reached only through the Start button
+    /// (<see cref="StartFromSetup"/>); opening the window never calls it.
+    /// </summary>
+    private async Task StartAsync()
     {
-        if (_started) return;
-        _started = true;
+        if (_composition is not null || _stopping) return;
+
+        // Building the engine and starting ETW can take seconds: keep the window responsive.
+        var sink = new UiEventSink(OnEvent);
+        Composition? built = null;
+        bool running;
+        try
+        {
+            running = await Task.Run(() =>
+            {
+                built = Composition.Build(_configPath, sink);
+                return built.Host.Start();
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("engine start", ex);
+            AbandonStart(built, "BruceEDR could not start its engine: " + ex.Message);
+            return;
+        }
+
         try
         {
             _startedUtc = DateTime.UtcNow;
             _lastSignalsAtUtc = _startedUtc;
+            _lastSignals = 0;
 
-            var sink = new UiEventSink(OnEvent);
-            _composition = Composition.Build(_configPath, sink);
+            _composition = built!;
             _host = _composition.Host;
+            IsLive = true;
+            IsMonitorOnly = _host.MonitorOnly;
 
-            IsRunning = _host.Start();
+            IsRunning = running;
             Monitors = _host.ActiveMonitors;
 
             try { Settings.LoadFrom(_composition.Config); }
@@ -148,14 +193,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             if (!IsRunning)
             {
-                SetProblem("No monitor could be started. Make sure BruceEDR is running as Administrator.");
-                AlertRaised?.Invoke("Not monitoring", "No monitor could be started. Run as Administrator.");
+                // A live state that watches nothing is worse than none: go back to set-up.
+                AbandonStart(_composition, "No monitor could be started. BruceEDR has to run as Administrator.");
+                return;
             }
-            else
-            {
-                ClearProblem();
-                AppLog.Info("Engine started. Monitors: " + Monitors);
-            }
+            ClearProblem();
+            AppLog.Info("Engine started. Monitors: " + Monitors +
+                        (IsMonitorOnly ? " (monitor mode)" : " (ENFORCE mode)"));
 
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
             _timer.Tick += (_, _) => _ = RefreshAsync();
@@ -165,14 +209,181 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             AppLog.Error("engine start", ex);
-            IsRunning = false;
-            SetProblem("BruceEDR could not start its engine: " + ex.Message);
+            AbandonStart(_composition, "BruceEDR could not start its engine: " + ex.Message);
         }
+    }
+
+    /// <summary>Tears down a half-started engine, off the UI thread, so a retry starts clean.</summary>
+    private void AbandonStart(Composition? comp, string why)
+    {
+        _composition = null;
+        _host = null;
+        try { _timer?.Stop(); } catch (Exception ex) { AppLog.Error("timer stop", ex); }
+        _timer = null;
+        if (comp is not null)
+        {
+            _stopping = true;
+            _stopTask = Task.Run(() =>
+            {
+                try { comp.Dispose(); }
+                catch (Exception ex) { AppLog.Error("abandon start", ex); }
+                _dispatcher.BeginInvoke(() =>
+                {
+                    _stopping = false;
+                    CommandManager.InvalidateRequerySuggested();
+                });
+            });
+        }
+        IsRunning = false;
+        IsLive = false;
+        Monitors = "not started";
+        ResetLiveViews();
+        IsSetupOpen = true;
+        Setup.Message = why;
+        SetProblem(why);
+    }
+
+    private bool _starting;
+
+    /// <summary>The Start button: save the set-up choices, confirm enforce mode, go live.</summary>
+    private async void StartFromSetup()
+    {
+        if (IsLive || _stopping || _starting) return;
+        Setup.Message = "";
+        if (Setup.Enforce && !SetupViewModel.ConfirmEnforceMode("Start in enforce mode")) return;
+        if (!Setup.Save()) return;
+
+        _starting = true;
+        Setup.Message = "Starting...";
+        CommandManager.InvalidateRequerySuggested();
+        try { await StartAsync(); }
+        catch (Exception ex) { AppLog.Error("start", ex); }      // async void: nothing may escape
+        finally
+        {
+            _starting = false;
+            CommandManager.InvalidateRequerySuggested();
+        }
+        if (!IsLive) return;
+        Setup.Message = "";
+        IsSetupOpen = false;
+        SelectedTabIndex = 0;
+    }
+
+    /// <summary>
+    /// Stopping or closing never resumes what BruceEDR suspended, so a frozen process would
+    /// stay frozen with nothing left to release it. Offer to resume those first. Returns
+    /// false when the operator chooses to keep monitoring.
+    /// </summary>
+    public bool ConfirmLeavingFrozen(string title)
+    {
+        var host = _host;
+        if (host is null) return true;
+        List<ProfileSnapshot> frozen;
+        try { frozen = host.ListProfiles(onlyContained: false).Where(p => p.SuspendedByAnalyst && !p.Terminated).ToList(); }
+        catch (Exception ex) { AppLog.Error("list suspended", ex); return true; }
+        if (frozen.Count == 0) return true;
+
+        var answer = MessageBox.Show(
+            $"BruceEDR has {frozen.Count} process(es) suspended, and stopping does not resume them.\n\n" +
+            "Yes: resume them (and lift their firewall blocks), then stop.\n" +
+            "No: stop and leave them suspended.\n" +
+            "Cancel: keep monitoring.",
+            title, MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (answer == MessageBoxResult.Cancel) return false;
+        if (answer == MessageBoxResult.Yes)
+        {
+            foreach (var p in frozen)
+            {
+                var r = host.Resume(p.Pid);
+                AppLog.Info($"resume pid {p.Pid} before stopping: {(r.Ok ? "ok" : r.Message)}");
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Clears what the previous engine showed, so a stopped app shows no stale state.</summary>
+    private void ResetLiveViews()
+    {
+        try
+        {
+            SelectedThreat = null;
+            Threats.Clear();
+            Surface.Clear();
+            Markers.Clear();
+            ContainedCount = FlaggedCount = 0;
+            EndpointCount = TotalEndpointCount = BeaconCount = 0;
+            RuleCount = IndicatorCount = CoveredTechniqueCount = ObservedTechniqueCount = 0;
+        }
+        catch (Exception ex) { AppLog.Error("reset views", ex); }
+    }
+
+    /// <summary>Hands over from set-up to the full Settings tab without starting anything.</summary>
+    private void ReviewSettings()
+    {
+        if (!IsLive && Setup.HasLoadError)
+        {
+            // Nothing can be saved over a broken file; Settings still offers "Open config file".
+            IsSetupOpen = false;
+            SelectedTabIndex = TabCount - 1;
+            return;
+        }
+        if (!IsLive)
+        {
+            // Saving here writes the mode too, so enforce gets the same confirmation as Start.
+            if (Setup.Enforce && !Setup.EnforceOnDisk && !SetupViewModel.ConfirmEnforceMode("Turn on enforce mode"))
+                Setup.Enforce = false;
+            if (!Setup.Save()) return;
+            try { Settings.LoadFrom(ConfigLoader.Load(_configPath)); }
+            catch (Exception ex) { AppLog.Error("settings reload", ex); }
+        }
+        IsSetupOpen = false;
+        SelectedTabIndex = TabCount - 1;
+    }
+
+    /// <summary>
+    /// Stops monitoring and returns to set-up. Disposing the engine stops the ETW sessions
+    /// and joins its threads, which can take a moment, so it runs off the UI thread.
+    /// </summary>
+    private void StopEngine()
+    {
+        var comp = _composition;
+        if (comp is null || _stopping) return;
+        if (!ConfirmLeavingFrozen("Stop monitoring")) return;
+        _stopping = true;
+        try { _timer?.Stop(); } catch (Exception ex) { AppLog.Error("timer stop", ex); }
+        _timer = null;
+        _composition = null;
+        _host = null;
+        IsRunning = false;
+        IsLive = false;
+        Monitors = "not started";
+        ClearProblem();
+        StatusLevel = "off";
+        StatusText = "Not monitoring";
+        ResetLiveViews();
+        Setup.Load();
+        Setup.Message = "Stopping...";
+        IsSetupOpen = true;
+
+        _stopTask = Task.Run(() =>
+        {
+            try { comp.Dispose(); }
+            catch (Exception ex) { AppLog.Error("engine stop", ex); }
+            _dispatcher.BeginInvoke(() =>
+            {
+                _stopping = false;
+                Setup.Message = "Stopped. Nothing is being monitored.";
+                AppLog.Info("Engine stopped by the operator.");
+                CommandManager.InvalidateRequerySuggested();
+            });
+        });
     }
 
     public void Dispose()
     {
         try { _timer?.Stop(); } catch (Exception ex) { AppLog.Error("timer stop", ex); }
+        // A Stop still in flight must finish, or its ETW sessions could outlive the app.
+        try { _stopTask?.Wait(TimeSpan.FromSeconds(20)); } catch (Exception ex) { AppLog.Error("stop wait", ex); }
         try { _composition?.Dispose(); } catch (Exception ex) { AppLog.Error("dispose", ex); }
     }
 
@@ -192,6 +403,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ICommand CopyEventCommand { get; }
     public ICommand SetEventFilterCommand { get; }
     public ICommand SelectTabCommand { get; }
+    public ICommand StartCommand { get; }
+    public ICommand StopCommand { get; }
+    public ICommand OpenSetupCommand { get; }
+    public ICommand ReviewSettingsCommand { get; }
 
     private void EndSelected()
     {
@@ -288,7 +503,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 try
                 {
                     if (e.Level == "QUARANTINE")
-                        AlertRaised?.Invoke("Threat contained",
+                        AlertRaised?.Invoke(IsMonitorOnly ? "Threat detected (monitor only)" : "Threat contained",
                             e.Pid > 0 ? $"pid {e.Pid} {e.Process} — {(string.IsNullOrEmpty(e.Trigger) ? e.Message : e.Trigger)}" : e.Message);
 
                     if (IsPaused)
@@ -455,16 +670,24 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             IReadOnlyList<ProfileSnapshot> snaps;
             try { snaps = await Task.Run(() => host.ListProfiles(onlyContained: false)); }
             catch (Exception ex) { AppLog.Error("list profiles", ex); return; }
+            if (!ReferenceEquals(host, _host)) return;   // stopped meanwhile: do not repaint stale state
 
+            // Settings can switch the mode live, so follow the host rather than the start value.
+            IsMonitorOnly = host.MonitorOnly;
             MergeThreats(snaps);
 
             IReadOnlyList<SurfaceEndpoint> endpoints;
             try { endpoints = await Task.Run(() => host.SurfaceEndpoints()); }
             catch (Exception ex) { AppLog.Error("surface", ex); endpoints = Array.Empty<SurfaceEndpoint>(); }
+            if (!ReferenceEquals(host, _host)) return;
             MergeSurface(endpoints);
             MergeTechniques(host);
 
-            ContainedCount = snaps.Count(s => s.Contained && !s.Terminated);
+            // Real containment and what monitor mode only reported are counted apart: after a
+            // switch to enforce, a skipped one must never be shown as contained.
+            int contained = snaps.Count(s => s.Contained && !s.Terminated && !s.ContainmentSkipped);
+            int wouldContain = snaps.Count(s => s.Contained && !s.Terminated && s.ContainmentSkipped);
+            ContainedCount = IsMonitorOnly ? wouldContain : contained;
             FlaggedCount = snaps.Count;
             // Counts what is actually on screen, so the header, the map and the tray agree.
             // TotalEndpointCount keeps the true figure.
@@ -475,15 +698,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             if (!IsRunning)
             {
-                StatusLevel = "threat";
+                StatusLevel = "off";
                 StatusText = "Not monitoring";
             }
             else
             {
-                StatusLevel = snaps.Any(s => s.Contained && !s.Terminated) ? "threat"
+                StatusLevel = contained + wouldContain > 0 ? "threat"
                             : snaps.Count > 0 ? "watch"
                             : "none";
-                StatusText = StatusLevel == "threat" ? "Threat contained"
+                StatusText = StatusLevel == "threat" ? (contained > 0 ? "Threat contained" : "Threat detected")
                            : StatusLevel == "watch" ? "Watching activity"
                            : "All clear";
             }
@@ -708,7 +931,61 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private bool _isRunning;
     public bool IsRunning { get => _isRunning; set { if (Set(ref _isRunning, value)) CommandManager.InvalidateRequerySuggested(); } }
 
-    private string _monitors = "starting…";
+    private bool _isLive;
+    /// <summary>True while an engine exists, between Start and Stop.</summary>
+    public bool IsLive
+    {
+        get => _isLive;
+        private set
+        {
+            if (!Set(ref _isLive, value)) return;
+            OnPropertyChanged(nameof(ShowSetup));
+            OnPropertyChanged(nameof(ShowStartPrompt));
+            OnPropertyChanged(nameof(TabsEnabled));
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    private bool _isSetupOpen = true;
+    public bool IsSetupOpen
+    {
+        get => _isSetupOpen;
+        set
+        {
+            if (!Set(ref _isSetupOpen, value)) return;
+            OnPropertyChanged(nameof(ShowSetup));
+            OnPropertyChanged(nameof(ShowStartPrompt));
+            OnPropertyChanged(nameof(TabsEnabled));
+        }
+    }
+    /// <summary>The tabs under the set-up panel must not be reachable by keyboard or screen reader.</summary>
+    public bool TabsEnabled => !ShowSetup;
+    /// <summary>The set-up and start screen covers the app whenever nothing is live.</summary>
+    public bool ShowSetup => !_isLive && _isSetupOpen;
+    /// <summary>Not live while the operator browses settings: offer the way back to Start.</summary>
+    public bool ShowStartPrompt => !_isLive && !_isSetupOpen;
+
+    private bool _isMonitorOnly = true;
+    public bool IsMonitorOnly
+    {
+        get => _isMonitorOnly;
+        private set
+        {
+            if (!Set(ref _isMonitorOnly, value)) return;
+            OnPropertyChanged(nameof(ModeText));
+            OnPropertyChanged(nameof(ContainedLabel));
+        }
+    }
+    public string ModeText => _isMonitorOnly ? "MONITOR ONLY" : "ENFORCING";
+
+    private static readonly string s_appVersion = FormatVersion(typeof(MainViewModel).Assembly.GetName().Version);
+    /// <summary>Product version for the sidebar, from the assembly (set once in Directory.Build.props).</summary>
+    public string AppVersion => s_appVersion;
+
+    private static string FormatVersion(Version? v) => v is null ? "" : $"v{v.Major}.{v.Minor}.{Math.Max(v.Build, 0)}";
+    public string ContainedLabel => _isMonitorOnly ? "WOULD CONTAIN" : "CONTAINED";
+
+    private string _monitors = "not started";
     public string Monitors { get => _monitors; set => Set(ref _monitors, value); }
 
     private int _containedCount;
@@ -754,10 +1031,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private string _throughput = "";
     public string Throughput { get => _throughput; set => Set(ref _throughput, value); }
 
-    private string _statusText = "Starting…";
+    private string _statusText = "Not monitoring";
     public string StatusText { get => _statusText; set => Set(ref _statusText, value); }
 
-    private string _statusLevel = "none";
+    private string _statusLevel = "off";   // off (nothing live) | none (all clear) | watch | threat
     public string StatusLevel { get => _statusLevel; set => Set(ref _statusLevel, value); }
 
     private string _lastMessage = "";

@@ -28,6 +28,10 @@
                 <DataTrigger Binding="{Binding StatusLevel}" Value="threat">
                     <Setter Property="Background" Value="{StaticResource Brush.Threat}"/>
                 </DataTrigger>
+                <!-- Nothing live: neutral, never the green of "all clear" -->
+                <DataTrigger Binding="{Binding StatusLevel}" Value="off">
+                    <Setter Property="Background" Value="{StaticResource Brush.Faint}"/>
+                </DataTrigger>
             </Style.Triggers>
         </Style>
 
@@ -40,6 +44,9 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding StatusLevel}" Value="threat">
                     <Setter Property="Background" Value="{StaticResource Brush.Threat}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding StatusLevel}" Value="off">
+                    <Setter Property="Background" Value="{StaticResource Brush.Faint}"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -207,7 +214,7 @@
                     </Grid.ColumnDefinitions>
                     <Border CornerRadius="2,0,0,2" Background="{StaticResource Brush.Threat}"/>
                     <StackPanel Grid.Column="1" Margin="15,13">
-                        <TextBlock Text="CONTAINED" Style="{StaticResource Text.Label}"/>
+                        <TextBlock Text="{Binding ContainedLabel}" Style="{StaticResource Text.Label}"/>
                         <TextBlock Text="{Binding ContainedCount}" Style="{StaticResource StatValue}"
                                    Foreground="{StaticResource Brush.Threat}"/>
                     </StackPanel>

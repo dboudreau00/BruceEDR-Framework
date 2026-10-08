@@ -53,7 +53,7 @@ public sealed class ThreatRow : ViewModelBase
             : "";
         State = s.Terminated ? "Terminated"
               : s.SuspendedByAnalyst ? "Suspended"
-              : s.Contained ? "Contained"
+              : s.Contained ? (s.ContainmentSkipped ? "Would contain" : "Contained")
               : "Flagged";
         Severity = s.Terminated ? "safe"
                  : s.Contained ? "threat"

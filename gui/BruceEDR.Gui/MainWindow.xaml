@@ -30,6 +30,7 @@
         </Grid.RowDefinitions>
 
         <TabControl Grid.Row="0" Style="{StaticResource Nav.Rail}"
+                    IsEnabled="{Binding TabsEnabled}"
                     SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
             <TabItem Header="Dashboard" Style="{StaticResource Nav.Item}">
                 <v:DashboardView/>
@@ -54,12 +55,22 @@
             </TabItem>
         </TabControl>
 
+        <!-- Set-up and start stage. It covers the app whenever nothing is live, so opening
+             BruceEDR never starts monitoring: going live is the Start button on this panel. -->
+        <v:SetupView Grid.Row="0"
+                     Visibility="{Binding ShowSetup, Converter={StaticResource BoolToVis}}"/>
+
         <!-- Live telemetry status bar: monitor health, throughput, detection latency,
              uptime. The one strip that answers "is the agent alive and keeping up?" -->
         <Border Grid.Row="1" Height="32" Background="{StaticResource Brush.InkRaised}"
                 BorderBrush="{StaticResource Brush.Line}" BorderThickness="0,1,0,0">
             <Grid Margin="14,0">
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Left">
                     <Ellipse Width="7" Height="7" VerticalAlignment="Center">
                         <Ellipse.Style>
                             <Style TargetType="Ellipse">
@@ -81,6 +92,21 @@
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsRunning}" Value="True">
                                         <Setter Property="Text" Value="Monitoring"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <!-- Which response mode is live: green while it only reports, red while it acts. -->
+                    <TextBlock Text="{Binding ModeText}" Margin="10,0,0,0" VerticalAlignment="Center"
+                               FontSize="10.5" FontWeight="SemiBold"
+                               Visibility="{Binding IsLive, Converter={StaticResource BoolToVis}}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMonitorOnly}" Value="False">
+                                        <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -119,15 +145,27 @@
                     </StackPanel>
                 </StackPanel>
 
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <TextBlock Text="{Binding Monitors}" VerticalAlignment="Center"
-                               FontFamily="{StaticResource Font.Data}" FontSize="10.5"
-                               Foreground="{StaticResource Brush.Faint}"
-                               MaxWidth="420" TextTrimming="CharacterEllipsis"
-                               ToolTip="{Binding Monitors}"/>
+                <!-- The monitor list is the one item that gives way: it trims instead of
+                     running into the metrics at narrow widths. -->
+                <TextBlock Grid.Column="1" Text="{Binding Monitors}" Margin="14,0,0,0"
+                           VerticalAlignment="Center" HorizontalAlignment="Right"
+                           FontFamily="{StaticResource Font.Data}" FontSize="10.5"
+                           Foreground="{StaticResource Brush.Faint}"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding Monitors}"/>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
                     <Border Style="{StaticResource Metric.Sep}"/>
                     <TextBlock Text="UPTIME" Style="{StaticResource Metric.Label}"/>
                     <TextBlock Text="{Binding Uptime}" Style="{StaticResource Metric.Value}"/>
+                    <Border Style="{StaticResource Metric.Sep}"/>
+                    <Button Content="Stop monitoring" Style="{StaticResource Btn.Subtle}" Padding="10,2" FontSize="11"
+                            VerticalAlignment="Center" Command="{Binding StopCommand}"
+                            ToolTip="Stop the engine and return to set-up"
+                            Visibility="{Binding IsLive, Converter={StaticResource BoolToVis}}"/>
+                    <Button Content="Set up and start" Style="{StaticResource Btn.Primary}" Padding="10,2" FontSize="11"
+                            VerticalAlignment="Center" Command="{Binding OpenSetupCommand}"
+                            Visibility="{Binding ShowStartPrompt, Converter={StaticResource BoolToVis}}"/>
                 </StackPanel>
             </Grid>
         </Border>

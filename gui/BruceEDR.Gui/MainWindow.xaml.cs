@@ -14,7 +14,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        string configPath = Path.Combine(AppContext.BaseDirectory, "bruce.config.json");
+        string configPath = ResolveConfigPath(Environment.GetCommandLineArgs());
         _ui = UiState.Load();
         _vm = new MainViewModel(configPath);
         DataContext = _vm;
@@ -27,9 +27,16 @@ public partial class MainWindow : Window
         {
             try
             {
-                _tray = new TrayIcon(this);
+                _tray = new TrayIcon(this, () => _vm.IsLive);
+                UpdateTrayStatus();
+                _vm.PropertyChanged += (_, e) =>
+                {
+                    if (e.PropertyName is nameof(MainViewModel.IsLive) or nameof(MainViewModel.IsMonitorOnly))
+                        UpdateTrayStatus();
+                };
                 _vm.AlertRaised += OnAlert;
-                _vm.Start();
+                // Deliberately no Start here: the window opens on the set-up stage and
+                // nothing is monitored until the operator presses Start.
             }
             catch (Exception ex) { AppLog.Error("window start", ex); }
         };
@@ -39,7 +46,12 @@ public partial class MainWindow : Window
             if (WindowState == WindowState.Minimized && _ui.MinimizeToTray && _tray is not null)
                 _tray.HideToTray();
         };
-        Closing += (_, _) => SavePlacement();
+        Closing += (_, e) =>
+        {
+            // Closing stops the engine, which never resumes what it suspended.
+            if (!_vm.ConfirmLeavingFrozen("Close BruceEDR")) { e.Cancel = true; return; }
+            SavePlacement();
+        };
         Closed += (_, _) =>
         {
             try { _vm.AlertRaised -= OnAlert; _tray?.Dispose(); }
@@ -48,6 +60,23 @@ public partial class MainWindow : Window
             catch (Exception ex) { AppLog.Error("window close", ex); }
         };
     }
+
+    /// <summary>
+    /// bruce.config.json beside the exe, or the path after --config. BruceEDR.exe forwards an
+    /// explicit --config when a bare launch opens this app, so an old shortcut keeps its config.
+    /// </summary>
+    private static string ResolveConfigPath(string[] args)
+    {
+        for (int i = 0; i < args.Length - 1; i++)
+            if (string.Equals(args[i], "--config", StringComparison.OrdinalIgnoreCase))
+                return Path.GetFullPath(args[i + 1]);
+        return Path.Combine(AppContext.BaseDirectory, "bruce.config.json");
+    }
+
+    private void UpdateTrayStatus()
+        => _tray?.SetStatus(!_vm.IsLive ? "BruceEDR: not monitoring"
+                          : _vm.IsMonitorOnly ? "BruceEDR: monitoring (monitor only)"
+                          : "BruceEDR: monitoring (enforcing)");
 
     private void OnAlert(string title, string message)
     {

@@ -24,6 +24,36 @@
             <TextBlock Text="Tune detection, trusted publishers, and where alerts are sent."
                        Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" Margin="0,3,0,16"/>
 
+            <!-- Response -->
+            <Border Style="{StaticResource SectionCard}">
+                <StackPanel>
+                    <TextBlock Text="Response" Style="{StaticResource Text.Title}" Margin="0,0,0,14"/>
+                    <Grid>
+                        <StackPanel>
+                            <TextBlock Text="Act on threats automatically (enforce mode)" Style="{StaticResource Text.Body}"/>
+                            <TextBlock Text="Off is monitor mode: threats are detected and logged along with what would have been done, and nothing is suspended, blocked, quarantined or ended. On runs the response playbook by itself. Applies live."
+                                       Style="{StaticResource Caption}" MaxWidth="560" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                        <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                      IsChecked="{Binding Enforce}"/>
+                    </Grid>
+
+                    <Border Height="1" Background="{StaticResource Brush.LineSoft}" Margin="0,16"/>
+
+                    <Grid>
+                        <StackPanel Margin="0,0,140,0">
+                            <TextBlock Text="Remove BruceEDR firewall rules" Style="{StaticResource Text.Body}"/>
+                            <TextBlock Text="Outbound blocks stay in Windows Firewall after BruceEDR stops. Use this if an app lost network access after a containment. It also lifts host isolation that BruceEDR applied."
+                                       Style="{StaticResource Caption}" MaxWidth="520" HorizontalAlignment="Left"/>
+                            <TextBlock Text="{Binding FirewallMessage}" Style="{StaticResource Caption}"
+                                       Foreground="{StaticResource Brush.Mist}" Margin="0,6,0,0"/>
+                        </StackPanel>
+                        <Button Content="Remove rules" Style="{StaticResource Btn.Subtle}" HorizontalAlignment="Right"
+                                VerticalAlignment="Top" Command="{Binding RemoveFirewallRulesCommand}"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <!-- Detection -->
             <Border Style="{StaticResource SectionCard}">
                 <StackPanel>
@@ -64,7 +94,7 @@
                     <Grid>
                         <StackPanel>
                             <TextBlock Text="Automatically end confirmed threats" Style="{StaticResource Text.Body}"/>
-                            <TextBlock Text="When off (recommended), contained processes are only suspended, so you can review and release false positives."
+                            <TextBlock Text="Enforce mode only. When off (recommended), contained processes are only suspended, so you can review and release false positives."
                                        Style="{StaticResource Caption}" MaxWidth="560" HorizontalAlignment="Left"/>
                         </StackPanel>
                         <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" VerticalAlignment="Top"

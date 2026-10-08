@@ -188,10 +188,18 @@ public sealed class WatchlistViewModel : ViewModelBase
                 // to see which one they are about to arm.
                 string listing = string.Join("\n", containing.Take(12).Select(r => $"    {r.Match}: {r.Value}"));
                 if (contain > 12) listing += $"\n    ... and {contain - 12} more";
+                bool enforcing;
+                try { enforcing = ConfigLoader.Load(_configPath).Response.IsEnforcing; }
+                catch { enforcing = true; }   // unreadable: describe the worst case
                 var answer = MessageBox.Show(
                     $"{contain} entr{(contain == 1 ? "y is" : "ies are")} set to CONTAIN ON SIGHT:\n\n{listing}\n\n" +
-                    "Any process matching one will be suspended and network-blocked immediately, " +
-                    "even if it is signed by a trusted publisher.\n\nArm the watchlist?",
+                    (enforcing
+                        ? "Any process matching one will be suspended and network-blocked immediately, " +
+                          "even if it is signed by a trusted publisher."
+                        : "Monitor mode is on, so a match is reported as 'would contain' and nothing is " +
+                          "suspended. Once you switch to enforce, matches are suspended and network-blocked " +
+                          "immediately, even if signed by a trusted publisher.") +
+                    "\n\nArm the watchlist?",
                     "Confirm watchlist", MessageBoxButton.YesNo, MessageBoxImage.Warning);
                 if (answer != MessageBoxResult.Yes) { Message = "Not saved."; return; }
             }

@@ -13,12 +13,16 @@ public sealed class TrayIcon : IDisposable
 {
     private readonly System.Windows.Forms.NotifyIcon _icon;
     private readonly Window _window;
+    private readonly Func<bool> _isLive;
     private bool _hiddenBalloonShown;   // educate once, then stay quiet
     private bool _disposed;
 
-    public TrayIcon(Window window)
+    /// <param name="isLive">Whether an engine is running. The tray must never claim to be
+    /// watching while the app sits on its set-up screen or after Stop.</param>
+    public TrayIcon(Window window, Func<bool> isLive)
     {
         _window = window;
+        _isLive = isLive;
 
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("Open BruceEDR", null, (_, _) => Restore());
@@ -27,7 +31,7 @@ public sealed class TrayIcon : IDisposable
 
         _icon = new System.Windows.Forms.NotifyIcon
         {
-            Text = "BruceEDR — monitoring",
+            Text = "BruceEDR: not monitoring",
             ContextMenuStrip = menu,
             Visible = true,
         };
@@ -48,7 +52,9 @@ public sealed class TrayIcon : IDisposable
         try
         {
             _window.Hide();
-            if (!_hiddenBalloonShown)
+            if (!_isLive())
+                Notify("Not monitoring", "BruceEDR is in the tray but nothing is being watched. Double-click the tray icon to set it up and start it.");
+            else if (!_hiddenBalloonShown)
             {
                 _hiddenBalloonShown = true;
                 Notify("Still monitoring", "BruceEDR keeps watching from the tray. Double-click the tray icon to reopen.");
@@ -63,6 +69,14 @@ public sealed class TrayIcon : IDisposable
         if (_disposed) return;
         try { _icon.ShowBalloonTip(4000, title, message, System.Windows.Forms.ToolTipIcon.Warning); }
         catch (Exception ex) { AppLog.Error("tray notify", ex); }
+    }
+
+    /// <summary>Tooltip text; NotifyIcon caps it, so keep it short.</summary>
+    public void SetStatus(string text)
+    {
+        if (_disposed) return;
+        try { _icon.Text = text.Length > 60 ? text[..60] : text; }
+        catch (Exception ex) { AppLog.Error("tray status", ex); }
     }
 
     public bool WindowIsHidden => !_window.IsVisible;
