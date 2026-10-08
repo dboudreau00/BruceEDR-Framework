@@ -15,7 +15,7 @@ your machine actually talks to.**
 [![License: MIT](https://img.shields.io/badge/License-MIT-3FA9B8.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0E1621.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-2180%20passing-3FA9B8.svg)](#verifying-a-build)
+[![Tests](https://img.shields.io/badge/tests-2246%20passing-3FA9B8.svg)](#verifying-a-build)
 
 </div>
 
@@ -79,6 +79,32 @@ tool that overstates itself is worse than one that admits its edges.
 
 ## Quick start
 
+### Install
+
+Grab `BruceEDR-v<version>-win-x64.msi` from the
+[latest release](https://github.com/dboudreau00/BruceEDR-Framework/releases/latest) and run it.
+It installs to `C:\Program Files\BruceEDR` and adds a **BruceEDR** shortcut to the Start Menu
+and the desktop. Installing starts nothing. The app opens on a **set-up screen** (response mode,
+trusted publishers, scores) and only goes live when you press **Start monitoring**; **Stop
+monitoring** in the status bar takes it back to set-up, and offers to resume anything BruceEDR
+suspended.
+
+- **Monitor mode is the default.** Detections are scored, logged and shown with what BruceEDR
+  *would* have done, and no process is suspended, firewall-blocked, quarantined or ended
+  automatically. Switch to **Enforce** on the set-up screen or in Settings once monitor mode
+  looks right on that machine. Developer and gaming PCs run plenty of unsigned software that
+  can score high.
+- The installer never installs the Windows service. Uninstalling removes every firewall block
+  BruceEDR added (and the service, if you installed it), and leaves your config, logs and
+  quarantine vault in the install folder.
+- Upgrades keep `bruce.config.json`. Everything else the installer put there is replaced, so
+  edits to the shipped rule packs or feeds are reset (files you added are kept). Put your own
+  rules in a separate pack file.
+- Prefer a zip? `BruceEDR-v<version>-win-x64.zip` has the same files: run `BruceEDR.Gui.exe`.
+  Double-clicking `BruceEDR.exe` opens the desktop app too; it never starts monitoring by itself.
+
+### Build from source
+
 **Requirements:** Windows 10/11 x64, [.NET 8 SDK](https://dotnet.microsoft.com/download), and
 **Administrator** rights at run time (ETW, process access, quarantine).
 
@@ -89,11 +115,14 @@ dotnet build BruceEDR.sln -c Release
 # Validate rules + replay every detection scenario -- no admin needed
 dotnet run --project BruceEDR.csproj -c Release -- --selftest
 
-# Console agent (from an elevated terminal)
-dotnet run --project BruceEDR.csproj -c Release
-
-# WPF desktop GUI
+# WPF desktop app (opens on the set-up screen)
 dotnet run --project gui/BruceEDR.Gui -c Release
+
+# Console agent, live in this terminal (elevated)
+dotnet run --project BruceEDR.csproj -c Release -- --console
+
+# Release zip + MSI into artifacts/ (version from Directory.Build.props)
+./publish-release.ps1
 ```
 
 New here? [`GETTING_STARTED.md`](GETTING_STARTED.md) has step-by-step Visual Studio instructions
@@ -107,14 +136,31 @@ dotnet build BruceEDR.csproj -c Release -p:EnableYara=true
 
 ### Run as a Windows Service
 
-Publish a self-contained exe so the service `binPath` is the app itself, not `dotnet.exe`:
+The service runs as SYSTEM, so `--install` refuses any folder a standard user can write to.
+Install the MSI first (or copy a release under `C:\Program Files\BruceEDR`), then, as
+Administrator:
 
 ```bash
-dotnet publish BruceEDR.csproj -c Release -r win-x64 --self-contained true
-# then, from the publish folder, as Administrator:
-BruceEDR.exe --install      # install + start the service (+ watchdog task)
-BruceEDR.exe --uninstall    # stop + remove
+"C:\Program Files\BruceEDR\BruceEDR.exe" --install      # install + start the service (+ watchdog task)
+"C:\Program Files\BruceEDR\BruceEDR.exe" --uninstall    # stop + remove
 ```
+
+The service runs whatever `response.mode` the config says, so it is monitor-only unless you
+chose enforce. Upgrading or uninstalling with the MSI removes the service first, so none of its
+files is in use when it is replaced: run `--install` again after an upgrade.
+
+### Firewall rules outlive the agent
+
+An enforce-mode containment adds an outbound Windows Firewall block keyed to the process's
+image path, and it stays after BruceEDR exits. Releasing the process (`resume` in the console,
+**Release** in the app) removes its block. To remove every rule BruceEDR ever created, and lift
+host isolation if BruceEDR applied it:
+
+```bash
+BruceEDR.exe --cleanup      # as Administrator; also Settings > Remove rules in the app
+```
+
+The uninstaller runs the same clean-up.
 
 ## Analyst console
 
@@ -252,7 +298,7 @@ That false-positive guard matters as much as the malicious ones.
 Builds the solution, runs the full xUnit suite, validates every rule pack, and replays every
 detection scenario. As of this commit:
 
-- **2,180 tests passing**, 0 skipped
+- **2,246 tests passing**, 0 skipped
 - **0 build warnings**
 - 72 rules loading with 0 validation errors
 - 3/3 replay scenarios meeting their expectations
@@ -264,10 +310,14 @@ truncation, chained token captures, secret redaction) rather than only against m
 ## Configuration — `bruce.config.json`
 
 Thresholds, allowlist (publishers + pinned thumbprints), detection rules path, score decay,
-beaconing, intel feeds, response playbook and vault, telemetry format and sinks, the control
-API, API Studio safety policy, and service/heartbeat settings. Editing the file **hot-reloads**
-posture, allowlist, detection rules and indicator feeds live; a malformed edit keeps the
-last-good config. Scan-engine, telemetry-format and control-API changes take effect on restart.
+beaconing, intel feeds, response mode, playbook and vault, telemetry format and sinks, the
+control API, API Studio safety policy, and service/heartbeat settings. Editing the file
+**hot-reloads** posture, `response.mode`, allowlist, detection rules and indicator feeds live;
+a malformed edit keeps the last-good config. Scan-engine, telemetry-format and control-API
+changes take effect on restart.
+
+`response.mode` is `monitor` (the default: detect and log, never act on its own) or `enforce`
+(run the playbook). Anything other than an explicit `enforce` is treated as monitor.
 
 ## Security model & honest limitations
 
@@ -349,6 +399,7 @@ BruceEDR.sln              Console + GUI + Tests (VS2022, x64)
 ├─ rules/detection/                    JSON detection rule packs (+ authoring guide)
 ├─ intel/feeds/                        drop your indicator feeds here
 ├─ intel/geo/                          offline IP->country + world outline for the map
+├─ installer/                          WiX 5 MSI (Package.wxs); publish-release.ps1 builds it
 ├─ tools/verify.ps1                    build + test + rules + replay in one command
 ├─ tools/build-geo.py                  regenerates intel/geo from public-domain sources
 └─ tests/BruceEDR.Tests/          xUnit suite

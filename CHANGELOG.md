@@ -2,6 +2,86 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.2.0] - 2026-10-08
+
+BruceEDR no longer goes live by accident. Double-clicking the agent used to start a live
+console session that scored, suspended and firewall-blocked real processes on a workstation
+straight away. Now nothing is monitored until someone presses Start, and even then the default
+is to watch and report, not to act.
+
+### Changed - read before upgrading
+
+- **Monitor mode is the default.** New `response.mode`: `monitor` detects, scores and logs, and
+  for every verdict logs what enforce mode would have run (`monitor mode, nothing done; enforce
+  would run ...`). It never suspends, firewall-blocks, quarantines, kills or isolates on its own.
+  `enforce` runs the playbook as before. Anything other than an explicit `enforce` is treated as
+  monitor, and the setting reloads live. **A config without the key now runs in monitor mode:
+  set `"mode": "enforce"` to keep automatic containment.** Actions an analyst takes by hand are
+  unaffected.
+- **Double-clicking `BruceEDR.exe` opens the desktop app instead of starting the agent.** The
+  live console agent is opt-in with `--console`. The Windows service is unaffected.
+- **The desktop app opens on a set-up screen** (response mode, trusted publishers, scores) and
+  builds nothing until **Start**. **Stop monitoring** in the status bar returns to set-up. A
+  config that exists but cannot be parsed is reported and blocks Start, as the console refuses
+  to start on it.
+- **Release layout:** `BruceEDR.Gui.exe` now sits next to `BruceEDR.exe`. In the old `gui\`
+  subfolder the app looked for a `bruce.config.json` that was not there and silently ran on
+  built-in defaults with no rule packs.
+
+### Added
+
+- **MSI installer** (`BruceEDR-v3.2.0-win-x64.msi`, WiX 5, `installer/`): installs to
+  `C:\Program Files\BruceEDR` with Start Menu and desktop shortcuts to the desktop app. It never
+  installs or starts the service. The folder is fixed on purpose (the uninstall clean-up runs
+  `BruceEDR.exe` as SYSTEM, so it must live where only administrators can write). Your edited
+  config survives upgrades. Any removal, upgrade included, first removes the service and its
+  watchdog task if you installed them, so reinstall the service after an upgrade. A full
+  uninstall also removes every BruceEDR firewall block, and leaves config, logs and quarantine.
+- **`BruceEDR.exe --cleanup`** and **Settings > Remove rules**: remove every Windows Firewall
+  rule BruceEDR created, and lift host isolation if BruceEDR applied it. Outbound blocks are
+  keyed to an image path and outlive the agent, so an app could stay offline after a
+  containment.
+- Status-bar badge for the live mode (MONITOR ONLY or ENFORCING); in monitor mode the dashboard
+  and threat table say *would contain* rather than *contained*.
+- One product version for every assembly (`Directory.Build.props`); the sidebar shows it
+  instead of a hard-coded `v1.0`. `publish-release.ps1` reads it when `-Version` is omitted and
+  builds the zip and the MSI from one staged folder that has passed the self-test.
+
+### Fixed
+
+- **The packaged desktop app could not start.** Single-file publish leaves WPF's native DLLs
+  (`wpfgfx_cor3.dll`, `PresentationNative_cor3.dll`, ...) beside the exe, and the release
+  script only ever copied the exe, so the 3.0.0 to 3.1.1 zips shipped a GUI without them. They
+  are now staged next to it, and both the release script and the MSI build refuse to package
+  without them.
+- **Watchlist convictions were missing from the threat table.** The "all flagged" list filtered
+  on score, and a watchlist conviction is contained at score 0, so the desktop app's table and
+  `list all` never showed the processes an operator had named.
+- **A process whose suspend failed was retried on every signal.** Each retry re-ran the firewall
+  step (two netsh spawns) and printed a fresh QUARANTINE. Now one attempt per incident per minute.
+- **Stopping or closing left suspended processes frozen**, with nothing left to release them.
+  Stop and close now offer to resume them (and lift their firewall blocks) first.
+- **Switching monitor to enforce never contained processes monitor mode had flagged**: their
+  verdict had already set the one-shot gate. Monitor-mode verdicts are recorded as *would
+  contain* and re-armed on the switch, so the next thing such a process does is contained.
+- The tray no longer says "monitoring" while nothing runs, the dashboard is neutral (not the
+  green of "all clear") while stopped, the overlay keeps keyboard and screen readers out of the
+  tabs underneath, Start no longer blocks the window, and the status bar fits the minimum width.
+- Monitor mode keeps the kernel driver non-blocking even with `kernelBlocking` set, and a reload
+  applies the response mode, playbook isolation and kernel blocking before anything that can fail.
+- `--uninstall` ends the watchdog task before removing the service, waits for it to stop, and no
+  longer fails on a broken config. The clean-up never resets the firewall policy unless a marker
+  written by isolation proves BruceEDR changed it: hosts that block outbound by design are left
+  alone.
+- **A click in the console could freeze the agent.** With QuickEdit on, a selection blocks
+  every console write, and the agent writes while holding the lock its detection thread also
+  needs. Console mode now turns QuickEdit off and restores it on exit.
+- **Console floods.** The console echo is capped at 40 lines a second with a summary of what was
+  held back. QUARANTINE and error lines always print, redirected output is never limited, and
+  the log sinks still receive every event.
+- The MSI build in `publish-release.ps1` always rebuilds and re-validates, so a re-run after a
+  failed validation cannot report a stale installer as built.
+
 ## [3.1.1] - 2026-10-06
 
 A small follow-up to 3.1.0: one behaviour change you need to know about, a few hardening

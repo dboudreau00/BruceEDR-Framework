@@ -3,6 +3,9 @@
 This walks you from source to a running beta, using **Visual Studio 2022**. CLI
 equivalents are given where useful. Read section 0 first.
 
+Just want to run it? Install `BruceEDR-v<version>-win-x64.msi` from the releases page
+instead; see the README's Quick start.
+
 ---
 
 ## 0. Safety first (read this)
@@ -14,6 +17,9 @@ moves files to quarantine**. Do **not** run it on a machine you care about.
 - Take a **VM snapshot** before you start so you can roll back.
 - Keep `autoKill` = `false` (the default) during early testing so contained
   processes are only suspended, not terminated.
+- BruceEDR starts in **monitor mode** (`response.mode: "monitor"`): it detects and
+  logs what it would have done, and acts on nothing. Containment only happens after
+  you switch to **enforce** on the set-up screen, in Settings, or in the config.
 
 ---
 
@@ -149,6 +155,10 @@ infrastructure you are investigating. It resolves the country an address block i
 - **Quality of life** — window size/position and last tab persist, `F5`
   refreshes, `Ctrl+1…5` switch views.
 
+The app opens on a **set-up screen** and monitors nothing until you press **Start
+monitoring**. **Stop monitoring** in the status bar returns to set-up, and offers to resume
+any process BruceEDR suspended (stopping never resumes them by itself).
+
 Build the solution (section 3), then run it either way:
 - **Visual Studio:** right-click **BruceEDR.Gui** in Solution Explorer ->
   **Set as Startup Project**, then **Debug -> Start** (F5). It requests administrator
@@ -163,7 +173,7 @@ detection walkthrough below works with either front-end.
 
 ## 4. Run the unit tests
 
-- In VS: **Test -> Run All Tests** (opens Test Explorer). All 2,180 tests should pass.
+- In VS: **Test -> Run All Tests** (opens Test Explorer). All 2,246 tests should pass.
   They cover the exfil-chain scoring, the JSON rule engine, ATT&CK mapping, beacon and
   DGA analytics, the process tree (including PID reuse and hostile parent cycles), PE
   parsing against malformed files, indicator feeds, the encrypted quarantine vault,
@@ -194,10 +204,14 @@ clock. It starts no monitors and needs no elevation, so it is safe to run anywhe
 
 ## 5. Run the agent interactively (the main beta loop)
 
-The agent **requires elevation**. Double-clicking the `.exe` now pops a **UAC
-prompt** and relaunches itself elevated (accept it, and an elevated console opens
-at the `bruce>` prompt). If anything fails at startup the window stays open with
-the error and a "Press Enter to close" pause, so it won't just vanish anymore.
+The console agent is opt-in with `--console`. `BruceEDR.exe` with no arguments (a
+double-click) opens the desktop app instead and never starts monitoring by itself.
+
+The agent **requires elevation**. `BruceEDR.exe --console` from a normal terminal pops a
+**UAC prompt** and relaunches itself elevated. If anything fails at startup the window
+stays open with the error and a "Press Enter to close" pause. QuickEdit selection is
+turned off while the agent runs (a selection would pause every console write, and the
+agent with it) and restored on exit.
 
 For the cleanest experience, run it from an elevated terminal. Pick one:
 
@@ -209,11 +223,12 @@ For the cleanest experience, run it from an elevated terminal. Pick one:
    ```
 3. Run:
    ```
-   BruceEDR.exe
+   BruceEDR.exe --console
    ```
 
 **Option B - from Visual Studio:** right-click Visual Studio -> **Run as
-administrator**, reopen the solution, make `BruceEDR` the startup project,
+administrator**, reopen the solution, make `BruceEDR` the startup project, put
+`--console` in **Project -> Properties -> Debug -> Command line arguments**,
 then **Debug -> Start Without Debugging** (`Ctrl+F5`). If VS is *not* elevated the
 app prints `Run as Administrator` and exits by design - use Option A.
 
@@ -243,7 +258,11 @@ powershell -ExecutionPolicy Bypass -File .\tools\simulate-benign-stealer.ps1
 It reproduces the **collect -> archive -> exfil** shape without stealing anything:
 it writes a dummy file on a path containing `\Google\Chrome\User Data\...\Login
 Data` under `%TEMP%`, zips it into `%TEMP%`, and opens/closes a TCP connection to
-`1.1.1.1:443`. That crosses the quarantine threshold, so BruceEDR will
+`1.1.1.1:443`. That crosses the quarantine threshold. In **monitor mode** (the
+default) BruceEDR records the verdict and logs
+`monitor mode, nothing done; enforce would run ... -> Suspend, ...`; nothing is
+touched. To watch containment happen, switch to **enforce** first (set-up screen,
+Settings, or `"mode": "enforce"` in the config), and BruceEDR will
 **suspend that PowerShell process**.
 
 Now switch to the BruceEDR console:
@@ -293,20 +312,23 @@ itself (not `dotnet.exe`).
    ```
    (VS: right-click the project -> **Publish** -> Folder -> target `win-x64`,
    deployment mode **Self-contained**.)
-2. From an **elevated** prompt in the `publish` folder:
+2. Copy the `publish` folder to `C:\Program Files\BruceEDR` (or install the MSI). The
+   service runs as SYSTEM, so `--install` refuses a folder a standard user can write to.
+   Then, from an **elevated** prompt:
    ```
-   BruceEDR.exe --install
+   "C:\Program Files\BruceEDR\BruceEDR.exe" --install
    ```
    This registers and starts the `BruceEDR` service (with auto-restart
-   recovery) plus a SYSTEM **watchdog** scheduled task.
+   recovery) plus a SYSTEM **watchdog** scheduled task. It runs in whatever
+   `response.mode` the config says (monitor by default).
 3. Verify:
    ```
    sc query BruceEDR
    ```
    Events stream to the configured `incidents.jsonl` and `audit.log`.
-4. Remove it when done:
+4. Remove it when done (the MSI does this too on uninstall and upgrade):
    ```
-   BruceEDR.exe --uninstall
+   "C:\Program Files\BruceEDR\BruceEDR.exe" --uninstall
    ```
 
 > Tamper note: the watchdog + service recovery restart the agent if it crashes or
@@ -346,6 +368,11 @@ Real inline prevention. Built **separately** with the WDK.
 ## 10. Configuration (`bruce.config.json`)
 
 Key settings:
+- `response.mode` - `monitor` (default: detect and log, never act on its own) or
+  `enforce` (run the response playbook). Anything else is treated as monitor.
+  Reloads live.
+- `response.allowPlaybookIsolation` - must be `true` before a playbook may isolate the
+  host. Default `false`.
 - `detection.warnThreshold` / `quarantineThreshold` - scoring cutoffs.
 - `detection.autoKill` - `false` = suspend only (recommended for beta).
 - `detection.memoryScanEngine` - `"builtin"` or `"yara"`.
@@ -415,7 +442,9 @@ refuses POST/PUT/PATCH/DELETE until you set `allowMutatingMethods`. That is deli
 | Symptom | Fix |
 |---------|-----|
 | App prints `Run as Administrator` and exits | Launch from an elevated terminal (section 5, Option A). |
-| Window flashed open and closed on double-click (older build) | The app now self-elevates via UAC; accept the prompt, or run from an elevated terminal. |
+| Double-clicking `BruceEDR.exe` opened the desktop app, not a console | By design since 3.2.0. The console agent needs `--console` (section 5). |
+| Nothing was suspended during the simulation | Monitor mode (the default) only reports. Look for `monitor mode, nothing done` in the log; switch to enforce to test containment. |
+| An app lost network access after a containment | BruceEDR's outbound blocks persist after it exits. Run `BruceEDR.exe --cleanup` as Administrator, or **Settings > Remove rules** in the app. |
 | Falls back to `WMI(process)` only | You're not elevated, or ETW is blocked; file/network correlation is limited until ETW works. |
 | Build error about platform / `AnyCPU` | Set the VS platform dropdown to **x64**. |
 | NuGet restore fails | Check the VM's internet/proxy; retry **Restore NuGet Packages**. |
@@ -439,7 +468,7 @@ Two capabilities are intentionally not shippable here because they're gated behi
 Microsoft programs: **PPL/ELAM tamper protection** and **production driver
 signing**. See `README.md` -> "Security model & honest limitations".
 
-What *is* verified on every build: the solution compiles with zero warnings, 2,180 unit
+What *is* verified on every build: the solution compiles with zero warnings, 2,246 unit
 tests pass, all 72 detection rules validate, and all three replay scenarios meet their
 expectations — including the benign one that must produce no verdicts at all.
 
