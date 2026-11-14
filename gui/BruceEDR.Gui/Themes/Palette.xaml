@@ -71,6 +71,7 @@
          telemetry data (PIDs, scores, timestamps, endpoints), Cascadia fallback. -->
     <FontFamily x:Key="Font.Ui">Inter, Segoe UI Variable Text, Segoe UI</FontFamily>
     <FontFamily x:Key="Font.Data">JetBrains Mono, Cascadia Mono, Consolas, Courier New</FontFamily>
+    <FontFamily x:Key="Font.Icon">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
 
     <sys:Double x:Key="Size.Display">24</sys:Double>
     <sys:Double x:Key="Size.Title">13.5</sys:Double>
