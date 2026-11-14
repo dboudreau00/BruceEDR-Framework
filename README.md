@@ -83,7 +83,7 @@ tool that overstates itself is worse than one that admits its edges.
 | **Intel** | Drop hash / domain / IP / CIDR / URL indicator feeds into `intel/feeds/`; matching is hash-set based, so a million-entry feed costs the same per event as ten. |
 | **File analysis** | Dependency-free PE reader: sections, entropy, imphash, packer indicators, suspicious imports, SHA-256 — bounds-checked at every offset, because it gets pointed at hostile files. |
 | **Trust** | Full **Authenticode** verification (`WinVerifyTrust` chain validation + thumbprint pinning); allowlisted publishers get a scoring discount. Trust is only granted on a cryptographically valid chain. |
-| **Response** | Suspend-first containment, injection-safe outbound firewall block, **AES-256-GCM encrypted quarantine vault** with restore and integrity verification, **config-driven playbooks**, **host isolation** with an allowlist, and **forensic triage packages**. |
+| **Response** | Suspend-first containment that refuses Windows' own processes and the programs on **safe-process lists**, injection-safe outbound firewall block, **AES-256-GCM encrypted quarantine vault** with restore and integrity verification, **config-driven playbooks**, **host isolation** with an allowlist, and **forensic triage packages**. |
 | **Telemetry** | JSONL, syslog (RFC 5424) and HTTP webhook sinks in **native, Elastic Common Schema, OCSF 1.1 or CEF** — so an existing SIEM ingests it without a custom parser. Plus a **keyed (HMAC-SHA256) hash-chained audit log** with a head-anchor and verifier, and **Prometheus metrics**. |
 | **API Studio** | Import Postman v2.1 / OpenAPI 3 / Swagger 2 / HAR / curl, or generate a collection from the endpoints this host was **observed** using. Send, assert, chain captures, and grade responses for TLS, security headers, CORS, cookie flags, leaked secrets and PII. Export to Postman / OpenAPI / `.http` / curl / Markdown; report to JSON / JUnit / HTML. |
 | **Control plane** | Localhost-only REST API (`/status`, `/profiles`, `/surface`, `/metrics`, `/rules`, `/attack`, `/events`) with bearer auth, off by default, read-only by default. |
@@ -426,6 +426,7 @@ BruceEDR.sln              Console + GUI + Tests (VS2022, x64)
 ├─ gui/BruceEDR.Gui/              WPF app (dashboard/events/surface/map/watchlist/coverage)
 ├─ kernel/BruceFilter/                C file-system minifilter (built with the WDK)
 ├─ rules/detection/                    JSON detection rule packs (+ authoring guide)
+├─ safe-processes/                     programs containment leaves alone, by full path
 ├─ intel/feeds/                        drop your indicator feeds here
 ├─ intel/geo/                          offline IP->country + world outline for the map
 ├─ installer/                          WiX 5 MSI (Package.wxs); publish-release.ps1 builds it

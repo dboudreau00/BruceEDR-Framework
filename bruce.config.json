@@ -46,6 +46,7 @@
     "quarantineVaultPath": "quarantine",
     "playbookPath": "",
     "triageOutputPath": "triage",
+    "safeProcessesPath": "safe-processes",
     "isolationAllowlist": [],
     "allowPlaybookIsolation": false
   },

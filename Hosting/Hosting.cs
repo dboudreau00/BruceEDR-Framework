@@ -180,6 +180,7 @@ public sealed class Composition : IDisposable
         var response = new ResponseManager(log, verifier, vault);
         var engine = new DetectionEngine(options, response.IsTrusted, deps);
         var playbook = LoadPlaybook(cfg.Response, log);
+        var safeProcesses = LoadSafeProcesses(cfg.Response, log);
 
         var hostOptions = new BruceHostOptions
         {
@@ -189,7 +190,8 @@ public sealed class Composition : IDisposable
             Tree = tree,
             Surface = cfg.Api.EnableSurfaceInventory ? surface : null,
             Playbook = playbook,
-            Metrics = new BruceMetrics(clock)
+            Metrics = new BruceMetrics(clock),
+            RefuseContainment = pid => ContainmentGuard.Refusal(pid, safeProcesses)
         };
         var host = new BruceHost(engine, response, scanner, log, hostOptions);
 
@@ -266,6 +268,19 @@ public sealed class Composition : IDisposable
                      (contain > 0 ? $", {contain} set to contain on sight" : ""));
         }
         return list;
+    }
+
+    /// <summary>
+    /// The programs containment never touches (safe-processes\*.json). A list file a standard user
+    /// could edit is skipped: an entry there would put a program beyond containment.
+    /// </summary>
+    internal static SafeProcesses LoadSafeProcesses(ResponseConfig r, Logger log)
+    {
+        var dir = ResolveContentDir(r.SafeProcessesPath, "safe processes", log);
+        if (dir is null) return SafeProcesses.Empty;
+        var safe = SafeProcesses.Load(dir, KernelPolicy.WriteRisk, m => log.Info("safe processes: " + m));
+        log.Info($"safe processes: {safe.Count} program(s) that containment leaves alone when Windows started them");
+        return safe;
     }
 
     internal static IocFeed LoadIntel(IntelConfig i, Logger log)

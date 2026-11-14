@@ -1,0 +1,12 @@
+{
+  "description": "Windows services and helpers that keep the machine usable. On clean lab VMs in enforce mode, WMI, Search and Defrag were contained within minutes.",
+  "processes": [
+    { "image": "%SystemRoot%\\System32\\wbem\\WmiPrvSE.exe", "why": "WMI provider host: suspending it stops every WMI query, and it reads LSASS to answer process queries" },
+    { "image": "%SystemRoot%\\SysWOW64\\wbem\\WmiPrvSE.exe", "why": "WMI provider host for 32-bit providers" },
+    { "image": "%SystemRoot%\\System32\\SearchIndexer.exe", "why": "Windows Search indexer" },
+    { "image": "%SystemRoot%\\System32\\SearchProtocolHost.exe", "why": "Windows Search protocol handler host" },
+    { "image": "%SystemRoot%\\System32\\SearchFilterHost.exe", "why": "Windows Search filter host" },
+    { "image": "%SystemRoot%\\System32\\Defrag.exe", "why": "Optimize Drives, run by a scheduled task" },
+    { "image": "%SystemRoot%\\System32\\consent.exe", "why": "the UAC prompt: suspending it leaves every elevation waiting" }
+  ]
+}

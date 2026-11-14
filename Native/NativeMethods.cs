@@ -91,4 +91,32 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetProcessInformation(IntPtr hProcess, int processInformationClass, out uint processInformation, uint processInformationSize);
+
+    public const uint TOKEN_QUERY = 0x0008;
+    public const int TokenUser = 1;
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, IntPtr tokenInformation,
+        int tokenInformationLength, out int returnLength);
+
+    /// <summary>PROCESS_BASIC_INFORMATION; the two NTSTATUS/KPRIORITY members are padded to pointer size on x64.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_BASIC_INFORMATION
+    {
+        public IntPtr ExitStatus;
+        public IntPtr PebBaseAddress;
+        public IntPtr AffinityMask;
+        public IntPtr BasePriority;
+        public IntPtr UniqueProcessId;
+        public IntPtr InheritedFromUniqueProcessId;
+    }
+
+    [DllImport("ntdll.dll")]
+    public static extern int NtQueryInformationProcess(IntPtr processHandle, int processInformationClass,
+        out PROCESS_BASIC_INFORMATION processInformation, int processInformationLength, out int returnLength);
 }

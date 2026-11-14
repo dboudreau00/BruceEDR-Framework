@@ -45,16 +45,73 @@ public sealed class ContainmentGuardTests : IDisposable
         => Assert.Contains("agent itself", ContainmentGuard.Refusal(4242, 4242, new LiveProcess("BruceEDR", null), AdminOnly));
 
     [Theory]
-    [InlineData("svchost")]
-    [InlineData("csrss.exe")]
-    [InlineData("LSASS")]
-    [InlineData("Memory Compression")]
-    [InlineData("explorer")]
-    public void A_protected_Windows_process_in_an_admin_only_folder_is_refused(string name)
+    [InlineData("csrss", @"C:\Windows\System32\csrss.exe")]
+    [InlineData("LSASS", @"C:\Windows\System32\lsass.exe")]
+    [InlineData("winlogon.exe", @"C:\Windows\System32\winlogon.exe")]
+    public void A_protected_Windows_process_running_as_a_service_account_is_refused(string name, string image)
+        => Assert.Contains("protected Windows process",
+            ContainmentGuard.Refusal(1000, 9999, new LiveProcess(name, image, ServiceAccount: true), AdminOnly));
+
+    // Any user can start the real System32 file and hollow it out; that copy runs as the user.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void A_users_own_copy_of_a_service_program_is_contained(bool? serviceAccount)
+        => Assert.Null(ContainmentGuard.Refusal(1000, 9999,
+            new LiveProcess("lsass", @"C:\Windows\System32\lsass.exe", ServiceAccount: serviceAccount), AdminOnly));
+
+    [Fact]
+    public void Svchost_is_refused_only_when_services_exe_started_it()
     {
-        var refusal = ContainmentGuard.Refusal(1000, 9999, new LiveProcess(name, @"C:\Windows\System32\x.exe"), AdminOnly);
-        Assert.Contains("protected Windows process", refusal);
+        const string image = @"C:\Windows\System32\svchost.exe";
+        Assert.Contains("protected Windows process",
+            ContainmentGuard.Refusal(1000, 9999, new LiveProcess("svchost", image, ServiceAccount: true, StartedByServices: true), AdminOnly));
+        // Per-user services run as the user, and services.exe still starts them.
+        Assert.NotNull(ContainmentGuard.Refusal(1000, 9999,
+            new LiveProcess("svchost", image, ServiceAccount: false, StartedByServices: true), AdminOnly));
+        Assert.Null(ContainmentGuard.Refusal(1000, 9999,
+            new LiveProcess("svchost", image, ServiceAccount: false, StartedByServices: false), AdminOnly));
     }
+
+    [Theory]
+    [InlineData("explorer", @"C:\Windows\explorer.exe")]
+    [InlineData("sihost", @"C:\Windows\System32\sihost.exe")]
+    public void The_users_shell_programs_are_refused_by_name_and_path(string name, string image)
+        => Assert.Contains("protected Windows process",
+            ContainmentGuard.Refusal(1000, 9999, new LiveProcess(name, image, ServiceAccount: false), AdminOnly));
+
+    [Fact]
+    public void A_kernel_process_with_no_image_is_refused()
+        => Assert.Contains("could not be read", ContainmentGuard.Refusal(1000, 9999, new LiveProcess("Memory Compression", null), AdminOnly));
+
+    [Fact]
+    public void A_safe_listed_program_is_refused_only_for_the_real_file_run_by_a_service_account()
+    {
+        const string wmi = @"C:\Windows\System32\wbem\WmiPrvSE.exe";
+        var safe = SafeProcesses.Of(wmi);
+
+        Assert.Contains("safe-process list",
+            ContainmentGuard.Refusal(1000, 9999, new LiveProcess("WmiPrvSE", wmi.ToUpperInvariant(), ServiceAccount: true), AdminOnly, safe));
+        Assert.Null(ContainmentGuard.Refusal(1000, 9999, new LiveProcess("WmiPrvSE", wmi, ServiceAccount: false), AdminOnly, safe));
+        Assert.Null(ContainmentGuard.Refusal(1000, 9999, new LiveProcess("WmiPrvSE", wmi, ServiceAccount: null), AdminOnly, safe));
+        Assert.Null(ContainmentGuard.Refusal(1000, 9999, new LiveProcess("WmiPrvSE", wmi, ServiceAccount: true), UserWritable, safe));
+        Assert.Null(ContainmentGuard.Refusal(1000, 9999,
+            new LiveProcess("WmiPrvSE", @"C:\Temp\WmiPrvSE.exe", ServiceAccount: true), AdminOnly, safe));
+        Assert.Null(ContainmentGuard.Refusal(1000, 9999, new LiveProcess("WmiPrvSE", wmi, ServiceAccount: true), AdminOnly));
+    }
+
+    [Theory]
+    [InlineData("S-1-5-18", true)]
+    [InlineData("S-1-5-19", true)]
+    [InlineData("S-1-5-20", true)]
+    [InlineData("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464", true)]
+    [InlineData("S-1-5-90-0-1", true)]
+    [InlineData("S-1-5-96-0-1", true)]
+    [InlineData("S-1-5-21-1004336348-1177238915-682003330-1001", false)]
+    [InlineData("S-1-5-32-544", false)]
+    [InlineData("S-1-5-181", false)]
+    public void Service_accounts_are_told_from_people(string sid, bool expected)
+        => Assert.Equal(expected, ContainmentGuard.IsServiceSid(sid));
 
     [Fact]
     public void A_process_running_protected_is_refused_whatever_its_name_or_folder()
@@ -82,7 +139,7 @@ public sealed class ContainmentGuardTests : IDisposable
     {
         string real = Path.Combine(Environment.SystemDirectory, "svchost.exe");
         Assert.Contains("protected Windows process",
-            ContainmentGuard.Refusal(1000, 9999, new LiveProcess("svchost", real), KernelPolicy.WriteRisk));
+            ContainmentGuard.Refusal(1000, 9999, new LiveProcess("svchost", real, StartedByServices: true), KernelPolicy.WriteRisk));
 
         // Only the path's permissions are read, so the planted file needs no svchost name of its own.
         string fake = Path.Combine(NewDir(), "planted.bin");
@@ -109,6 +166,9 @@ public sealed class ContainmentGuardTests : IDisposable
         Assert.NotNull(live);
         Assert.Equal("ping", live!.Name, ignoreCase: true);
         Assert.EndsWith(@"\ping.exe", live.ImagePath, StringComparison.OrdinalIgnoreCase);
+        Assert.False(live.Protected);
+        Assert.False(live.ServiceAccount);       // our own token: a person, not a service
+        Assert.False(live.StartedByServices);
         Assert.Null(ContainmentGuard.Refusal(child.Id));
     }
 

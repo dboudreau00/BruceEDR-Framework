@@ -44,6 +44,7 @@ public sealed class BruceConfig
 
         if (string.IsNullOrWhiteSpace(Telemetry.Format)) Telemetry.Format = "native";
         if (string.IsNullOrWhiteSpace(Response.QuarantineVaultPath)) Response.QuarantineVaultPath = "quarantine";
+        Response.SafeProcessesPath ??= "";
         // Only an explicit "enforce" arms automatic response; a typo stays hands-off.
         Response.Mode = Response.IsEnforcing ? ResponseModes.Enforce : ResponseModes.Monitor;
 
@@ -221,6 +222,11 @@ public sealed class ResponseConfig
     public string PlaybookPath { get; set; } = "";
     /// <summary>Where CollectTriage playbook actions write their forensic zip.</summary>
     public string TriageOutputPath { get; set; } = "triage";
+    /// <summary>
+    /// Folder of *.json lists of programs never suspended, firewalled or killed (detection still
+    /// reports them). Read at startup; empty turns the lists off. See safe-processes\README.md.
+    /// </summary>
+    public string SafeProcessesPath { get; set; } = "safe-processes";
     /// <summary>Addresses that stay reachable when the host is isolated (management/RDP/AD).</summary>
     public string[] IsolationAllowlist { get; set; } = Array.Empty<string>();
 

@@ -8,11 +8,16 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 
 - **Containment refuses Windows' own processes.** Automatic and analyst suspend, firewall block
   and kill now refuse pid 0 and 4, the agent itself, any process running protected (PPL, which
-  only Windows and signed antivirus engines can do), and the Windows processes the watchlist
-  already protects (csrss, svchost, explorer, MsMpEng and the others) when their image sits
-  where only administrators can write. The verdict is still recorded and triage and the webhook still
-  run; the log says what was refused and why. In two lab VMs, enforce mode suspended csrss,
-  svchost and the Defender engine within minutes, after which no program could start.
+  only Windows and signed antivirus engines can do), the Windows processes the watchlist already
+  protects, and the programs on the new safe-process lists. A name or list entry counts only for
+  the real file (its folder only administrators can write) and for the instance Windows started:
+  svchost when the protected services.exe started it, the rest under a service account. A copy a
+  user starts, and could hollow out, is contained as before; the user's own shell programs
+  (explorer, sihost and the like) are the exception, refused by name and path. The verdict is
+  still recorded and triage and the webhook still run; the log says what was refused and why. In
+  two lab VMs, enforce mode suspended csrss, svchost and the Defender engine within minutes,
+  after which no program could start; with the guard, both ran 25 minutes in enforce mode
+  without a hang.
 - **The driver and the agent speak protocol 2.** The agent refuses an older `BruceFilter.sys`
   (logged, enforcement unavailable) rather than switch on a driver that denies every process.
   Build and install the driver from this release.
@@ -25,6 +30,11 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 
 ### Added
 
+- **Safe-process lists** (`safe-processes\*.json`, `response.safeProcessesPath`): programs
+  containment leaves alone while detection still reports them, by full image path, never by name.
+  A list file a standard user could edit is not loaded, and script hosts such as `powershell.exe`
+  and `rundll32.exe` are refused outright. The shipped lists cover WMI, Windows Search, Optimize
+  Drives, the UAC prompt, VMware Tools, Hyper-V management and the WSL service.
 - **Trusted programs.** Each store's owner is trusted for that store when HKLM App Paths or its
   machine-wide install folder (Edge registers no App Paths key on some builds) places it where
   only SYSTEM, Administrators or TrustedInstaller can change the file or the folders above it.

@@ -376,9 +376,13 @@ Key settings:
 - `response.mode` - `monitor` (default: detect and log, never act on its own) or
   `enforce` (run the response playbook). Anything else is treated as monitor.
   Reloads live. Enforce mode never suspends, firewalls or kills System, the agent
-  itself, a protected (PPL) process such as the antivirus, or the Windows processes the
-  watchlist protects; it logs the refusal instead. Run monitor mode first and read what
-  it would have done.
+  itself, a protected (PPL) process such as the antivirus, the Windows processes the
+  watchlist protects, or the programs on the safe-process lists; it logs the refusal
+  instead. Run monitor mode first and read what it would have done.
+- `response.safeProcessesPath` - the folder of safe-process lists (default
+  `safe-processes`): programs containment leaves alone, such as WMI, Windows Search
+  and VMware Tools, while detection still reports them. Add your backup or management
+  agent by full path; see `safe-processes\README.md`. Read at startup.
 - `response.allowPlaybookIsolation` - must be `true` before a playbook may isolate the
   host. Default `false`.
 - `detection.warnThreshold` / `quarantineThreshold` - scoring cutoffs.

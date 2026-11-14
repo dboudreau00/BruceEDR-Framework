@@ -90,6 +90,9 @@ Copy-Item (Join-Path $root "bruce.config.json") $stage -Force
 # startup; Replay/scenarios and intel/feeds are what make --selftest and the intel feature
 # work out of the box in the shipped layout.
 Copy-Item (Join-Path $root "rules") (Join-Path $stage "rules") -Recurse -Force
+# safe-processes/ is what keeps containment off WMI, VMware Tools and the like
+# (response.safeProcessesPath); without it the agent runs with no lists at all.
+Copy-Item (Join-Path $root "safe-processes") (Join-Path $stage "safe-processes") -Recurse -Force
 New-Item -ItemType Directory -Force -Path (Join-Path $stage "Replay") | Out-Null
 Copy-Item (Join-Path $root "Replay/scenarios") (Join-Path $stage "Replay/scenarios") -Recurse -Force
 New-Item -ItemType Directory -Force -Path (Join-Path $stage "intel") | Out-Null

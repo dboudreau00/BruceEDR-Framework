@@ -1,0 +1,10 @@
+{
+  "description": "Guest tools and virtualization services. Suspending them cuts a VM off from its host, or the host off from its VMs; one lab VM lost every VMware Tools operation that way.",
+  "processes": [
+    { "image": "%ProgramFiles%\\VMware\\VMware Tools\\vmtoolsd.exe", "why": "VMware Tools service" },
+    { "image": "%ProgramFiles%\\VMware\\VMware Tools\\VMware VGAuth\\VGAuthService.exe", "why": "VMware guest authentication, which every Tools guest operation goes through" },
+    { "image": "%SystemRoot%\\System32\\vmms.exe", "why": "Hyper-V Virtual Machine Management" },
+    { "image": "%SystemRoot%\\System32\\vmcompute.exe", "why": "Hyper-V Host Compute Service" },
+    { "image": "%ProgramFiles%\\WSL\\wslservice.exe", "why": "Windows Subsystem for Linux service" }
+  ]
+}
