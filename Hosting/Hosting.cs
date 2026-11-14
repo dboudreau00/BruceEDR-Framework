@@ -135,22 +135,7 @@ public sealed class Composition : IDisposable
         var hashes = new ImageHashCache();
         var images = new ImageAnalysisCache();
 
-        var options = new EngineOptions
-        {
-            WarnThreshold = cfg.Detection.WarnThreshold,
-            QuarantineThreshold = cfg.Detection.QuarantineThreshold,
-            CorrelationWindow = TimeSpan.FromSeconds(cfg.Detection.CorrelationWindowSeconds),
-            AutoKillOnQuarantine = cfg.Detection.AutoKill,
-            TrustDiscount = cfg.Detection.TrustDiscount,
-            EnableScoreDecay = cfg.Detection.EnableScoreDecay,
-            ScoreDecayPoints = cfg.Detection.ScoreDecayPoints,
-            ScoreDecayInterval = TimeSpan.FromSeconds(cfg.Detection.ScoreDecayIntervalSeconds),
-            BeaconScore = cfg.Detection.BeaconScore,
-            DgaScore = cfg.Detection.DgaScore,
-            EnableDomainAnalysis = cfg.Detection.EnableDomainAnalysis,
-            IntelHitScore = cfg.Intel.HitScore,
-            MaxTrackedProcesses = cfg.Detection.MaxTrackedProcesses
-        };
+        var options = BuildEngineOptions(cfg, cfg.Detection.AutoKill);
 
         var deps = new EngineDependencies
         {
@@ -225,7 +210,24 @@ public sealed class Composition : IDisposable
 
     // ------------------------------------------------------------------- loading
 
-    private static RuleSet LoadRules(DetectionConfig d, Logger log)
+    internal static EngineOptions BuildEngineOptions(BruceConfig cfg, bool autoKill) => new()
+    {
+        WarnThreshold = cfg.Detection.WarnThreshold,
+        QuarantineThreshold = cfg.Detection.QuarantineThreshold,
+        CorrelationWindow = TimeSpan.FromSeconds(cfg.Detection.CorrelationWindowSeconds),
+        AutoKillOnQuarantine = autoKill,
+        TrustDiscount = cfg.Detection.TrustDiscount,
+        EnableScoreDecay = cfg.Detection.EnableScoreDecay,
+        ScoreDecayPoints = cfg.Detection.ScoreDecayPoints,
+        ScoreDecayInterval = TimeSpan.FromSeconds(cfg.Detection.ScoreDecayIntervalSeconds),
+        BeaconScore = cfg.Detection.BeaconScore,
+        DgaScore = cfg.Detection.DgaScore,
+        EnableDomainAnalysis = cfg.Detection.EnableDomainAnalysis,
+        IntelHitScore = cfg.Intel.HitScore,
+        MaxTrackedProcesses = cfg.Detection.MaxTrackedProcesses
+    };
+
+    internal static RuleSet LoadRules(DetectionConfig d, Logger log)
     {
         if (!d.EnableRuleEngine) return new RuleSet(Array.Empty<DetectionRule>(), Array.Empty<RuleValidationError>());
         var dir = ResolveContentDir(d.RulesPath, "rules", log);
@@ -245,7 +247,7 @@ public sealed class Composition : IDisposable
     /// operator who mistypes one rule must be told which one, not silently given a shorter
     /// list than they wrote.
     /// </summary>
-    private static Watchlist LoadWatchlist(WatchlistConfig w, Logger log)
+    internal static Watchlist LoadWatchlist(WatchlistConfig w, Logger log)
     {
         if (!w.Enabled) return Watchlist.Empty;
         var list = Watchlist.Compile(w.Entries, m => log.Info("watchlist: " + m), w.AlertOnEveryHit);
@@ -258,7 +260,7 @@ public sealed class Composition : IDisposable
         return list;
     }
 
-    private static IocFeed LoadIntel(IntelConfig i, Logger log)
+    internal static IocFeed LoadIntel(IntelConfig i, Logger log)
     {
         if (!i.Enabled) return new IocFeed();
         var dir = ResolveContentDir(i.FeedPath, "intel", log);
@@ -322,7 +324,7 @@ public sealed class Composition : IDisposable
         return c.StartsWith(b + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static Playbook LoadPlaybook(ResponseConfig r, Logger log)
+    internal static Playbook LoadPlaybook(ResponseConfig r, Logger log)
     {
         if (string.IsNullOrWhiteSpace(r.PlaybookPath)) return Playbook.Default();
         try
