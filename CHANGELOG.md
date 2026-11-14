@@ -158,6 +158,9 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
     shell) was flagged in turn.
   - **The agent no longer scores itself.** Its triage files in `Windows\Temp` and the IOC list in
     its own memory scored the agent as a staging, stealing process.
+- **Reload from disk could crash the desktop app.** In Settings and Watchlist it read the config
+  file without catching a syntax error, so a bad edit on disk threw on the UI thread. It now says
+  "Reload failed" with the reason, and "Reloaded from disk." when it worked.
 
 ## [3.3.0] - 2026-11-14
 

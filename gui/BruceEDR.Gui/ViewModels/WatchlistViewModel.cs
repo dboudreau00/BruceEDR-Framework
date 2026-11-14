@@ -130,7 +130,7 @@ public sealed class WatchlistViewModel : ViewModelBase
         AddCommand = new RelayCommand(Add);
         RemoveCommand = new RelayCommandP(p => Remove(p as WatchRow));
         SaveCommand = new RelayCommand(Save);
-        ReloadCommand = new RelayCommand(() => LoadFrom(ConfigLoader.Load(_configPath)));
+        ReloadCommand = new RelayCommand(ReloadFromDisk);
         Rows.CollectionChanged += (_, e) =>
         {
             foreach (WatchRow r in e.NewItems ?? Array.Empty<WatchRow>())
@@ -175,6 +175,20 @@ public sealed class WatchlistViewModel : ViewModelBase
         Rows.Remove(row);
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(ContainCount));
+    }
+
+    private void ReloadFromDisk()
+    {
+        try
+        {
+            LoadFrom(ConfigLoader.Load(_configPath));
+            Message = "Reloaded from disk.";
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("watchlist reload", ex);
+            Message = "Reload failed: " + ex.Message;
+        }
     }
 
     private void Save()
@@ -258,5 +272,6 @@ public sealed class WatchlistViewModel : ViewModelBase
     public string Message { get => _message; set { if (Set(ref _message, value)) OnPropertyChanged(nameof(MessageIsError)); } }
     public bool MessageIsError => _message.StartsWith("Not saved", StringComparison.Ordinal)
                                || _message.StartsWith("Save failed", StringComparison.Ordinal)
+                               || _message.StartsWith("Reload failed", StringComparison.Ordinal)
                                || _message.Contains("still invalid", StringComparison.Ordinal);
 }

@@ -19,7 +19,7 @@ public sealed class SettingsViewModel : ViewModelBase
     {
         _configPath = configPath;
         SaveCommand = new RelayCommand(Save);
-        ReloadCommand = new RelayCommand(() => LoadFrom(ConfigLoader.Load(_configPath)));
+        ReloadCommand = new RelayCommand(ReloadFromDisk);
         OpenLogCommand = new RelayCommand(() => OpenFile(AppLog.LogPath));
         OpenConfigCommand = new RelayCommand(() => OpenFile(_configPath));
         RemoveFirewallRulesCommand = new RelayCommand(RemoveFirewallRules, () => !_cleaning);
@@ -190,6 +190,22 @@ public sealed class SettingsViewModel : ViewModelBase
                 Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
         }
         catch (Exception ex) { AppLog.Error("open file", ex); }
+    }
+
+    private void ReloadFromDisk()
+    {
+        try
+        {
+            LoadFrom(ConfigLoader.Load(_configPath));
+            SaveFailed = false;
+            SaveMessage = "Reloaded from disk.";
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("settings reload", ex);
+            SaveFailed = true;
+            SaveMessage = "Reload failed: " + ex.Message;
+        }
     }
 
     public ICommand SaveCommand { get; }
