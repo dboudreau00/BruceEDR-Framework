@@ -6,6 +6,13 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 
 ### Changed - read before upgrading
 
+- **Containment refuses Windows' own processes.** Automatic and analyst suspend, firewall block
+  and kill now refuse pid 0 and 4, the agent itself, any process running protected (PPL, which
+  only Windows and signed antivirus engines can do), and the Windows processes the watchlist
+  already protects (csrss, svchost, explorer, MsMpEng and the others) when their image sits
+  where only administrators can write. The verdict is still recorded and triage and the webhook still
+  run; the log says what was refused and why. In two lab VMs, enforce mode suspended csrss,
+  svchost and the Defender engine within minutes, after which no program could start.
 - **The driver and the agent speak protocol 2.** The agent refuses an older `BruceFilter.sys`
   (logged, enforcement unavailable) rather than switch on a driver that denies every process.
   Build and install the driver from this release.

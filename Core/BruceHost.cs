@@ -43,6 +43,9 @@ public sealed class BruceHostOptions
 
     /// <summary>Invoked on the response worker for playbook actions the host does not implement itself.</summary>
     public Action<PlaybookAction, ProfileSnapshot>? ExtendedAction { get; init; }
+
+    /// <summary>Why a pid must not be suspended or killed, or null when it may be. Null uses <see cref="ContainmentGuard.Refusal(int)"/>.</summary>
+    public Func<int, string?>? RefuseContainment { get; init; }
 }
 
 /// <summary>
@@ -165,6 +168,7 @@ public sealed class BruceHost : IDisposable
 
     private readonly BruceHostOptions _options;
     private readonly Playbook _playbook;
+    private readonly Func<int, string?> _refuseContainment;
 
     private volatile bool _autoKill;
     private volatile bool _monitorOnly;
@@ -226,6 +230,7 @@ public sealed class BruceHost : IDisposable
         _playbook = options.Playbook ?? Playbook.Default();
         Metrics = options.Metrics ?? new BruceMetrics();
         ExtendedAction = options.ExtendedAction;
+        _refuseContainment = options.RefuseContainment ?? ContainmentGuard.Refusal;
     }
 
     /// <summary>True while automatic response is off (response.mode = monitor).</summary>
@@ -691,6 +696,11 @@ public sealed class BruceHost : IDisposable
 
         var tcs = ac.Result;
         int pid = ac.Pid;
+        if (_refuseContainment(pid) is { } refusal)
+        {
+            tcs.TrySetResult(ActionResult.Fail($"refused: {refusal}"));
+            return;
+        }
         // A row can outlive its process: the pid may already belong to something else.
         string expected = _engine.SnapshotOne(pid)?.ProcessName ?? "";
         bool scheduled = EnqueueResponse(() =>
@@ -804,6 +814,10 @@ public sealed class BruceHost : IDisposable
             matched = matched.Length == 0 ? "watchlist:" + snap.ForcedBy : matched + " + watchlist:" + snap.ForcedBy;
         }
 
+        // Some processes keep Windows itself running, and a verdict on one is reported but never
+        // answered: the lab VMs froze within minutes when enforce mode suspended csrss and svchost.
+        string? refusal = actions.Any(a => !IsReportOnly(a)) ? _refuseContainment(snap.Pid) : null;
+
         if (_monitorOnly)
         {
             // Monitor mode: the verdict and incident are recorded exactly as in enforce mode,
@@ -815,6 +829,8 @@ public sealed class BruceHost : IDisposable
             if (_autoKill && would.Count > 0 && !would.Contains(PlaybookAction.Kill)) would.Add(PlaybookAction.Kill);
             _log.Action(would.Count == 0
                 ? $"pid {snap.Pid}: monitor mode, no action (playbook '{matched}' selected none)"
+                : refusal is not null
+                ? $"pid {snap.Pid}: monitor mode, nothing done; enforce would refuse '{matched}' because {refusal}"
                 : $"pid {snap.Pid}: monitor mode, nothing done; enforce would run '{matched}' -> " +
                   string.Join(", ", would));
             return;
@@ -826,6 +842,21 @@ public sealed class BruceHost : IDisposable
             // Contained stays set (it gates the incident-update path) but nothing froze.
             _log.Action($"pid {snap.Pid}: playbook '{matched}' selected no containment action; " +
                         "the process is NOT frozen (verdict recorded, incident updates continue)");
+            return;
+        }
+
+        if (refusal is not null)
+        {
+            // Skipped, not failed: a failed containment re-arms and retries, and this one would
+            // be refused again on every signal. Triage and the webhook only read, so they run.
+            _engine.MarkContainmentSkipped(snap.Pid);
+            var reportOnly = actions.Where(IsReportOnly).Where(a => a != PlaybookAction.Log).ToList();
+            _log.Action($"pid {snap.Pid}: playbook '{matched}' refused because {refusal}; " +
+                        "nothing was suspended, blocked or killed (verdict recorded)" +
+                        (reportOnly.Count > 0 ? "; still running " + string.Join(", ", reportOnly) : ""));
+            var handler = ExtendedAction;
+            if (reportOnly.Count > 0 && !EnqueueResponse(() => RunExtendedActions(reportOnly, snap, handler)))
+                _log.Action($"pid {snap.Pid}: {string.Join(", ", reportOnly)} DROPPED (response queue full)");
             return;
         }
         _log.Action($"pid {snap.Pid}: playbook '{matched}' -> " + string.Join(", ", actions));
@@ -904,6 +935,10 @@ public sealed class BruceHost : IDisposable
         }
     }
 
+    /// <summary>Actions that only record or read, so the containment guard never withholds them.</summary>
+    private static bool IsReportOnly(PlaybookAction a)
+        => a is PlaybookAction.Log or PlaybookAction.CollectTriage or PlaybookAction.NotifyWebhook;
+
     /// <summary>
     /// Runs delegated playbook actions in order on the response worker. A handler that
     /// throws is logged and skipped so one bad sink cannot abort the rest of the response.
@@ -963,6 +998,8 @@ public sealed class BruceHost : IDisposable
                 var snap = _engine.SnapshotOne(pid);
                 if (snap is not null && snap.SuspendedByAnalyst)
                     return ActionResult.Success($"pid {pid} already suspended");
+                if (_refuseContainment(pid) is { } refusal)
+                    return ActionResult.Fail($"refused: {refusal}");
                 var r = ResponseManager.SuspendProcess(pid, snap?.ProcessName ?? "");
                 if (r.Ok) _engine.SetSuspendedByAnalyst(pid, true);
                 return r;
@@ -978,7 +1015,7 @@ public sealed class BruceHost : IDisposable
     {
         var sb = new StringBuilder();
         sb.AppendLine($"pid {s.Pid}  {s.ProcessName}  score={s.Score}");
-        sb.AppendLine($"  trusted={s.Trusted} contained={(s.ContainmentSkipped ? "no (monitor mode: would contain)" : s.Contained.ToString())} " +
+        sb.AppendLine($"  trusted={s.Trusted} contained={(s.ContainmentSkipped ? "no (skipped: monitor mode, refused, or already exited)" : s.Contained.ToString())} " +
                       $"suspended={s.SuspendedByAnalyst} terminated={s.Terminated}");
         sb.AppendLine($"  image: {s.ImagePath}");
         if (s.StagedArchives.Count > 0)

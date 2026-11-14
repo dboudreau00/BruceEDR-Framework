@@ -79,4 +79,16 @@ internal static class NativeMethods
 
     [DllImport("ntdll.dll", SetLastError = true)]
     public static extern int NtResumeProcess(IntPtr processHandle);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool QueryFullProcessImageNameW(IntPtr hProcess, uint dwFlags, [Out] char[] lpExeName, ref uint lpdwSize);
+
+    // PROCESS_INFORMATION_CLASS.ProcessProtectionLevelInfo and PROTECTION_LEVEL_NONE (processthreadsapi.h)
+    public const int ProcessProtectionLevelInfo = 7;
+    public const uint PROTECTION_LEVEL_NONE = 0xFFFFFFFE;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetProcessInformation(IntPtr hProcess, int processInformationClass, out uint processInformation, uint processInformationSize);
 }

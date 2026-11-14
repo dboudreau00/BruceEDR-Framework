@@ -375,7 +375,10 @@ to every program not trusted for them, and the agent logs each refusal. Built
 Key settings:
 - `response.mode` - `monitor` (default: detect and log, never act on its own) or
   `enforce` (run the response playbook). Anything else is treated as monitor.
-  Reloads live.
+  Reloads live. Enforce mode never suspends, firewalls or kills System, the agent
+  itself, a protected (PPL) process such as the antivirus, or the Windows processes the
+  watchlist protects; it logs the refusal instead. Run monitor mode first and read what
+  it would have done.
 - `response.allowPlaybookIsolation` - must be `true` before a playbook may isolate the
   host. Default `false`.
 - `detection.warnThreshold` / `quarantineThreshold` - scoring cutoffs.
