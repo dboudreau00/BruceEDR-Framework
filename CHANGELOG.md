@@ -24,6 +24,10 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - `publish-release.ps1` fails if the zip has backslash entry names. Under Windows PowerShell 5.1
   the .NET Framework zip API still writes them, so run the script under PowerShell 7 (`pwsh`).
 
+### Added
+
+- Sidebar icons with live badges, a status card, toasts for action results and view transitions.
+
 ## [3.2.0] - 2026-10-08
 
 BruceEDR no longer goes live by accident. Double-clicking the agent used to start a live

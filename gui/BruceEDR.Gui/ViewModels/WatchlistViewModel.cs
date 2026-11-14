@@ -148,6 +148,7 @@ public sealed class WatchlistViewModel : ViewModelBase
         Enabled = c.Watchlist.Enabled;
         AlertOnEveryHit = c.Watchlist.AlertOnEveryHit;
         Message = "";
+        ArmedCount = c.Watchlist.Enabled ? Rows.Count(r => r.Enabled) : 0;
         OnPropertyChanged(nameof(IsEmpty));
     }
 
@@ -234,6 +235,10 @@ public sealed class WatchlistViewModel : ViewModelBase
     public bool AlertOnEveryHit { get => _alertOnEveryHit; set => Set(ref _alertOnEveryHit, value); }
 
     public bool IsEmpty => Rows.Count == 0;
+
+    private int _armedCount;
+    /// <summary>Entries armed in the saved config, for the sidebar badge.</summary>
+    public int ArmedCount { get => _armedCount; private set => Set(ref _armedCount, value); }
 
     private string _message = "";
     public string Message { get => _message; set => Set(ref _message, value); }

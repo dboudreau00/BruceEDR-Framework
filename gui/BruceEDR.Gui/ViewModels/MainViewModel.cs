@@ -39,6 +39,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private DateTime _lastSignalsAtUtc;
 
     private Func<DetectionConfig>? _detection;
+    private readonly DispatcherTimer _toastTimer;
 
     public ObservableCollection<ThreatRow> Threats { get; } = new();
     public ObservableCollection<EventRow> Events { get; } = new();
@@ -116,6 +117,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _eventsView.Filter = o => o is EventRow r && EventPasses(r);
         _surfaceView = CollectionViewSource.GetDefaultView(Surface);
         _surfaceView.Filter = o => o is SurfaceRow s && SurfacePasses(s);
+
+        _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
+        _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); ToastVisible = false; };
+
     }
 
     private readonly ICollectionView _threatsView;
@@ -520,6 +525,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
+                    if (SelectedTabIndex != EventsTabIndex && e.Level is "QUARANTINE" or "WARN")
+                    {
+                        UnreadAlerts++;
+                        if (e.Level == "QUARANTINE") UnreadLevel = "threat";
+                    }
                     if (e.Level == "QUARANTINE")
                         AlertRaised?.Invoke(IsMonitorOnly ? "Threat detected (monitor only)" : "Threat contained",
                             e.Pid > 0 ? $"pid {e.Pid} {e.Process}: {(string.IsNullOrEmpty(e.Trigger) ? e.Message : e.Trigger)}" : e.Message);
@@ -559,6 +569,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _pendingWhilePaused.Clear();
             PendingCount = 0;
             CountAll = CountQuarantine = CountWarn = CountAction = CountInfo = CountError = 0;
+            UnreadAlerts = 0;
+            UnreadLevel = "watch";
         }
         catch (Exception ex) { AppLog.Error("clear events", ex); }
     }
@@ -733,6 +745,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 StatusText = StatusLevel == "threat" ? (contained > 0 ? "Threat contained" : "Threat detected")
                            : StatusLevel == "watch" ? "Watching activity"
                            : "All clear";
+                RaiseBadges();
             }
         }
         catch (Exception ex) { AppLog.Error("refresh", ex); }
@@ -764,6 +777,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             Uptime = up.TotalHours >= 1 ? $"{(int)up.TotalHours}h {up.Minutes:D2}m"
                    : up.TotalMinutes >= 1 ? $"{up.Minutes}m {up.Seconds:D2}s"
                    : $"{up.Seconds}s";
+            RaiseRail();
         }
         catch (Exception ex) { AppLog.Error("stats", ex); }
     }
@@ -942,6 +956,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex) { AppLog.Error("merge techniques", ex); }
     }
 
+    private void RaiseRail()
+    {
+        OnPropertyChanged(nameof(RailStatus));
+        OnPropertyChanged(nameof(RailDetail));
+    }
+
+    private void RaiseBadges()
+    {
+        OnPropertyChanged(nameof(DashboardBadgeLevel));
+    }
+
     // -------------------------------------------------------------- state
     private IReadOnlyDictionary<string, int> _ruleCoverage = new Dictionary<string, int>();
     private ThreatRow? _selected;
@@ -953,13 +978,44 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public bool HasSelection => _selected is not null;
 
     private bool _isRunning;
-    public bool IsRunning { get => _isRunning; set { if (Set(ref _isRunning, value)) CommandManager.InvalidateRequerySuggested(); } }
+    public bool IsRunning
+    {
+        get => _isRunning;
+        set { if (Set(ref _isRunning, value)) { CommandManager.InvalidateRequerySuggested(); RaiseRail(); } }
+    }
+
+    public string RailStatus => _isLive ? (_isRunning ? "Monitoring" : "Starting") : "Not monitoring";
+    public string RailDetail => _isLive ? $"{(_isMonitorOnly ? "monitor only" : "enforcing")} · up {_uptime}"
+                              : "set-up open";
+
     private int _warnAt = 40;
     public int WarnAt { get => _warnAt; private set => Set(ref _warnAt, value); }
 
     private int _containAt = 70;
     public int ContainAt { get => _containAt; private set => Set(ref _containAt, value); }
 
+    // ---- nav badges ----
+    public const int DashboardTabIndex = 0;
+    public const int EventsTabIndex = 1;
+
+    private int _unreadAlerts;
+    /// <summary>Warn and quarantine events that arrived while the feed was not on screen.</summary>
+    public int UnreadAlerts { get => _unreadAlerts; private set => Set(ref _unreadAlerts, value); }
+
+    private string _unreadLevel = "watch";
+    public string UnreadLevel { get => _unreadLevel; private set => Set(ref _unreadLevel, value); }
+
+    public string DashboardBadgeLevel => _containedCount > 0 ? "threat" : "watch";
+
+    // ---- toast ----
+    private string _toastText = "";
+    public string ToastText { get => _toastText; private set => Set(ref _toastText, value); }
+
+    private bool _toastVisible;
+    public bool ToastVisible { get => _toastVisible; private set => Set(ref _toastVisible, value); }
+
+    private bool _toastIsError;
+    public bool ToastIsError { get => _toastIsError; private set => Set(ref _toastIsError, value); }
 
     private bool _isLive;
     /// <summary>True while an engine exists, between Start and Stop.</summary>
@@ -972,6 +1028,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(ShowSetup));
             OnPropertyChanged(nameof(ShowStartPrompt));
             OnPropertyChanged(nameof(TabsEnabled));
+            RaiseRail();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -1004,6 +1061,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             if (!Set(ref _isMonitorOnly, value)) return;
             OnPropertyChanged(nameof(ModeText));
             OnPropertyChanged(nameof(ContainedLabel));
+            RaiseRail();
         }
     }
     public string ModeText => _isMonitorOnly ? "MONITOR ONLY" : "ENFORCING";
@@ -1019,7 +1077,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public string Monitors { get => _monitors; set => Set(ref _monitors, value); }
 
     private int _containedCount;
-    public int ContainedCount { get => _containedCount; set => Set(ref _containedCount, value); }
+    public int ContainedCount { get => _containedCount; set { if (Set(ref _containedCount, value)) OnPropertyChanged(nameof(DashboardBadgeLevel)); } }
 
     private int _flaggedCount;
     public int FlaggedCount { get => _flaggedCount; set => Set(ref _flaggedCount, value); }
@@ -1068,7 +1126,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public string StatusLevel { get => _statusLevel; set => Set(ref _statusLevel, value); }
 
     private string _lastMessage = "";
-    public string LastMessage { get => _lastMessage; set => Set(ref _lastMessage, value); }
+    /// <summary>Outcome of the last analyst action; shown as a toast.</summary>
+    public string LastMessage
+    {
+        get => _lastMessage;
+        set
+        {
+            if (!Set(ref _lastMessage, value) || string.IsNullOrEmpty(value)) return;
+            ToastText = value;
+            ToastIsError = value.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
+                        || value.Contains("failed", StringComparison.OrdinalIgnoreCase);
+            ToastVisible = true;
+            _toastTimer.Stop();
+            _toastTimer.Start();
+        }
+    }
 
     // ---- status bar ----
     private string _signalRate = "0/s";
@@ -1089,7 +1161,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public string LatencyP95 { get => _latencyP95; set => Set(ref _latencyP95, value); }
 
     private string _uptime = "0s";
-    public string Uptime { get => _uptime; set => Set(ref _uptime, value); }
+    public string Uptime { get => _uptime; set { if (Set(ref _uptime, value)) RaiseRail(); } }
 
     // ---- feed filtering ----
     private bool _isPaused;
@@ -1185,7 +1257,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public const int TabCount = 7;
 
     private int _selectedTabIndex;
-    public int SelectedTabIndex { get => _selectedTabIndex; set => Set(ref _selectedTabIndex, value); }
+    public int SelectedTabIndex
+    {
+        get => _selectedTabIndex;
+        set
+        {
+            if (!Set(ref _selectedTabIndex, value)) return;
+            if (value == EventsTabIndex) { UnreadAlerts = 0; UnreadLevel = "watch"; }
+        }
+    }
 
     // problem banner
     private bool _hasProblem;

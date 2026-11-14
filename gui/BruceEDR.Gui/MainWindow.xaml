@@ -23,6 +23,65 @@
         <KeyBinding Key="D7" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="6"/>
     </Window.InputBindings>
 
+    <Window.Resources>
+        <Style x:Key="ModePill" TargetType="Border" BasedOn="{StaticResource Pill}">
+            <Setter Property="Background" Value="{StaticResource Brush.SafeDim}"/>
+            <Setter Property="BorderBrush" Value="#4D34D399"/>
+            <Setter Property="Margin" Value="10,0,0,0"/>
+            <Setter Property="Padding" Value="7,1"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMonitorOnly}" Value="False">
+                    <Setter Property="Background" Value="{StaticResource Brush.ThreatDim}"/>
+                    <Setter Property="BorderBrush" Value="#66F2555A"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="ModePillText" TargetType="TextBlock" BasedOn="{StaticResource Pill.Text}">
+            <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMonitorOnly}" Value="False">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Toast: slides up and fades in while visible; never takes clicks once hidden -->
+        <Style x:Key="Toast" TargetType="Border">
+            <Setter Property="Opacity" Value="0"/>
+            <Setter Property="IsHitTestVisible" Value="False"/>
+            <Setter Property="Background" Value="{StaticResource Brush.PanelHover}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding ToastIsError}" Value="True">
+                    <Setter Property="BorderBrush" Value="#99F2555A"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ToastVisible}" Value="True">
+                    <Setter Property="IsHitTestVisible" Value="True"/>
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.18"/>
+                                <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                                 To="0" Duration="0:0:0.22">
+                                    <DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.25"/>
+                                <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                                 To="12" Duration="0:0:0.25"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
@@ -32,25 +91,32 @@
         <TabControl Grid.Row="0" Style="{StaticResource Nav.Rail}"
                     IsEnabled="{Binding TabsEnabled}"
                     SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
-            <TabItem Header="Dashboard" Style="{StaticResource Nav.Item}">
+            <TabItem Header="Dashboard" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+1"
+                     v:Nav.Icon="&#xE80F;" v:Nav.Badge="{Binding FlaggedCount}" v:Nav.BadgeLevel="{Binding DashboardBadgeLevel}">
                 <v:DashboardView/>
             </TabItem>
-            <TabItem Header="Live events" Style="{StaticResource Nav.Item}">
+            <TabItem Header="Live events" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+2"
+                     v:Nav.Icon="&#xE81C;" v:Nav.Badge="{Binding UnreadAlerts}" v:Nav.BadgeLevel="{Binding UnreadLevel}">
                 <v:EventsView/>
             </TabItem>
-            <TabItem Header="API surface" Style="{StaticResource Nav.Item}">
+            <TabItem Header="API surface" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+3"
+                     v:Nav.Icon="&#xE71B;" v:Nav.Badge="{Binding BeaconCount}" v:Nav.BadgeLevel="watch">
                 <v:SurfaceView/>
             </TabItem>
-            <TabItem Header="Network map" Style="{StaticResource Nav.Item}">
+            <TabItem Header="Network map" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+4"
+                     v:Nav.Icon="&#xE909;">
                 <v:MapView/>
             </TabItem>
-            <TabItem Header="Watchlist" Style="{StaticResource Nav.Item}">
+            <TabItem Header="Watchlist" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+5"
+                     v:Nav.Icon="&#xE7B3;" v:Nav.Badge="{Binding WatchlistEditor.ArmedCount}">
                 <v:WatchlistView DataContext="{Binding WatchlistEditor}"/>
             </TabItem>
-            <TabItem Header="Coverage" Style="{StaticResource Nav.Item}">
+            <TabItem Header="Coverage" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+6"
+                     v:Nav.Icon="&#xE8A9;">
                 <v:CoverageView/>
             </TabItem>
-            <TabItem Header="Settings" Style="{StaticResource Nav.Item}">
+            <TabItem Header="Settings" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+7"
+                     v:Nav.Icon="&#xE713;">
                 <v:SettingsView DataContext="{Binding Settings}"/>
             </TabItem>
         </TabControl>
@@ -60,9 +126,35 @@
         <v:SetupView Grid.Row="0"
                      Visibility="{Binding ShowSetup, Converter={StaticResource BoolToVis}}"/>
 
-        <!-- Live telemetry status bar: monitor health, throughput, detection latency,
-             uptime. The one strip that answers "is the agent alive and keeping up?" -->
-        <Border Grid.Row="1" Height="32" Background="{StaticResource Brush.InkRaised}"
+        <Border Grid.Row="0" Style="{StaticResource Toast}" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                Margin="0,0,24,18" MaxWidth="420" CornerRadius="8" BorderThickness="1" Padding="14,10">
+            <Border.RenderTransform>
+                <TranslateTransform Y="12"/>
+            </Border.RenderTransform>
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="20" ShadowDepth="4" Opacity="0.55" Color="Black"/>
+            </Border.Effect>
+            <StackPanel Orientation="Horizontal">
+                <TextBlock VerticalAlignment="Top" Margin="0,1,10,0">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                            <Setter Property="Text" Value="&#xE946;"/>
+                            <Setter Property="Foreground" Value="{StaticResource Brush.Accent}"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ToastIsError}" Value="True">
+                                    <Setter Property="Text" Value="&#xE783;"/>
+                                    <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBlock Text="{Binding ToastText}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" MaxWidth="360"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Status bar: is the agent alive and keeping up? -->
+        <Border Grid.Row="1" Height="34" Background="{StaticResource Brush.InkRaised}"
                 BorderBrush="{StaticResource Brush.Line}" BorderThickness="0,1,0,0">
             <Grid Margin="14,0">
                 <Grid.ColumnDefinitions>
@@ -71,47 +163,18 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Left">
-                    <Ellipse Width="7" Height="7" VerticalAlignment="Center">
-                        <Ellipse.Style>
-                            <Style TargetType="Ellipse">
-                                <Setter Property="Fill" Value="{StaticResource Brush.Threat}"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsRunning}" Value="True">
-                                        <Setter Property="Fill" Value="{StaticResource Brush.Safe}"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Ellipse.Style>
-                    </Ellipse>
-                    <TextBlock Margin="7,0,0,0" VerticalAlignment="Center"
-                               FontSize="11" FontWeight="Medium">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
-                                <Setter Property="Text" Value="Not monitoring"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsRunning}" Value="True">
-                                        <Setter Property="Text" Value="Monitoring"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    <!-- Which response mode is live: green while it only reports, red while it acts. -->
-                    <TextBlock Text="{Binding ModeText}" Margin="10,0,0,0" VerticalAlignment="Center"
-                               FontSize="10.5" FontWeight="SemiBold"
-                               Visibility="{Binding IsLive, Converter={StaticResource BoolToVis}}">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsMonitorOnly}" Value="False">
-                                        <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
+                    <Grid Width="7" Height="7" VerticalAlignment="Center">
+                        <Ellipse Style="{StaticResource Halo}">
+                            <Ellipse.RenderTransform><ScaleTransform/></Ellipse.RenderTransform>
+                        </Ellipse>
+                        <Ellipse Style="{StaticResource LiveDot}"/>
+                    </Grid>
+                    <TextBlock Text="{Binding RailStatus}" Margin="8,0,0,0" VerticalAlignment="Center"
+                               FontSize="11" FontWeight="Medium" Foreground="{StaticResource Brush.Paper}"/>
+                    <Border Style="{StaticResource ModePill}"
+                            Visibility="{Binding IsLive, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding ModeText}" Style="{StaticResource ModePillText}"/>
+                    </Border>
 
                     <Border Style="{StaticResource Metric.Sep}"/>
                     <TextBlock Text="SIGNALS/SEC" Style="{StaticResource Metric.Label}"/>
@@ -145,8 +208,6 @@
                     </StackPanel>
                 </StackPanel>
 
-                <!-- The monitor list is the one item that gives way: it trims instead of
-                     running into the metrics at narrow widths. -->
                 <TextBlock Grid.Column="1" Text="{Binding Monitors}" Margin="14,0,0,0"
                            VerticalAlignment="Center" HorizontalAlignment="Right"
                            FontFamily="{StaticResource Font.Data}" FontSize="10.5"
