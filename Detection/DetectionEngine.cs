@@ -160,6 +160,12 @@ public sealed class DetectionEngine
     private readonly Dictionary<int, string> _targetNames = new();
     private const int MaxTargetNames = 4096;
 
+    // Exited profiles a new tenant displaced from their pid, still reachable by telemetry
+    // stamped before their stop (see ExitedOwner). Only queue latency can deliver that.
+    private readonly Dictionary<int, ThreatProfile> _tombstones = new();
+    private const int MaxTombstones = 4096;
+    private static readonly TimeSpan TombstoneTtl = TimeSpan.FromMinutes(2);
+
     public DetectionEngine(EngineOptions opt, Func<int, bool> isTrusted)
         : this(opt, isTrusted, EngineDependencies.Empty) { }
 
@@ -208,7 +214,7 @@ public sealed class DetectionEngine
         // possibly malicious, process -- a fail-open PID-reuse hole).
         if (s.Kind == SignalKind.ProcessStart)
         {
-            _profiles.Remove(s.Pid);
+            Retire(s.Pid);
             _targetNames.Remove(s.Pid);
             _deps.Beacons?.Forget(s.Pid);
             _deps.Surface?.Forget(s.Pid);
@@ -221,23 +227,27 @@ public sealed class DetectionEngine
             _targetNames.Remove(s.Pid);
             // A stop that predates this tenant's start belongs to the PREVIOUS occupant of
             // the pid, delivered late. Marking the new process exited on its behalf would
-            // exempt it from containment (Decide skips exited rows).
-            if (_profiles.TryGetValue(s.Pid, out var gone) && s.TimestampUtc >= gone.StartedUtc)
-                gone.Exited = true;
+            // exempt it from containment (a verdict on an exited row is only reported).
+            // A duplicate stop keeps the first time, so it cannot widen ExitedOwner's window.
+            if (_profiles.TryGetValue(s.Pid, out var gone) && !gone.Exited && s.TimestampUtc >= gone.StartedUtc)
+                gone.ExitUtc = s.TimestampUtc;
             return results;   // a dead process cannot be contained; nothing further to score
         }
 
-        // Never build on an exited row. If the pid is emitting again after a stop, either
-        // Windows recycled it and the ProcessStart was dropped, or these are the dead
-        // process's last events; either way the old Contained/Score/ForcedVerdict state
-        // must not be inherited by whatever is running under that number now.
-        if (_profiles.TryGetValue(s.Pid, out var stale) && stale.Exited)
+        var p = s.Kind == SignalKind.ProcessStart ? null : ExitedOwner(s);
+        if (p is null)
         {
-            _profiles.Remove(s.Pid);
-            _deps.Beacons?.Forget(s.Pid);
+            // Never build on an exited row. Telemetry stamped after the stop means Windows
+            // recycled the pid and the new tenant's ProcessStart was dropped; the old
+            // Contained/Score/ForcedVerdict state must not be inherited by whatever is
+            // running under that number now.
+            if (_profiles.TryGetValue(s.Pid, out var stale) && stale.Exited)
+            {
+                Retire(s.Pid);
+                _deps.Beacons?.Forget(s.Pid);
+            }
+            p = GetOrAdd(s.Pid);
         }
-
-        var p = GetOrAdd(s.Pid);
         if (s.Kind == SignalKind.ProcessStart) p.StartedUtc = s.TimestampUtc;
         if (!string.IsNullOrEmpty(s.ProcessName)) p.ProcessName = s.ProcessName;
         if (!string.IsNullOrEmpty(s.ImagePath)) p.ImagePath = s.ImagePath;
@@ -273,7 +283,7 @@ public sealed class DetectionEngine
         EvaluateWatchlist(p, s.TimestampUtc);
         EvaluateDeclarativeRules(p, s);
         MatchIndicators(p, s);
-        _deps.Surface?.Observe(s);
+        if (OwnsPid(p)) _deps.Surface?.Observe(s);
 
         // NB: the memory scan is NOT run here. It can take up to ~2s per process, which
         // would stall the single detection thread. BruceHost claims the scan via
@@ -597,7 +607,7 @@ public sealed class DetectionEngine
             ImagePath = p.ImagePath,
             CommandLine = p.CommandLine,
             ParentName = _profiles.TryGetValue(p.ParentPid, out var parent) ? parent.ProcessName : "",
-            Ancestry = _deps.Tree is null
+            Ancestry = _deps.Tree is null || !OwnsPid(p)
                 ? Array.Empty<string>()
                 : _deps.Tree.Ancestors(p.Pid).Select(a => a.Name).ToArray(),
             Score = p.Score,
@@ -650,7 +660,7 @@ public sealed class DetectionEngine
     private void AnalyzeBeacon(ThreatProfile p, string endpoint, DateTime whenUtc)
     {
         var beacons = _deps.Beacons;
-        if (beacons is null) return;
+        if (beacons is null || !OwnsPid(p)) return;
 
         beacons.Observe(p.Pid, endpoint, whenUtc);
         var verdict = beacons.AnalyzeEndpoint(p.Pid, endpoint);
@@ -959,7 +969,10 @@ public sealed class DetectionEngine
         // to be known at the moment a verdict is computed. Resolving it asynchronously
         // would let a trusted process be contained before its signature came back, which
         // trades a latency problem for a false positive.
-        if (!p.SignatureChecked && p.Score >= _warn)
+        //
+        // Never for an exited process: the image is resolved by pid, and that pid may belong
+        // to another binary by now, whose signature must not discount this one.
+        if (!p.SignatureChecked && p.Score >= _warn && !p.Exited)
         {
             bool trusted;
             // An exception here (image still locked, transient access denied) used to be
@@ -1040,6 +1053,8 @@ public sealed class DetectionEngine
 
         if (p.IncidentId.Length == 0) p.IncidentId = NewIncidentId(p, nowUtc);
         if (v == Verdict.Quarantine) p.Contained = true;
+        // Nothing is left to contain: the verdict is a report, and the row stays prunable.
+        if (v == Verdict.Quarantine && p.Exited) p.ContainmentSkipped = true;
         p.ReportedTechniques = p.Techniques.Count;
         return new DetectionResult { Verdict = v, Trigger = trigger, Snapshot = ToSnapshot(p) };
     }
@@ -1067,7 +1082,7 @@ public sealed class DetectionEngine
         LastUpdatedUtc = p.LastUpdatedUtc,
         ParentPid = p.ParentPid,
         CommandLine = p.CommandLine,
-        Ancestry = _deps.Tree is null
+        Ancestry = _deps.Tree is null || !OwnsPid(p)
             ? Array.Empty<string>()
             : _deps.Tree.Ancestors(p.Pid).Select(a => $"{a.Name} ({a.Pid})").ToArray(),
         IncidentId = p.IncidentId,
@@ -1080,8 +1095,43 @@ public sealed class DetectionEngine
         ForcedBy = p.WatchlistRuleId,
         ContainmentSkipped = p.ContainmentSkipped,
         Generation = p.Generation,
-        StartedUtc = p.StartedUtc
+        StartedUtc = p.StartedUtc,
+        Exited = p.Exited
     };
+
+    /// <summary>
+    /// The exited process a telemetry signal belongs to, or null when it is the current
+    /// tenant's. BruceHost applies lifecycle events ahead of queued telemetry, so a burst can
+    /// deliver a process's last events after its stop, even after the pid's next tenant has
+    /// started. Anything stamped at or before an applied stop is still the exited process's
+    /// own evidence, unless the tenant holding the pid now had already started by then.
+    /// </summary>
+    private ThreatProfile? ExitedOwner(Signal s)
+    {
+        _profiles.TryGetValue(s.Pid, out var current);
+        if (current is { Exited: true } && s.TimestampUtc <= current.ExitUtc) return current;
+        if (current is { Exited: false } && s.TimestampUtc >= current.StartedUtc) return null;
+        return _tombstones.TryGetValue(s.Pid, out var gone) && s.TimestampUtc <= gone.ExitUtc ? gone : null;
+    }
+
+    /// <summary>
+    /// Takes the profile off a pid that has a new tenant. An exited one becomes a tombstone,
+    /// because its last telemetry can still be queued behind its stop.
+    /// </summary>
+    private void Retire(int pid)
+    {
+        if (!_profiles.Remove(pid, out var gone) || !gone.Exited) return;
+        if (_tombstones.Count >= MaxTombstones && !_tombstones.ContainsKey(pid))
+            _tombstones.Remove(_tombstones.MinBy(kv => kv.Value.ExitUtc).Key);
+        _tombstones[pid] = gone;
+    }
+
+    /// <summary>
+    /// False for a tombstone. The beacon series, surface inventory and lineage kept under its
+    /// pid belong to the next tenant now, and are neither fed nor read on its behalf.
+    /// </summary>
+    private bool OwnsPid(ThreatProfile p)
+        => _profiles.TryGetValue(p.Pid, out var current) && ReferenceEquals(current, p);
 
     private ThreatProfile GetOrAdd(int pid)
     {
@@ -1125,6 +1175,9 @@ public sealed class DetectionEngine
         _deps.Beacons?.Prune(TimeSpan.FromHours(6));
         _deps.Tree?.Prune(TimeSpan.FromMinutes(10));
         _deps.Surface?.Prune(TimeSpan.FromHours(12));
+
+        foreach (var pid in _tombstones.Where(kv => kv.Value.ExitUtc < now - TombstoneTtl).Select(kv => kv.Key).ToList())
+            _tombstones.Remove(pid);
 
         var cutoff = now - TimeSpan.FromMinutes(10);
         List<int>? dead = null;

@@ -174,6 +174,13 @@ public sealed record ProfileSnapshot
 
     /// <summary>When the process started, as reported by the telemetry source.</summary>
     public DateTime StartedUtc { get; init; }
+
+    /// <summary>
+    /// The process had exited. A verdict on an exited process comes from telemetry that was
+    /// still queued behind its stop: there is nothing left to contain, and its pid may
+    /// already belong to another process.
+    /// </summary>
+    public bool Exited { get; init; }
 }
 
 /// <summary>
@@ -203,7 +210,10 @@ public sealed class ThreatProfile
     public bool MemoryScanned { get; set; }
     /// <summary>Whether the image has been PE-analyzed; the parse is claimed once per process.</summary>
     public bool ImageAnalyzed { get; set; }
-    public bool Exited { get; set; }
+
+    /// <summary>Timestamp of the applied ProcessStop; null while the process is believed alive.</summary>
+    public DateTime? ExitUtc { get; set; }
+    public bool Exited => ExitUtc.HasValue;
 
     /// <summary>Rendered reason lines. Kept in lockstep with <see cref="ReasonLog"/>.</summary>
     public readonly List<string> Reasons = new();

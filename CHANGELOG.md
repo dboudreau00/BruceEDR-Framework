@@ -10,6 +10,14 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   containment already refused a pid that had been reused; the analyst path (desktop app,
   console and control API) acted on the bare pid. A row that outlived its process could end
   whatever had taken the pid since. Host-level tests cover it against a real child process.
+- **Telemetry queued behind a process's stop is scored on that process.** Starts and
+  stops are applied ahead of queued telemetry, so under load a stop could overtake the
+  process's last events, which then opened a fresh profile under the same pid and split the
+  evidence: a burst of the infostealer trace left powershell.exe at 575 without its
+  start-time reasons, against 765 in order. Events stamped at or before the stop now reach
+  the exited process, even after a new process has taken the pid; newer ones still start
+  clean. A verdict on an exited process is recorded but contains nothing, and takes no
+  signature discount from the pid's new owner.
 
 ## [3.2.0] - 2026-10-08
 

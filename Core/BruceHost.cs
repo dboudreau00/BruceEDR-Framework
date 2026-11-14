@@ -761,6 +761,17 @@ public sealed class BruceHost : IDisposable
 
         var snap = verdict.Snapshot;
 
+        // Telemetry that was still queued behind the process's stop. The verdict stands, but
+        // nothing is left to contain, and every step below acts on a pid that may belong to
+        // another process by now.
+        if (snap.Exited)
+        {
+            Metrics.IncDetections("QUARANTINE");
+            _log.Quarantine(verdict);
+            _log.Action($"pid {snap.Pid}: {snap.ProcessName} had already exited; verdict recorded, nothing to contain");
+            return;
+        }
+
         // A process whose suspend just failed is re-armed by the engine and re-escalates on
         // every signal. Retrying a futile suspend (protected process, access denied) on each
         // one floods the log and spawns netsh per event, so the incident gets one attempt per

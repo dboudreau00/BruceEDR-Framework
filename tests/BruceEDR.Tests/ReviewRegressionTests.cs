@@ -203,6 +203,97 @@ public sealed class ReviewRegressionTests : IDisposable
         Assert.Equal(before, engine.SnapshotOne(4)!.Score);
     }
 
+    private const string RunKey = @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string IfeoKey = @"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\sethc.exe";
+
+    // BruceHost applies lifecycle events ahead of queued telemetry, so a burst reaches the
+    // engine as: start, stop, then the events the process emitted before it stopped.
+
+    [Fact]
+    public void Telemetry_stamped_at_or_before_an_applied_stop_stays_with_the_exited_process()
+    {
+        var engine = new DetectionEngine(new EngineOptions(), _ => false,
+            new EngineDependencies { ResolveProcessName = null });
+
+        engine.Ingest(Sig(7, "a.exe", cmd: "-enc AAAA -nop -w hidden", atSeconds: 1));
+        engine.Ingest(Sig(7, "a.exe", SignalKind.ProcessStop, atSeconds: 5));
+        engine.Ingest(Sig(7, "", SignalKind.RegistryWrite, atSeconds: 4) with { RegistryKey = RunKey });
+        engine.Ingest(Sig(7, "", SignalKind.NamedPipe, atSeconds: 5) with { PipeName = "postex_1" });
+
+        var exited = engine.SnapshotOne(7)!;
+        Assert.Equal(45 + 40 + 35, exited.Score);
+        Assert.Contains(exited.Reasons, r => r.Contains("Command-line IOC '-enc'"));
+
+        engine.Ingest(Sig(7, "a.exe", SignalKind.ProcessStop, atSeconds: 8));   // a second source's copy
+        // newer than the first stop: the pid has a new tenant whose start was lost
+        engine.Ingest(Sig(7, "", SignalKind.RegistryWrite, atSeconds: 6) with { RegistryKey = RunKey });
+        Assert.Equal(40, engine.SnapshotOne(7)!.Score);
+    }
+
+    [Fact]
+    public void Telemetry_queued_behind_a_stop_is_not_scored_against_the_pids_next_tenant()
+    {
+        var clock = new ManualClock(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var surface = new ApiSurfaceInventory(clock);
+        var beacons = new BeaconAnalyzer(clock, 6);
+        var underExplorer = new DetectionRule
+        {
+            Id = "registry-under-explorer", Title = "registry-under-explorer", Score = 10,
+            Detection = new[]
+            {
+                new RuleClause
+                {
+                    All = new[]
+                    {
+                        new RuleCondition { Field = "kind", Op = MatchOp.Equals, Value = "RegistryWrite" },
+                        new RuleCondition { Field = "ancestry", Op = MatchOp.Contains, Value = "explorer.exe" }
+                    }
+                }
+            }
+        };
+        var engine = new DetectionEngine(new EngineOptions(), _ => false, new EngineDependencies
+        {
+            Clock = clock, Tree = new ProcessTree(clock), Surface = surface, Beacons = beacons,
+            Rules = new RuleEngine(RuleSet.Of(underExplorer)), ResolveProcessName = null
+        });
+
+        engine.Ingest(Sig(100, "explorer.exe"));
+        engine.Ingest(Sig(6, "a.exe", atSeconds: 1));
+        engine.Ingest(Sig(6, "a.exe", SignalKind.ProcessStop, atSeconds: 5));
+        engine.Ingest(Sig(6, "b.exe", atSeconds: 6) with { ParentPid = 100 });
+        var late = engine.Ingest(Sig(6, "", SignalKind.RegistryWrite, atSeconds: 3) with { RegistryKey = RunKey });
+        engine.Ingest(Sig(6, "", SignalKind.NetworkConnect, atSeconds: 4) with { RemoteAddress = "203.0.113.9", RemotePort = 443 });
+
+        var a = Assert.Single(late).Snapshot;
+        Assert.Equal("a.exe", a.ProcessName);
+        Assert.Equal(40, a.Score);
+        Assert.Empty(a.Ancestry);                   // the lineage under pid 6 is b.exe's now
+
+        var b = engine.SnapshotOne(6)!;
+        Assert.Equal("b.exe", b.ProcessName);
+        Assert.Equal(0, b.Score);
+        Assert.Empty(surface.ForPid(6));
+        Assert.Empty(beacons.Analyze(6));
+    }
+
+    [Fact]
+    public void An_exited_process_never_takes_trust_from_whatever_now_holds_its_pid()
+    {
+        // The trust check resolves the image by pid, and a dead process's pid can belong to a
+        // signed binary by the time its queued telemetry is scored.
+        int trustChecks = 0;
+        var engine = new DetectionEngine(new EngineOptions(), _ => { trustChecks++; return true; },
+            new EngineDependencies { ResolveProcessName = null });
+
+        engine.Ingest(Sig(8, "a.exe", atSeconds: 1));
+        engine.Ingest(Sig(8, "a.exe", SignalKind.ProcessStop, atSeconds: 5));
+        engine.Ingest(Sig(8, "", SignalKind.RegistryWrite, atSeconds: 3) with { RegistryKey = RunKey });
+        var results = engine.Ingest(Sig(8, "", SignalKind.RegistryWrite, atSeconds: 4) with { RegistryKey = IfeoKey });
+
+        Assert.Equal(0, trustChecks);
+        Assert.Contains(results, r => r.Verdict == Verdict.Quarantine);
+    }
+
     // ================================================================ image path + target name
 
     [Fact]

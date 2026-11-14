@@ -36,9 +36,10 @@ public sealed class BruceHostTests : IDisposable
         out DetectionEngine engine,
         Playbook? playbook = null,
         Action<PlaybookAction, ProfileSnapshot>? extended = null,
-        bool autoKill = false)
+        bool autoKill = false,
+        IEventSink? sink = null)
     {
-        var log = new Logger();
+        var log = new Logger(sink);
         var verifier = new AuthenticodeVerifier(new AllowlistConfig());
         var response = new ResponseManager(log, verifier);
         engine = new DetectionEngine(
@@ -61,6 +62,14 @@ public sealed class BruceHostTests : IDisposable
     private sealed class NullScanner : IMemoryScanner
     {
         public IReadOnlyList<string> Scan(int pid) => Array.Empty<string>();
+    }
+
+    private sealed class RecordingSink : IEventSink
+    {
+        private readonly List<BruceEvent> _events = new();
+        public void Emit(BruceEvent e) { lock (_events) _events.Add(e); }
+        public void Dispose() { }
+        public bool Any(Func<BruceEvent, bool> match) { lock (_events) return _events.Any(match); }
     }
 
     /// <summary>Polls until <paramref name="condition"/> holds or the budget expires.</summary>
@@ -237,6 +246,51 @@ public sealed class BruceHostTests : IDisposable
             var snap = host.ListProfiles(onlyContained: false).FirstOrDefault(p => p.Pid == 60002);
             return snap is not null && !snap.Contained;
         }), "a process whose suspend failed stayed marked Contained, so it can never re-escalate");
+    }
+
+    [Fact]
+    public void A_Verdict_On_A_Process_That_Already_Exited_Is_Recorded_But_Nothing_Is_Contained()
+    {
+        // Enforce mode, with the stop applied ahead of the telemetry queued behind it. An odd
+        // pid is never a real Windows process id and the name is made up, so even a regression
+        // here has nothing on this machine to act on.
+        const int pid = 70001;
+        const string name = "late-telemetry.exe";
+        var sink = new RecordingSink();
+        var playbook = new Playbook(new[]
+        {
+            new PlaybookRule { Name = "suspend-only", MinScore = 70, Actions = new[] { PlaybookAction.Suspend } }
+        });
+        var host = NewHost(out _, playbook, sink: sink);
+
+        var t = DateTime.UtcNow;
+        host.Submit(new Signal
+        {
+            Kind = SignalKind.ProcessStart, Pid = pid, ProcessName = name, ImagePath = @"C:\Temp\" + name, TimestampUtc = t
+        });
+        host.Submit(new Signal
+        {
+            Kind = SignalKind.FileCreate, Pid = pid, ProcessName = name, TimestampUtc = t.AddSeconds(1),
+            FilePath = @"C:\Users\u\AppData\Local\Google\Chrome\User Data\Default\Login Data"
+        });
+        host.Submit(new Signal
+        {
+            Kind = SignalKind.FileCreate, Pid = pid, ProcessName = name, TimestampUtc = t.AddSeconds(2),
+            FilePath = @"C:\Users\u\AppData\Local\Temp\loot.zip"
+        });
+        host.Submit(new Signal { Kind = SignalKind.ProcessStop, Pid = pid, ProcessName = name, TimestampUtc = t.AddSeconds(3) });
+        host.Start();
+
+        Assert.True(WaitFor(() => host.SignalsProcessed >= 4), "the queued signals were not drained");
+        Assert.True(WaitFor(() => sink.Any(e => e.Level == "QUARANTINE" && e.Pid == pid)), "the verdict was not recorded");
+        var snap = Assert.Single(host.ListProfiles(onlyContained: false), p => p.Pid == pid);
+        Assert.Equal(90, snap.Score);
+        Assert.True(snap.Exited);
+        Assert.True(snap.ContainmentSkipped, "a process that had exited was recorded as contained");
+        Assert.True(sink.Any(e => e.Level == "ACTION" && e.Message.Contains("nothing to contain")));
+        Assert.False(sink.Any(e => e.Level == "ACTION" && e.Message.Contains("suspend", StringComparison.OrdinalIgnoreCase)),
+            "containment was attempted against the pid of a process that had already exited");
+        Assert.Equal(0, host.VerdictsInBackoff);
     }
 
     // ------------------------------------------------------------- analyst actions
