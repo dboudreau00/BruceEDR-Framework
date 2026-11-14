@@ -15,6 +15,7 @@ using BruceEDR.Configuration;
 using BruceEDR.Core;
 using BruceEDR.Detection;
 using BruceEDR.Hosting;
+using BruceEDR.Replay;
 using BruceEDR.Gui.Services;
 using BruceEDR.Telemetry;
 
@@ -38,6 +39,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private long _lastSignals;          // for the events/sec estimate
     private DateTime _lastSignalsAtUtc;
 
+    private ReplaySession? _replay;
     private Func<DetectionConfig>? _detection;
     private readonly ActivityTimeline _timeline = new();
     private DateTime _timelinePublishedUtc;
@@ -88,14 +90,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex) { AppLog.Error("initial config load", ex); }
 
         StartCommand = new RelayCommand(StartFromSetup, () => !IsLive && !_stopping && !_starting && Setup.CanStart);
+        StartReplayCommand = new RelayCommand(StartReplay,
+            () => !IsLive && !_stopping && !_starting && Setup.CanStart && Setup.SelectedScenario is not null);
         SetCoverageModeCommand = new RelayCommandP(p => CoverageMode = p as string == "list" ? "list" : "matrix");
         StopCommand = new RelayCommand(StopEngine, () => IsLive);
         OpenSetupCommand = new RelayCommand(() => { Setup.Load(); IsSetupOpen = true; }, () => !IsLive);
         ReviewSettingsCommand = new RelayCommand(ReviewSettings);
 
-        ReleaseCommand = new RelayCommand(() => Act(p => _host!.Resume(p)), () => HasSelection && IsRunning);
-        SuspendCommand = new RelayCommand(() => Act(p => _host!.Suspend(p)), () => HasSelection && IsRunning);
-        EndCommand     = new RelayCommand(EndSelected,                      () => HasSelection && IsRunning);
+        ReleaseCommand = new RelayCommand(() => Act(p => _host!.Resume(p)), () => HasSelection && IsRunning && !IsReplay);
+        SuspendCommand = new RelayCommand(() => Act(p => _host!.Suspend(p)), () => HasSelection && IsRunning && !IsReplay);
+        EndCommand     = new RelayCommand(EndSelected,                      () => HasSelection && IsRunning && !IsReplay);
         RefreshCommand = new RelayCommand(() => _ = RefreshAsync());
         ClearEventsCommand = new RelayCommand(ClearEvents);
         TogglePauseCommand = new RelayCommand(TogglePause);
@@ -250,6 +254,76 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private MapHome? _home;
     public MapHome? Home { get => _home; private set => Set(ref _home, value); }
 
+    /// <summary>
+    /// Plays a shipped trace through a real engine that watches nothing on this machine. The
+    /// host runs in monitor mode with no monitors, and analyst actions stay off, because the
+    /// pids in a trace are fiction that may collide with real processes here.
+    /// </summary>
+    private async void StartReplay()
+    {
+        var pick = Setup.SelectedScenario;
+        if (IsLive || _stopping || _starting || pick is null) return;
+        _starting = true;
+        Setup.Message = "Starting the replay...";
+        CommandManager.InvalidateRequerySuggested();
+        // Reset before the session exists: its first events arrive while Start is still returning.
+        ResetFeed();
+        ReplaySession? session = null;
+        try
+        {
+            var sink = new UiEventSink(OnEvent);
+            session = await Task.Run(() => ReplaySession.Start(_configPath, pick.Path, sink));
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("replay start", ex);
+            Setup.Message = "The replay could not start: " + ex.Message;
+        }
+        finally
+        {
+            _starting = false;
+            CommandManager.InvalidateRequerySuggested();
+        }
+        if (session is null) return;
+
+        try
+        {
+            _startedUtc = DateTime.UtcNow;
+            _lastSignalsAtUtc = _startedUtc;
+            _lastSignals = 0;
+
+            _replay = session;
+            _host = session.Host;
+            _detection = () => session.Config.Detection;
+            ReplayName = pick.Title;
+            IsReplay = true;
+            IsLive = true;
+            IsMonitorOnly = true;
+            IsRunning = true;
+            Monitors = "none (replay)";
+            ApplyRuleCoverage(session.Rules, session.Intel.Count);
+            LoadGeo();
+            ClearProblem();
+            AppLog.Info($"Replay started: {pick.Name}");
+
+            StartRefreshTimer();
+            Setup.Message = "";
+            IsSetupOpen = false;
+            SelectedTabIndex = DashboardTabIndex;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("replay start", ex);
+            _replay = null;
+            _host = null;
+            IsReplay = false;
+            IsLive = false;
+            IsRunning = false;
+            try { session.Dispose(); } catch (Exception dex) { AppLog.Error("replay dispose", dex); }
+            Setup.Message = "The replay could not start: " + ex.Message;
+        }
+    }
+
     /// <summary>Tears down a half-started engine, off the UI thread, so a retry starts clean.</summary>
     private void AbandonStart(Composition? comp, string why)
     {
@@ -392,16 +466,19 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void StopEngine()
     {
-        var comp = _composition;
+        IDisposable? comp = (IDisposable?)_composition ?? _replay;
         if (comp is null || _stopping) return;
-        if (!ConfirmLeavingFrozen("Stop monitoring")) return;
+        bool wasReplay = IsReplay;
+        if (!wasReplay && !ConfirmLeavingFrozen("Stop monitoring")) return;
         _stopping = true;
         try { _timer?.Stop(); } catch (Exception ex) { AppLog.Error("timer stop", ex); }
         _timer = null;
         _composition = null;
+        _replay = null;
         _host = null;
         _detection = null;
         IsRunning = false;
+        IsReplay = false;
         IsLive = false;
         Monitors = "not started";
         ClearProblem();
@@ -411,7 +488,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         Setup.Load();
         ApplyRuleCoverage(Setup.Rules, 0);
         MergeTechniques(null);
-        Setup.Message = "Stopping...";
+        Setup.Message = wasReplay ? "Ending the replay..." : "Stopping...";
         IsSetupOpen = true;
 
         _stopTask = Task.Run(() =>
@@ -421,8 +498,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _dispatcher.BeginInvoke(() =>
             {
                 _stopping = false;
-                Setup.Message = "Stopped. Nothing is being monitored.";
-                AppLog.Info("Engine stopped by the operator.");
+                Setup.Message = wasReplay ? "Replay ended. Nothing is being monitored." : "Stopped. Nothing is being monitored.";
+                AppLog.Info(wasReplay ? "Replay ended by the operator." : "Engine stopped by the operator.");
                 CommandManager.InvalidateRequerySuggested();
             });
         });
@@ -434,6 +511,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // A Stop still in flight must finish, or its ETW sessions could outlive the app.
         try { _stopTask?.Wait(TimeSpan.FromSeconds(20)); } catch (Exception ex) { AppLog.Error("stop wait", ex); }
         try { _composition?.Dispose(); } catch (Exception ex) { AppLog.Error("dispose", ex); }
+        try { _replay?.Dispose(); } catch (Exception ex) { AppLog.Error("dispose replay", ex); }
     }
 
     // -------------------------------------------------------------- commands
@@ -456,6 +534,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ICommand StopCommand { get; }
     public ICommand OpenSetupCommand { get; }
     public ICommand ReviewSettingsCommand { get; }
+    public ICommand StartReplayCommand { get; }
     public ICommand SetCoverageModeCommand { get; }
 
     private void EndSelected()
@@ -477,6 +556,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         var row = SelectedThreat;
         var host = _host;
         if (row is null || host is null) return;
+        if (IsReplay)
+        {
+            LastMessage = "Actions are off during a replay. These processes are not on this machine.";
+            return;
+        }
         int pid = row.Pid;
 
         _ = Task.Run(() =>
@@ -560,7 +644,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                         if (e.Level == "QUARANTINE") UnreadLevel = "threat";
                     }
                     PublishTimeline(force: false);
-                    if (e.Level == "QUARANTINE")
+
+                    // A replay's verdicts are about processes that are not on this machine.
+                    if (e.Level == "QUARANTINE" && !IsReplay)
                         AlertRaised?.Invoke(IsMonitorOnly ? "Threat detected (monitor only)" : "Threat contained",
                             e.Pid > 0 ? $"pid {e.Pid} {e.Process}: {(string.IsNullOrEmpty(e.Trigger) ? e.Message : e.Trigger)}" : e.Message);
 
@@ -774,6 +860,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             BeaconCount = endpoints.Count(e => e.Beaconing);
             PlaintextCount = Surface.Count(r => r.IsPlaintext);
             UpdateStats(host);
+            UpdateReplayProgress();
             PublishTimeline(force: true);
 
             if (!IsRunning)
@@ -1046,6 +1133,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         EventHistory = buckets.Skip(buckets.Length - 40).Select(b => (double)b.Total).ToArray();
     }
 
+    private void UpdateReplayProgress()
+    {
+        var r = _replay;
+        if (r is null) return;
+        ReplayProgress = r.Total == 0 ? 100 : 100.0 * r.Fed / r.Total;
+        ReplayDetail = r.Completion.IsCompleted
+            ? $"{ReplayName} · finished"
+            : $"{ReplayName} · {r.Fed} of {r.Total}";
+        ReplayFinished = r.Completion.IsCompleted;
+    }
+
     private void RaiseRail()
     {
         OnPropertyChanged(nameof(RailStatus));
@@ -1074,8 +1172,38 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         set { if (Set(ref _isRunning, value)) { CommandManager.InvalidateRequerySuggested(); RaiseRail(); } }
     }
 
-    public string RailStatus => _isLive ? (_isRunning ? "Monitoring" : "Starting") : "Not monitoring";
-    public string RailDetail => _isLive ? $"{(_isMonitorOnly ? "monitor only" : "enforcing")} · up {_uptime}"
+    private bool _isReplay;
+    /// <summary>True while a recorded trace drives the engine instead of this machine.</summary>
+    public bool IsReplay
+    {
+        get => _isReplay;
+        private set
+        {
+            if (!Set(ref _isReplay, value)) return;
+            OnPropertyChanged(nameof(StopLabel));
+            OnPropertyChanged(nameof(ActionsEnabled));
+            RaiseRail();
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+    public bool ActionsEnabled => !_isReplay;
+    public string StopLabel => _isReplay ? "End replay" : "Stop monitoring";
+
+    private string _replayName = "";
+    public string ReplayName { get => _replayName; private set => Set(ref _replayName, value); }
+
+    private string _replayDetail = "";
+    public string ReplayDetail { get => _replayDetail; private set { if (Set(ref _replayDetail, value)) RaiseRail(); } }
+
+    private double _replayProgress;
+    public double ReplayProgress { get => _replayProgress; private set => Set(ref _replayProgress, value); }
+
+    private bool _replayFinished;
+    public bool ReplayFinished { get => _replayFinished; private set => Set(ref _replayFinished, value); }
+
+    public string RailStatus => _isReplay ? "Replay" : _isLive ? (_isRunning ? "Monitoring" : "Starting") : "Not monitoring";
+    public string RailDetail => _isReplay ? _replayDetail
+                              : _isLive ? $"{(_isMonitorOnly ? "monitor only" : "enforcing")} · up {_uptime}"
                               : "set-up open";
 
     // ---- charts ----

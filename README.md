@@ -36,7 +36,7 @@ your machine actually talks to.**
 </tr>
 <tr>
 <td width="50%"><img src="docs/watchlist.png" alt="Watchlist: operator-authored detections that contain on sight" /></td>
-<td></td>
+<td width="50%" valign="middle"><b>Replay a recorded attack.</b> The set-up screen plays a shipped trace through the real engine in about twenty seconds, with no monitors running and every action switched off, so the whole app can be seen working before anything on the machine is watched.</td>
 </tr>
 <tr>
 <td align="center"><b>Watchlist</b>: your own detections, armed without a restart</td>
@@ -95,7 +95,8 @@ It installs to `C:\Program Files\BruceEDR` and adds a **BruceEDR** shortcut to t
 and the desktop. Installing starts nothing. The app opens on a **set-up screen** (response mode,
 trusted publishers, scores) and only goes live when you press **Start monitoring**; **Stop
 monitoring** in the status bar takes it back to set-up, and offers to resume anything BruceEDR
-suspended.
+suspended. **Replay a recorded attack** on the same screen runs a shipped trace through the real
+engine with no monitors and every action off, which is the safe way to see the app working.
 
 - **Monitor mode is the default.** Detections are scored, logged and shown with what BruceEDR
   *would* have done, and no process is suspended, firewall-blocked, quarantined or ended

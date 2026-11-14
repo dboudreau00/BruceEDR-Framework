@@ -364,6 +364,9 @@
                     <StopStoryboard BeginStoryboardName="haloPulse"/>
                 </DataTrigger.ExitActions>
             </DataTrigger>
+            <DataTrigger Binding="{Binding IsReplay}" Value="True">
+                <Setter Property="Fill" Value="{StaticResource Brush.Accent}"/>
+            </DataTrigger>
         </Style.Triggers>
     </Style>
 
@@ -372,6 +375,9 @@
         <Style.Triggers>
             <DataTrigger Binding="{Binding IsRunning}" Value="True">
                 <Setter Property="Fill" Value="{StaticResource Brush.Safe}"/>
+            </DataTrigger>
+            <DataTrigger Binding="{Binding IsReplay}" Value="True">
+                <Setter Property="Fill" Value="{StaticResource Brush.Accent}"/>
             </DataTrigger>
         </Style.Triggers>
     </Style>

@@ -31,6 +31,9 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 
 ### Added
 
+- **Replay a recorded attack** from the set-up screen: a shipped trace plays through a real host
+  in about twenty seconds, with no monitors, monitor mode forced, auto-kill off, no memory or
+  image scanning, and analyst actions disabled. A banner and a REPLAY badge say so throughout.
 - Dashboard: an activity timeline by severity, sparklines, a score ring with the warn and
   contain thresholds marked, the process lineage as a chain, and named ATT&CK chips that open
   the MITRE page.
@@ -40,6 +43,7 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   labels, a pulse on threat markers, and arcs from the country of the Windows region setting.
 - Sidebar icons with live badges, a status card, toasts for action results and view transitions.
 - A save bar pinned to the bottom of Settings.
+- A two-column set-up screen.
 
 ## [3.2.0] - 2026-10-08
 

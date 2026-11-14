@@ -175,6 +175,11 @@
                             Visibility="{Binding IsLive, Converter={StaticResource BoolToVis}}">
                         <TextBlock Text="{Binding ModeText}" Style="{StaticResource ModePillText}"/>
                     </Border>
+                    <Border Style="{StaticResource Pill}" Margin="6,0,0,0" Padding="7,1"
+                            Background="{StaticResource Brush.AccentDim}" BorderBrush="{StaticResource Brush.AccentLine}"
+                            Visibility="{Binding IsReplay, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="REPLAY" Style="{StaticResource Pill.Text}" Foreground="{StaticResource Brush.Accent}"/>
+                    </Border>
 
                     <Border Style="{StaticResource Metric.Sep}"/>
                     <TextBlock Text="SIGNALS/SEC" Style="{StaticResource Metric.Label}"/>
@@ -220,9 +225,9 @@
                     <TextBlock Text="UPTIME" Style="{StaticResource Metric.Label}"/>
                     <TextBlock Text="{Binding Uptime}" Style="{StaticResource Metric.Value}"/>
                     <Border Style="{StaticResource Metric.Sep}"/>
-                    <Button Content="Stop monitoring" Style="{StaticResource Btn.Subtle}" Padding="10,2" FontSize="11"
+                    <Button Content="{Binding StopLabel}" Style="{StaticResource Btn.Subtle}" Padding="10,2" FontSize="11"
                             VerticalAlignment="Center" Command="{Binding StopCommand}"
-                            ToolTip="Stop the engine and return to set-up"
+                            ToolTip="Stop and return to set-up"
                             Visibility="{Binding IsLive, Converter={StaticResource BoolToVis}}"/>
                     <Button Content="Set up and start" Style="{StaticResource Btn.Primary}" Padding="10,2" FontSize="11"
                             VerticalAlignment="Center" Command="{Binding OpenSetupCommand}"

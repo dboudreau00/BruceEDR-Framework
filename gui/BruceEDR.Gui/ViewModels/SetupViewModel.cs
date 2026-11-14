@@ -3,8 +3,38 @@ using System.Windows;
 using System.Windows.Input;
 using BruceEDR.Configuration;
 using BruceEDR.Detection;
+using BruceEDR.Replay;
 
 namespace BruceEDR.Gui.ViewModels;
+
+/// <summary>A shipped replay trace offered on the set-up screen.</summary>
+public sealed class ScenarioInfo
+{
+    public string Path { get; }
+    public string Name { get; }
+    public string Title { get; }
+    public string Description { get; }
+    public int Signals { get; }
+    public TimeSpan Duration { get; }
+    public bool IsBenign => Name.Contains("benign", StringComparison.OrdinalIgnoreCase);
+    public string Kind => IsBenign ? "BENIGN" : "ATTACK";
+    public string Facts => $"{Signals} signals · {FormatDuration(Duration)} recorded · plays in about " +
+                           $"{FormatDuration(TimeSpan.FromSeconds(Duration.TotalSeconds / Hosting.ReplaySession.SpeedFor(Duration)))}";
+
+    public ScenarioInfo(string path, string name, string description, int signals, TimeSpan duration)
+    {
+        Path = path;
+        Name = name;
+        Title = name.Length == 0 ? System.IO.Path.GetFileNameWithoutExtension(path)
+              : char.ToUpperInvariant(name[0]) + name[1..].Replace('-', ' ');
+        Description = description;
+        Signals = signals;
+        Duration = duration;
+    }
+
+    private static string FormatDuration(TimeSpan t)
+        => t.TotalMinutes >= 1 ? $"{(int)t.TotalMinutes}m {t.Seconds:D2}s" : $"{Math.Max(1, (int)Math.Round(t.TotalSeconds))} s";
+}
 
 /// <summary>
 /// The set-up stage shown before the engine exists. It only reads and writes
@@ -25,6 +55,7 @@ public sealed class SetupViewModel : ViewModelBase
     /// </summary>
     public void Load()
     {
+        if (Scenarios.Count == 0) LoadScenarios();
         DetectionConfig detection;
         try
         {
@@ -118,6 +149,36 @@ public sealed class SetupViewModel : ViewModelBase
 
     /// <summary>Rules as the engine would load them, for the coverage view before going live.</summary>
     public RuleSet? Rules { get; private set; }
+
+    public IReadOnlyList<ScenarioInfo> Scenarios { get; private set; } = Array.Empty<ScenarioInfo>();
+
+    private ScenarioInfo? _selectedScenario;
+    public ScenarioInfo? SelectedScenario { get => _selectedScenario; set => Set(ref _selectedScenario, value); }
+    public bool HasScenarios => Scenarios.Count > 0;
+
+    private void LoadScenarios()
+    {
+        var found = new List<ScenarioInfo>();
+        try
+        {
+            string dir = Path.Combine(AppContext.BaseDirectory, "Replay", "scenarios");
+            if (Directory.Exists(dir))
+                foreach (var file in Directory.GetFiles(dir, "*.jsonl").OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        var t = TraceFormat.Load(file);
+                        if (t.Events.Count > 0) found.Add(new ScenarioInfo(file, t.Name, t.Description, t.Events.Count, t.Duration));
+                    }
+                    catch { }
+                }
+        }
+        catch { }
+        Scenarios = found.OrderBy(s => s.IsBenign).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        SelectedScenario = Scenarios.FirstOrDefault(s => s.Name == _selectedScenario?.Name) ?? Scenarios.FirstOrDefault();
+        OnPropertyChanged(nameof(Scenarios));
+        OnPropertyChanged(nameof(HasScenarios));
+    }
 
     /// <summary>
     /// The one place enforce mode is confirmed, from set-up and from Settings alike.
