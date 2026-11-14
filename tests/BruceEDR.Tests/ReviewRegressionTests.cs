@@ -347,6 +347,29 @@ public sealed class ReviewRegressionTests : IDisposable
         Assert.Contains("T1003.001", snap.Techniques);
     }
 
+    // A clean lab VM: WmiPrvSE read three processes (0x410) and reached quarantine as an injector.
+    [Theory]
+    [InlineData(0x0410u, 0)]       // QUERY_INFORMATION + VM_READ
+    [InlineData(0x80000000u, 0)]   // GENERIC_READ
+    [InlineData(0x0020u, 75)]      // PROCESS_VM_WRITE still counts, once per target
+    [InlineData(0x02000000u, 75)]  // MAXIMUM_ALLOWED still counts
+    public void Reading_other_processes_is_not_scored_as_injection(uint mask, int expected)
+    {
+        var engine = new DetectionEngine(new EngineOptions(), _ => false,
+            new EngineDependencies { ResolveProcessName = pid => pid == 640 ? "lsass" : "notepad" });
+
+        var start = Sig(9, "wmiprvse.exe");
+        engine.Ingest(start);
+        foreach (int target in new[] { 1004, 1132, 1348 })
+            engine.Ingest(new Signal
+            {
+                Kind = SignalKind.ProcessAccess, Pid = 9, TargetPid = target, DesiredAccess = mask,
+                TimestampUtc = start.TimestampUtc,
+            });
+
+        Assert.Equal(expected, engine.SnapshotOne(9)!.Score);
+    }
+
     [Fact]
     public void Target_name_is_written_into_detail_for_the_json_rules()
     {

@@ -94,6 +94,13 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - **Processes that started before the agent had no name** in events and incidents (csrss and
   svchost showed as ""), so name watchlist entries and the pid-reuse check passed them by. Each
   is named from its pid on its first event.
+- **Reading another process scored as injection.** The cross-process rule (+25 per target,
+  T1055) counted read-only masks such as `0x410` and `GENERIC_READ`, so WMI, Defrag and VMware
+  Tools reached quarantine on a clean lab VM by looking at three processes. It now counts only
+  rights that change the target (thread creation, memory writes, handle duplication, DACL or
+  owner changes, `MAXIMUM_ALLOWED` and the wide grants). Reading LSASS still scores 60, so the
+  WMI provider host still reaches quarantine on a clean machine: it reads LSASS (`0x410`) to
+  answer process queries.
 
 ## [3.3.0] - 2026-11-14
 

@@ -567,7 +567,9 @@ public sealed class DetectionEngine
         if (target.Contains("lsass"))
             Score(p, 60, $"Opened LSASS with memory-access rights (mask 0x{s.DesiredAccess:X})",
                   "builtin-lsass-access", Tech("T1003.001"), s.TimestampUtc);
-        else
+        // Any other target counts only for rights that change it. Read masks scored here put
+        // WMI, Defrag and VMware Tools at quarantine on a clean lab VM within minutes.
+        else if (Monitoring.MonitorSupport.IsInjectionCapableAccess(s.DesiredAccess))
             Score(p, 25, $"Opened pid {s.TargetPid} with injection-capable rights (mask 0x{s.DesiredAccess:X})",
                   "builtin-cross-process-access", Tech("T1055"), s.TimestampUtc);
     }

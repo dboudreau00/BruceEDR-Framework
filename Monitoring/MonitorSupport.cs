@@ -426,6 +426,23 @@ public static class MonitorSupport
     }
 
     /// <summary>
+    /// True when the requested access lets the caller change the target: write its memory,
+    /// start a thread in it, take over a handle it holds, or rewrite its DACL or owner to grant
+    /// itself the rest. Reading is left out: VM_READ and GENERIC_READ are how WMI, Defrag,
+    /// VMware Tools and every debugger look at a process, and reading memory is credential
+    /// theft only against LSASS, which <see cref="IsSensitiveProcessAccess"/> covers.
+    /// MAXIMUM_ALLOWED stays in: against a process of the same user it is granted everything.
+    /// </summary>
+    public static bool IsInjectionCapableAccess(uint desiredAccess)
+    {
+        const uint changeRights = ProcessCreateThread | ProcessVmOperation | ProcessVmWrite | ProcessDupHandle |
+                                  StandardWriteDac | StandardWriteOwner;
+        if ((desiredAccess & changeRights) != 0) return true;
+        if ((desiredAccess & ProcessAllAccess) == ProcessAllAccess) return true;
+        return (desiredAccess & (MaximumAllowed | GenericAll | GenericWrite)) != 0;
+    }
+
+    /// <summary>
     /// Named rights in the order they are rendered. Keeping this ordered (rather than
     /// deriving it from a dictionary) makes <see cref="DescribeAccessMask"/> output
     /// stable, which matters because alert text is diffed and grepped by analysts.

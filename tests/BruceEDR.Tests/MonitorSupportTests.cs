@@ -380,6 +380,36 @@ public class MonitorSupportAccessMaskTests
         Assert.True(MonitorSupport.IsSensitiveProcessAccess(mask));
     }
 
+    [Theory]
+    [InlineData(0x0002u)]       // PROCESS_CREATE_THREAD
+    [InlineData(0x0008u)]       // PROCESS_VM_OPERATION
+    [InlineData(0x0020u)]       // PROCESS_VM_WRITE
+    [InlineData(0x0040u)]       // PROCESS_DUP_HANDLE
+    [InlineData(0x00040000u)]   // WRITE_DAC
+    [InlineData(0x00080000u)]   // WRITE_OWNER
+    [InlineData(0x001FFFFFu)]   // PROCESS_ALL_ACCESS
+    [InlineData(0x02000000u)]   // MAXIMUM_ALLOWED
+    [InlineData(0x10000000u)]   // GENERIC_ALL
+    [InlineData(0x40000000u)]   // GENERIC_WRITE
+    public void IsInjectionCapableAccess_Flags_Rights_That_Change_The_Target(uint mask)
+    {
+        Assert.True(MonitorSupport.IsInjectionCapableAccess(mask));
+    }
+
+    // The masks WmiPrvSE, Defrag and VMware Tools used on a clean lab VM, where the injection
+    // rule scored them to quarantine.
+    [Theory]
+    [InlineData(0x0000u)]
+    [InlineData(0x0010u)]       // PROCESS_VM_READ
+    [InlineData(0x0410u)]       // QUERY_INFORMATION + VM_READ (WmiPrvSE)
+    [InlineData(0x80000000u)]   // GENERIC_READ (Defrag, VMware Tools)
+    [InlineData(0x1000u)]       // PROCESS_QUERY_LIMITED_INFORMATION
+    [InlineData(0x0001u)]       // PROCESS_TERMINATE
+    public void IsInjectionCapableAccess_Ignores_Read_Only_Rights(uint mask)
+    {
+        Assert.False(MonitorSupport.IsInjectionCapableAccess(mask));
+    }
+
     [Fact]
     public void DescribeAccessMask_Zero_Is_None()
     {
