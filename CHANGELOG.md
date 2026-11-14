@@ -2,7 +2,7 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [3.3.0] - 2026-11-14
 
 A UX pass over the desktop app, Incident triage, and two fixes in the engine.
 
