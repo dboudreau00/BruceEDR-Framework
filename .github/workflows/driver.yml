@@ -1,0 +1,61 @@
+name: driver
+
+on:
+  push:
+    branches: [main]
+    paths: ["kernel/**", ".github/workflows/driver.yml"]
+  pull_request:
+    paths: ["kernel/**", ".github/workflows/driver.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: driver-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # VS 2022's compiler: the WDK 10.0.26100 code-analysis plugins are built for it, and that is
+    # the toolchain build.ps1 is verified with.
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore the WDK NuGet packages
+        shell: pwsh
+        working-directory: kernel/BruceFilter
+        run: nuget restore packages.config -PackagesDirectory packages
+
+      - name: Build, analyse, check the INF, catalog, policy tests (Release and Debug)
+        shell: pwsh
+        working-directory: kernel/BruceFilter
+        run: |
+          foreach ($configuration in "Release", "Debug") {
+            ./build.ps1 -Configuration $configuration
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Lab harness dry run (no driver; checks the lab itself)
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "brucelab"
+          New-Item -ItemType Directory -Force "$work\trusted", "$work\untrusted" | Out-Null
+          foreach ($copy in "trusted", "untrusted") {
+            Copy-Item kernel/BruceFilter/x64/Release/lab/BruceLab.exe "$work\$copy"
+          }
+          & "$work\trusted\BruceLab.exe" run "$work\tree" "$work\trusted\BruceLab.exe" "$work\untrusted\BruceLab.exe" --dry-run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload the unsigned build
+        uses: actions/upload-artifact@v4
+        with:
+          name: brucefilter-unsigned
+          if-no-files-found: error
+          path: |
+            kernel/BruceFilter/x64/Release/BruceFilter.sys
+            kernel/BruceFilter/x64/Release/BruceFilter.inf
+            kernel/BruceFilter/x64/Release/brucefilter.cat
+            kernel/BruceFilter/x64/Release/BruceFilter.pdb
+            kernel/BruceFilter/x64/Release/lab/BruceLab.exe

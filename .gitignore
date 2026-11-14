@@ -9,6 +9,9 @@ publish/
 dist/
 *.user
 
+# WDK NuGet packages restored for kernel/BruceFilter/build.ps1 (several GB)
+kernel/BruceFilter/packages/
+
 # Release staging / artifacts produced by publish-release.ps1
 /artifacts/
 *.zip

@@ -1,0 +1,17 @@
+<Project>
+  <!--
+    Wires the NuGet WDK into the driver project, the way Microsoft's Windows-driver-samples do.
+    Restore with: nuget restore packages.config -PackagesDirectory packages
+    BruceWdkPackages can point at an existing package folder instead of a local restore.
+  -->
+  <PropertyGroup>
+    <BruceWdkVersion>10.0.26100.6584</BruceWdkVersion>
+    <BruceWdkPackages Condition="'$(BruceWdkPackages)' == ''">$(MSBuildThisFileDirectory)packages</BruceWdkPackages>
+  </PropertyGroup>
+  <Import Project="$(BruceWdkPackages)\Microsoft.Windows.WDK.x64.$(BruceWdkVersion)\build\native\Microsoft.Windows.WDK.x64.props"
+          Condition="Exists('$(BruceWdkPackages)\Microsoft.Windows.WDK.x64.$(BruceWdkVersion)\build\native\Microsoft.Windows.WDK.x64.props') and '$(Platform)' == 'x64'" />
+  <Import Project="$(BruceWdkPackages)\Microsoft.Windows.SDK.CPP.x64.$(BruceWdkVersion)\build\native\Microsoft.Windows.SDK.cpp.x64.props"
+          Condition="Exists('$(BruceWdkPackages)\Microsoft.Windows.SDK.CPP.x64.$(BruceWdkVersion)\build\native\Microsoft.Windows.SDK.cpp.x64.props') and '$(Platform)' == 'x64'" />
+  <Import Project="$(BruceWdkPackages)\Microsoft.Windows.SDK.CPP.$(BruceWdkVersion)\build\native\Microsoft.Windows.SDK.cpp.props"
+          Condition="Exists('$(BruceWdkPackages)\Microsoft.Windows.SDK.CPP.$(BruceWdkVersion)\build\native\Microsoft.Windows.SDK.cpp.props')" />
+</Project>

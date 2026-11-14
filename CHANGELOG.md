@@ -2,6 +2,51 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Renames and hard links** onto a guarded store are refused, and so is renaming the store's
+  folder or a folder above it.
+- **While blocking is on, `fltmc unload` and `fltmc detach` are refused** (`STATUS_FLT_DO_NOT_DETACH`).
+  A service stop still unloads it, and an administrator can still switch blocking off as SYSTEM;
+  `lab.ps1 uninstall` now resets the driver first.
+- `kernel/BruceFilter/build.ps1` builds the driver from the WDK NuGet packages, without the WDK
+  installer: compile at `/W4 /WX`, driver code analysis, InfVerif, Inf2Cat, and user-mode tests
+  of the decision code the driver runs (195 checks). A `driver` CI workflow runs it.
+- **A VM lab for the driver** (`kernel/BruceFilter/lab`). `lab.ps1 prepare` signs and stages a
+  package with a lab certificate; in a test VM, `testsigning`, `install` and `test` load the
+  driver and run 42 scenarios through it as SYSTEM, from a trusted and an untrusted copy of one
+  program: opens, streams, junctions, symlinks, 8.3 and custom short names, opens by file id
+  (including the recheck after the open), copies, deletes, links and renames, a shadow copy and
+  SMB loopback, each refusal checked against the exact operation the driver reports. Two more
+  checks confirm `fltmc unload` and `fltmc detach` are refused. Driver Verifier and an
+  end-to-end run with the agent service are one command each.
+
+### Fixed
+
+- **A name the driver cannot read no longer means allow.** Opens are decided on the opened
+  name, 8.3 aliases are expanded, and an open by file id is checked again once the file is
+  open, and cancelled if it is guarded. A name unresolved even then is refused unless the
+  program is trusted for every store.
+- The guarded folder itself was open to everyone, so it could be listed, or moved away with
+  everything in it. It is guarded too now, whatever stream (`Exodus::$INDEX_ALLOCATION`) or
+  trailing separator the open names it with.
+- The INF had a made-up class GUID and failed InfVerif. It now follows Microsoft's minifilter
+  layout: the driver store on Windows 11 24H2 and later, the old layout before.
+- **A stream on a folder inside the path hid the store** (found in review). NTFS opens
+  `...\Exodus::$INDEX_ALLOCATION\exodus.wallet\seed.seco` and `...\Exodus:$I30\...`, and only a
+  stream on the last component was stripped, so the fragment never matched. Fragments are now
+  matched component by component, each name ending at its first colon.
+- **A short name hid the store** (found in review). Since Windows 10 1903 any program with DELETE
+  access may give a folder a short name of its choosing, and one without `~digit` was never
+  expanded: `...\Google\CH\User Data\` no longer carried the Chrome fragment. Setting a short name
+  on a store or a folder above it is now refused like renaming it. A short name given before
+  blocking was switched on still hides the store; see the driver README's limits.
+- **Blocking was off for a moment on every policy change** (found in review). A commit copied the
+  whole staged policy, whose blocking flag is off, over the live one and then switched the flag
+  back, while every open read that flag without a lock. A commit no longer writes it.
+
 ## [3.3.0] - 2026-11-14
 
 A UX pass over the desktop app, Incident triage, and two fixes in the engine.

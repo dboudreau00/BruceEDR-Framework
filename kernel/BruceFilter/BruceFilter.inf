@@ -3,37 +3,46 @@
 ; Altitude 385201 is a PLACEHOLDER in the "FSFilter Activity Monitor" range;
 ; production drivers must request a unique altitude from Microsoft.
 ;
+; Laid out like Microsoft's nullFilter sample: Windows 11 24H2 and later (build 25952+)
+; install from the driver store with the instance keys under Parameters; earlier builds,
+; down to the driver's Windows 10 2004 floor, use the downlevel sections. build.ps1 stamps
+; DriverVer and $ARCH$ into the copy it checks.
+;
 [Version]
 Signature   = "$Windows NT$"
 Class       = "ActivityMonitor"
-ClassGuid   = {b86dff51-a31d-4f19-8d95-4e5b0d1f5f42}
+ClassGuid   = {b86dff51-a31e-4bac-b3cf-e8cfe75c9fc2}
 Provider    = %ProviderString%
 DriverVer   =
 CatalogFile = BruceFilter.cat
 PnpLockdown = 1
 
-[DestinationDirs]
-DefaultDestDir           = 12
-BruceFilter.DriverFiles = 12            ;%windir%\system32\drivers
+[SourceDisksFiles]
+BruceFilter.sys = 1,,
 
-[DefaultInstall.NTamd64]
+[SourceDisksNames]
+1 = %DiskId1%,,,
+
+[DestinationDirs]
+BruceFilterDownlevel.CopyDriverFiles = 12   ;%windir%\system32\drivers
+BruceFilterDownlevel.DelDriverFiles  = 12   ;%windir%\system32\drivers
+BruceFilter.DriverFiles              = 13   ;driver store
+
+;;
+;; Windows 11 24H2 and later
+;;
+
+[DefaultInstall.NT$ARCH$.10.0...25952]
 OptionDesc = %ServiceDescription%
 CopyFiles  = BruceFilter.DriverFiles
 
-[DefaultInstall.NTamd64.Services]
+[DefaultInstall.NT$ARCH$.10.0...25952.Services]
 AddService = %ServiceName%,,BruceFilter.Service
-
-[DefaultUninstall.NTamd64]
-LegacyUninstall = 1
-DelFiles        = BruceFilter.DriverFiles
-
-[DefaultUninstall.NTamd64.Services]
-DelService = %ServiceName%,0x200        ;SPSVCINST_STOPSERVICE
 
 [BruceFilter.Service]
 DisplayName    = %ServiceName%
 Description    = %ServiceDescription%
-ServiceBinary  = %12%\BruceFilter.sys
+ServiceBinary  = %13%\BruceFilter.sys
 Dependencies   = FltMgr
 ServiceType    = 2                       ;SERVICE_FILE_SYSTEM_DRIVER
 StartType      = 3                       ;SERVICE_DEMAND_START
@@ -42,17 +51,58 @@ LoadOrderGroup = "FSFilter Activity Monitor"
 AddReg         = BruceFilter.AddRegistry
 
 [BruceFilter.AddRegistry]
+HKR,"Parameters\Instances","DefaultInstance",0x00000000,%Instance1.Name%
+HKR,"Parameters\Instances\"%Instance1.Name%,"Altitude",0x00000000,%Instance1.Altitude%
+HKR,"Parameters\Instances\"%Instance1.Name%,"Flags",0x00010001,%Instance1.Flags%
+
+[BruceFilter.DriverFiles]
+BruceFilter.sys
+
+;;
+;; Windows 10 2004 to Windows 11 23H2
+;;
+
+[DefaultInstall.NT$ARCH$]
+OptionDesc = %ServiceDescription%
+CopyFiles  = BruceFilterDownlevel.CopyDriverFiles
+
+[DefaultInstall.NT$ARCH$.Services]
+AddService = %ServiceName%,,BruceFilterDownlevel.Service
+
+[DefaultUninstall.NT$ARCH$]
+LegacyUninstall = 1
+DelFiles        = BruceFilterDownlevel.DelDriverFiles
+
+[DefaultUninstall.NT$ARCH$.Services]
+DelService = %ServiceName%,0x200        ;SPSVCINST_STOPSERVICE
+
+[BruceFilterDownlevel.Service]
+DisplayName    = %ServiceName%
+Description    = %ServiceDescription%
+ServiceBinary  = %12%\BruceFilter.sys
+Dependencies   = FltMgr
+ServiceType    = 2                       ;SERVICE_FILE_SYSTEM_DRIVER
+StartType      = 3                       ;SERVICE_DEMAND_START
+ErrorControl   = 1                       ;SERVICE_ERROR_NORMAL
+LoadOrderGroup = "FSFilter Activity Monitor"
+AddReg         = BruceFilterDownlevel.AddRegistry
+
+[BruceFilterDownlevel.AddRegistry]
 HKR,"Instances","DefaultInstance",0x00000000,%Instance1.Name%
 HKR,"Instances\"%Instance1.Name%,"Altitude",0x00000000,%Instance1.Altitude%
 HKR,"Instances\"%Instance1.Name%,"Flags",0x00010001,%Instance1.Flags%
 
-[BruceFilter.DriverFiles]
+[BruceFilterDownlevel.CopyDriverFiles]
+BruceFilter.sys
+
+[BruceFilterDownlevel.DelDriverFiles]
 BruceFilter.sys
 
 [Strings]
 ProviderString     = "BruceEDR"
 ServiceName        = "BruceFilter"
 ServiceDescription = "BruceEDR minifilter"
+DiskId1            = "BruceFilter installation files"
 Instance1.Name     = "BruceFilter Instance"
 Instance1.Altitude = "385201"
-Instance1.Flags    = 0x0
+Instance1.Flags    = 0x0                 ; attach to every volume as it mounts
