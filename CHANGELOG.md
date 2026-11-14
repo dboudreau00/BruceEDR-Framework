@@ -2,7 +2,14 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [3.4.0] - 2026-11-14
+
+The kernel minifilter, finished: trusted programs, renames and links, a process guard that keeps
+other programs out of a trusted one, and refusals the agent can see. Enforce mode no longer
+touches the processes Windows needs to keep running. The driver passed its 49 lab scenarios and
+two unload checks in Windows 10 21H2 (under Driver Verifier) and Windows 11 22H2 VMs, and the
+agent service drove it end to end in both; it is signed with a lab certificate only, so
+production still needs a Microsoft-signed build.
 
 ### Changed - read before upgrading
 
