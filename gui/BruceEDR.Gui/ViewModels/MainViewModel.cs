@@ -39,6 +39,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private DateTime _lastSignalsAtUtc;
 
     private Func<DetectionConfig>? _detection;
+    private readonly ActivityTimeline _timeline = new();
+    private DateTime _timelinePublishedUtc;
+    private readonly List<double> _rateSamples = new();
     private readonly DispatcherTimer _toastTimer;
 
     public ObservableCollection<ThreatRow> Threats { get; } = new();
@@ -121,6 +124,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); ToastVisible = false; };
 
+        PublishTimeline(force: true);
     }
 
     private readonly ICollectionView _threatsView;
@@ -525,11 +529,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
+                    _timeline.Record(e.Level, e.TimeUtc);
+                    TotalEvents++;
                     if (SelectedTabIndex != EventsTabIndex && e.Level is "QUARANTINE" or "WARN")
                     {
                         UnreadAlerts++;
                         if (e.Level == "QUARANTINE") UnreadLevel = "threat";
                     }
+                    PublishTimeline(force: false);
                     if (e.Level == "QUARANTINE")
                         AlertRaised?.Invoke(IsMonitorOnly ? "Threat detected (monitor only)" : "Threat contained",
                             e.Pid > 0 ? $"pid {e.Pid} {e.Process}: {(string.IsNullOrEmpty(e.Trigger) ? e.Message : e.Trigger)}" : e.Message);
@@ -731,6 +738,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             TotalEndpointCount = endpoints.Count;
             BeaconCount = endpoints.Count(e => e.Beaconing);
             UpdateStats(host);
+            PublishTimeline(force: true);
 
             if (!IsRunning)
             {
@@ -767,6 +775,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 SignalRate = rate >= 100 ? $"{rate:F0}/s" : $"{rate:F1}/s";
                 _lastSignals = s.SignalsProcessed;
                 _lastSignalsAtUtc = now;
+                _rateSamples.Add(Math.Max(0, rate));
+                if (_rateSamples.Count > 40) _rateSamples.RemoveAt(0);
+                RateHistory = _rateSamples.ToArray();
             }
 
             SignalsProcessed = s.SignalsProcessed.ToString("N0", CultureInfo.CurrentCulture);
@@ -956,6 +967,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex) { AppLog.Error("merge techniques", ex); }
     }
 
+    private void PublishTimeline(bool force)
+    {
+        var now = DateTime.UtcNow;
+        if (!force && now - _timelinePublishedUtc < TimeSpan.FromMilliseconds(400)) return;
+        _timelinePublishedUtc = now;
+        var buckets = _timeline.Snapshot(now);
+        TimelineBuckets = buckets;
+        EventHistory = buckets.Skip(buckets.Length - 40).Select(b => (double)b.Total).ToArray();
+    }
+
     private void RaiseRail()
     {
         OnPropertyChanged(nameof(RailStatus));
@@ -987,6 +1008,20 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public string RailStatus => _isLive ? (_isRunning ? "Monitoring" : "Starting") : "Not monitoring";
     public string RailDetail => _isLive ? $"{(_isMonitorOnly ? "monitor only" : "enforcing")} · up {_uptime}"
                               : "set-up open";
+
+    // ---- charts ----
+    private ActivityBucket[] _timelineBuckets = Array.Empty<ActivityBucket>();
+    public ActivityBucket[] TimelineBuckets { get => _timelineBuckets; private set => Set(ref _timelineBuckets, value); }
+
+    private double[] _eventHistory = Array.Empty<double>();
+    public double[] EventHistory { get => _eventHistory; private set => Set(ref _eventHistory, value); }
+
+    private double[] _rateHistory = Array.Empty<double>();
+    public double[] RateHistory { get => _rateHistory; private set => Set(ref _rateHistory, value); }
+
+    private long _totalEvents;
+    /// <summary>Every event since start; the feed itself keeps only the newest few hundred.</summary>
+    public long TotalEvents { get => _totalEvents; private set => Set(ref _totalEvents, value); }
 
     private int _warnAt = 40;
     public int WarnAt { get => _warnAt; private set => Set(ref _warnAt, value); }

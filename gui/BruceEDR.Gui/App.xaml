@@ -13,6 +13,7 @@
             <local:ChipSelectedConverter x:Key="ChipSelected"/>
             <local:TacticSummaryConverter x:Key="TacticSummary"/>
             <local:TacticProgressConverter x:Key="TacticProgress"/>
+            <local:LessThanConverter x:Key="LessThan"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

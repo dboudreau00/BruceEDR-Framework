@@ -1,7 +1,11 @@
 <UserControl x:Class="BruceEDR.Gui.Views.DashboardView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="Transparent">
+             xmlns:v="clr-namespace:BruceEDR.Gui.Views"
+             Style="{StaticResource View.Root}">
+    <UserControl.RenderTransform>
+        <TranslateTransform/>
+    </UserControl.RenderTransform>
     <UserControl.Resources>
         <Style x:Key="Cell.Data" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
@@ -9,61 +13,93 @@
             <Setter Property="Foreground" Value="{StaticResource Brush.Mist}"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
-        <Style x:Key="Cell.Faint" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="{StaticResource Brush.Faint}"/>
-            <Setter Property="FontSize" Value="11.5"/>
-            <Setter Property="VerticalAlignment" Value="Center"/>
-        </Style>
 
-        <!-- Severity-coloured brush swaps used across the ribbon, badges and meters -->
-        <Style x:Key="StatDot" TargetType="Border">
-            <Setter Property="Width" Value="9"/>
-            <Setter Property="Height" Value="9"/>
-            <Setter Property="CornerRadius" Value="4.5"/>
-            <Setter Property="Background" Value="{StaticResource Brush.Safe}"/>
+        <Style x:Key="StatDot" TargetType="Ellipse">
+            <Setter Property="Fill" Value="{StaticResource Brush.Safe}"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding StatusLevel}" Value="watch">
-                    <Setter Property="Background" Value="{StaticResource Brush.Watch}"/>
+                    <Setter Property="Fill" Value="{StaticResource Brush.Watch}"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding StatusLevel}" Value="threat">
-                    <Setter Property="Background" Value="{StaticResource Brush.Threat}"/>
+                    <Setter Property="Fill" Value="{StaticResource Brush.Threat}"/>
                 </DataTrigger>
-                <!-- Nothing live: neutral, never the green of "all clear" -->
                 <DataTrigger Binding="{Binding StatusLevel}" Value="off">
-                    <Setter Property="Background" Value="{StaticResource Brush.Faint}"/>
+                    <Setter Property="Fill" Value="{StaticResource Brush.Faint}"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
 
-        <!-- 3px severity rail on the posture ribbon -->
-        <Style x:Key="RibbonRail" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource Brush.Safe}"/>
+        <!-- Soft glow behind the posture glyph, coloured by state -->
+        <Style x:Key="PostureGlow" TargetType="Ellipse">
+            <Setter Property="Fill">
+                <Setter.Value>
+                    <RadialGradientBrush>
+                        <GradientStop Color="#4034D399" Offset="0"/>
+                        <GradientStop Color="#0034D399" Offset="1"/>
+                    </RadialGradientBrush>
+                </Setter.Value>
+            </Setter>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding StatusLevel}" Value="watch">
-                    <Setter Property="Background" Value="{StaticResource Brush.Watch}"/>
+                    <Setter Property="Fill">
+                        <Setter.Value>
+                            <RadialGradientBrush>
+                                <GradientStop Color="#40F2B33D" Offset="0"/>
+                                <GradientStop Color="#00F2B33D" Offset="1"/>
+                            </RadialGradientBrush>
+                        </Setter.Value>
+                    </Setter>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding StatusLevel}" Value="threat">
-                    <Setter Property="Background" Value="{StaticResource Brush.Threat}"/>
+                    <Setter Property="Fill">
+                        <Setter.Value>
+                            <RadialGradientBrush>
+                                <GradientStop Color="#55F2555A" Offset="0"/>
+                                <GradientStop Color="#00F2555A" Offset="1"/>
+                            </RadialGradientBrush>
+                        </Setter.Value>
+                    </Setter>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding StatusLevel}" Value="off">
-                    <Setter Property="Background" Value="{StaticResource Brush.Faint}"/>
+                    <Setter Property="Fill" Value="Transparent"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
 
-        <!-- State badge: dim fill + state-coloured text, driven by the row's Severity -->
-        <Style x:Key="RowBadge" TargetType="Border" BasedOn="{StaticResource Badge}">
+        <Style x:Key="PostureGlyph" TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+            <Setter Property="FontSize" Value="22"/>
+            <Setter Property="Text" Value="&#xEA18;"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding StatusLevel}" Value="watch">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Watch}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding StatusLevel}" Value="threat">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                    <Setter Property="Text" Value="&#xE7BA;"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding StatusLevel}" Value="off">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Faint}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="RowBadge" TargetType="Border" BasedOn="{StaticResource Pill}">
             <Setter Property="Background" Value="{StaticResource Brush.WatchDim}"/>
+            <Setter Property="BorderBrush" Value="#4DF2B33D"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Severity}" Value="threat">
                     <Setter Property="Background" Value="{StaticResource Brush.ThreatDim}"/>
+                    <Setter Property="BorderBrush" Value="#4DF2555A"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding Severity}" Value="safe">
                     <Setter Property="Background" Value="{StaticResource Brush.SafeDim}"/>
+                    <Setter Property="BorderBrush" Value="#4D34D399"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
-        <Style x:Key="RowBadgeText" TargetType="TextBlock" BasedOn="{StaticResource Badge.Text}">
+        <Style x:Key="SeverityFg" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource Brush.Watch}"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Severity}" Value="threat">
@@ -74,20 +110,20 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
-
-        <!-- Score text + meter colour by severity -->
-        <Style x:Key="ScoreText" TargetType="TextBlock">
-            <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
-            <Setter Property="FontSize" Value="{StaticResource Size.Data}"/>
+        <Style x:Key="RowBadgeText" TargetType="TextBlock" BasedOn="{StaticResource SeverityFg}">
+            <Setter Property="FontFamily" Value="{StaticResource Font.Ui}"/>
+            <Setter Property="FontSize" Value="10.5"/>
             <Setter Property="FontWeight" Value="Medium"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
-            <Setter Property="Foreground" Value="{StaticResource Brush.Watch}"/>
+        </Style>
+        <Style x:Key="SeverityFill" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource Brush.Watch}"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Severity}" Value="threat">
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                    <Setter Property="Background" Value="{StaticResource Brush.Threat}"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding Severity}" Value="safe">
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
+                    <Setter Property="Background" Value="{StaticResource Brush.Safe}"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -104,7 +140,25 @@
         </Style>
 
         <Style x:Key="DetailLabel" TargetType="TextBlock" BasedOn="{StaticResource Text.Label}">
-            <Setter Property="Margin" Value="0,0,0,3"/>
+            <Setter Property="Margin" Value="0,0,0,4"/>
+        </Style>
+        <Style x:Key="StatLabel" TargetType="TextBlock" BasedOn="{StaticResource Text.Label}">
+            <Setter Property="Margin" Value="0,0,36,0"/>
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        </Style>
+        <Style x:Key="StatValue" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
+            <Setter Property="FontSize" Value="25"/>
+            <Setter Property="FontWeight" Value="Medium"/>
+            <Setter Property="Margin" Value="0,4,0,0"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+        </Style>
+        <Style x:Key="LegendSwatch" TargetType="Border">
+            <Setter Property="Width" Value="8"/>
+            <Setter Property="Height" Value="8"/>
+            <Setter Property="CornerRadius" Value="2"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="12,0,5,0"/>
         </Style>
     </UserControl.Resources>
 
@@ -116,153 +170,179 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Problem banner (visible only when the engine can't run) -->
-        <Border Grid.Row="0" Margin="0,0,0,12" CornerRadius="8" Padding="14,11"
-                Background="{StaticResource Brush.ThreatDim}"
-                BorderBrush="{StaticResource Brush.Threat}" BorderThickness="1"
-                Visibility="{Binding HasProblem, Converter={StaticResource BoolToVis}}">
-            <StackPanel Orientation="Horizontal">
-                <Border Width="8" Height="8" CornerRadius="4" VerticalAlignment="Center" Margin="0,0,12,0"
-                        Background="{StaticResource Brush.Threat}"/>
-                <TextBlock Text="{Binding ProblemText}" TextWrapping="Wrap" VerticalAlignment="Center"
-                           Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Paper}"/>
-            </StackPanel>
-        </Border>
+        <StackPanel Grid.Row="0">
+            <!-- Problem banner: only when the engine cannot run -->
+            <Border Margin="0,0,0,12" CornerRadius="8" Padding="14,11"
+                    Background="{StaticResource Brush.ThreatDim}" BorderBrush="#66F2555A" BorderThickness="1"
+                    Visibility="{Binding HasProblem, Converter={StaticResource BoolToVis}}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE783;" Style="{StaticResource Icon}" Foreground="{StaticResource Brush.Threat}" Margin="0,0,10,0"/>
+                    <TextBlock Text="{Binding ProblemText}" TextWrapping="Wrap" VerticalAlignment="Center"
+                               Style="{StaticResource Text.Body}"/>
+                </StackPanel>
+            </Border>
 
-        <!-- Posture ribbon with a severity rail -->
-        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0" Margin="0,0,0,14">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <Border Grid.Column="0" Width="3" CornerRadius="2,0,0,2" Style="{StaticResource RibbonRail}"/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="20,18">
-                    <Grid VerticalAlignment="Center" Margin="0,0,14,0">
-                        <!-- Pulsing halo behind the state dot while monitoring -->
-                        <Ellipse x:Name="halo" Width="9" Height="9" Fill="Transparent"
-                                 RenderTransformOrigin="0.5,0.5">
-                            <Ellipse.RenderTransform>
-                                <ScaleTransform/>
-                            </Ellipse.RenderTransform>
-                            <Ellipse.Style>
-                                <Style TargetType="Ellipse">
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
-                                            <Setter Property="Fill" Value="{StaticResource Brush.Safe}"/>
-                                            <DataTrigger.EnterActions>
-                                                <BeginStoryboard Name="pulse">
-                                                    <Storyboard RepeatBehavior="Forever" Duration="0:0:2.4">
-                                                        <DoubleAnimation Storyboard.TargetProperty="(Ellipse.RenderTransform).(ScaleTransform.ScaleX)"
-                                                                         From="1" To="2.6" Duration="0:0:2.4"/>
-                                                        <DoubleAnimation Storyboard.TargetProperty="(Ellipse.RenderTransform).(ScaleTransform.ScaleY)"
-                                                                         From="1" To="2.6" Duration="0:0:2.4"/>
-                                                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
-                                                                         From="0.55" To="0" Duration="0:0:2.4"/>
-                                                    </Storyboard>
-                                                </BeginStoryboard>
-                                            </DataTrigger.EnterActions>
-                                            <DataTrigger.ExitActions>
-                                                <StopStoryboard BeginStoryboardName="pulse"/>
-                                            </DataTrigger.ExitActions>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Ellipse.Style>
-                        </Ellipse>
-                        <Border Style="{StaticResource StatDot}"/>
+            <!-- Replay banner: these processes are not on this machine -->
+            <Border Margin="0,0,0,12" CornerRadius="8" Padding="14,10"
+                    Background="{StaticResource Brush.AccentDim}" BorderBrush="{StaticResource Brush.AccentLine}" BorderThickness="1"
+                    Visibility="{Binding IsReplay, Converter={StaticResource BoolToVis}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="160"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="&#xE768;" Style="{StaticResource Icon}" FontSize="14"
+                               Foreground="{StaticResource Brush.Accent}" Margin="0,0,11,0"/>
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               Style="{StaticResource Text.Body}">
+                        <Run Text="Replaying" Foreground="{StaticResource Brush.Mist}"/>
+                        <Run Text="{Binding ReplayName, Mode=OneWay}" FontWeight="SemiBold"/>
+                        <Run Text="  Recorded trace. Nothing on this machine is monitored or touched." Foreground="{StaticResource Brush.Mist}"/>
+                    </TextBlock>
+                    <ProgressBar Grid.Column="2" Style="{StaticResource Meter}" Margin="14,0" VerticalAlignment="Center"
+                                 Value="{Binding ReplayProgress, Mode=OneWay}"/>
+                    <Button Grid.Column="3" Content="{Binding StopLabel}" Style="{StaticResource Btn.Subtle}" Padding="12,4"
+                            Command="{Binding StopCommand}"/>
+                </Grid>
+            </Border>
+        </StackPanel>
+
+        <!-- Posture + activity -->
+        <Grid Grid.Row="1" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="340"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="20,16" Margin="0,0,14,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid Width="56" Height="56" VerticalAlignment="Center" Margin="0,0,16,0">
+                        <Ellipse Width="84" Height="84" Margin="-14" Style="{StaticResource PostureGlow}" IsHitTestVisible="False"/>
+                        <Ellipse Fill="{StaticResource Brush.InkRaised}" Stroke="{StaticResource Brush.Line}" StrokeThickness="1"/>
+                        <TextBlock Style="{StaticResource PostureGlyph}"/>
                     </Grid>
-                    <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Display}"/>
-                        <TextBlock Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" Margin="0,4,0,0">
-                            <Run Text="Monitors:"/>
-                            <Run Text="{Binding Monitors, Mode=OneWay}"/>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <Grid Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,8,0">
+                                <Ellipse Style="{StaticResource Halo}">
+                                    <Ellipse.RenderTransform><ScaleTransform/></Ellipse.RenderTransform>
+                                </Ellipse>
+                                <Ellipse Style="{StaticResource StatDot}"/>
+                            </Grid>
+                            <TextBlock Text="{Binding ModeText}" Style="{StaticResource Text.Label}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Display}" Margin="0,5,0,0"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Margin="0,4,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding Monitors}"
+                                   FontFamily="{StaticResource Font.Data}" FontSize="10.5" Foreground="{StaticResource Brush.Faint}">
+                            <Run Text="monitors"/>
+                            <Run Text="{Binding Monitors, Mode=OneWay}" Foreground="{StaticResource Brush.Mist}"/>
                         </TextBlock>
                     </StackPanel>
-                </StackPanel>
-                <TextBlock Grid.Column="2" Text="{Binding LastMessage}" VerticalAlignment="Center"
-                           Margin="0,0,20,0" MaxWidth="360" TextTrimming="CharacterEllipsis"
-                           ToolTip="{Binding LastMessage}"
-                           FontFamily="{StaticResource Font.Data}" FontSize="11"
-                           Foreground="{StaticResource Brush.Faint}"/>
-            </Grid>
-        </Border>
+                </Grid>
+            </Border>
 
-        <!-- Stat cards, each with its 3px severity rail -->
+            <Border Grid.Column="1" Style="{StaticResource Card}" Padding="16,12,16,10">
+                <DockPanel>
+                    <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <TextBlock Text="Activity" Style="{StaticResource Text.Title}" VerticalAlignment="Center"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Border Style="{StaticResource LegendSwatch}" Background="{StaticResource Brush.Threat}"/>
+                            <TextBlock Text="quarantine" Style="{StaticResource Text.Label}" FontWeight="Medium"/>
+                            <Border Style="{StaticResource LegendSwatch}" Background="{StaticResource Brush.Watch}"/>
+                            <TextBlock Text="warn" Style="{StaticResource Text.Label}" FontWeight="Medium"/>
+                            <Border Style="{StaticResource LegendSwatch}" Background="{StaticResource Brush.Info}"/>
+                            <TextBlock Text="action" Style="{StaticResource Text.Label}" FontWeight="Medium"/>
+                            <Border Style="{StaticResource LegendSwatch}" Background="#7099A2B8"/>
+                            <TextBlock Text="info" Style="{StaticResource Text.Label}" FontWeight="Medium"/>
+                        </StackPanel>
+                    </Grid>
+                    <v:TimelineChart Height="86" Buckets="{Binding TimelineBuckets}"/>
+                </DockPanel>
+            </Border>
+        </Grid>
+
+        <!-- Stat cards; dropped on short windows so the verdict table keeps its room -->
         <Grid Grid.Row="2" Margin="0,0,0,14">
+            <Grid.Style>
+                <Style TargetType="Grid">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding ActualHeight, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource LessThan}, ConverterParameter=640}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Grid.Style>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <Grid.Resources>
-                <Style x:Key="StatValue" TargetType="TextBlock">
-                    <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
-                    <Setter Property="FontSize" Value="26"/>
-                    <Setter Property="FontWeight" Value="Medium"/>
-                    <Setter Property="Margin" Value="0,6,0,0"/>
-                </Style>
-            </Grid.Resources>
 
-            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0" Margin="0,0,6,0">
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="16,13" Margin="0,0,7,0">
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="3"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Border CornerRadius="2,0,0,2" Background="{StaticResource Brush.Threat}"/>
-                    <StackPanel Grid.Column="1" Margin="15,13">
-                        <TextBlock Text="{Binding ContainedLabel}" Style="{StaticResource Text.Label}"/>
+                    <StackPanel>
+                        <TextBlock Text="{Binding ContainedLabel}" Style="{StaticResource StatLabel}"/>
                         <TextBlock Text="{Binding ContainedCount}" Style="{StaticResource StatValue}"
                                    Foreground="{StaticResource Brush.Threat}"/>
                     </StackPanel>
+                    <Border Style="{StaticResource IconWell}" HorizontalAlignment="Right"
+                            Background="{StaticResource Brush.ThreatDim}" BorderBrush="#4DF2555A">
+                        <TextBlock Text="&#xE72E;" Style="{StaticResource Icon}" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Brush.Threat}"/>
+                    </Border>
                 </Grid>
             </Border>
 
-            <Border Grid.Column="1" Style="{StaticResource Card}" Padding="0" Margin="6,0,6,0">
+            <Border Grid.Column="1" Style="{StaticResource Card}" Padding="16,13" Margin="7,0">
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="3"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Border CornerRadius="2,0,0,2" Background="{StaticResource Brush.Watch}"/>
-                    <StackPanel Grid.Column="1" Margin="15,13">
-                        <TextBlock Text="FLAGGED" Style="{StaticResource Text.Label}"/>
+                    <StackPanel>
+                        <TextBlock Text="FLAGGED" Style="{StaticResource StatLabel}"/>
                         <TextBlock Text="{Binding FlaggedCount}" Style="{StaticResource StatValue}"
                                    Foreground="{StaticResource Brush.Watch}"/>
                     </StackPanel>
+                    <Border Style="{StaticResource IconWell}" HorizontalAlignment="Right"
+                            Background="{StaticResource Brush.WatchDim}" BorderBrush="#4DF2B33D">
+                        <TextBlock Text="&#xE7C1;" Style="{StaticResource Icon}" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Brush.Watch}"/>
+                    </Border>
                 </Grid>
             </Border>
 
-            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="0" Margin="6,0,6,0">
+            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="16,13" Margin="7,0">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="3"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <Border CornerRadius="2,0,0,2" Background="{StaticResource Brush.Info}"/>
-                    <StackPanel Grid.Column="1" Margin="15,13">
-                        <TextBlock Text="EVENTS" Style="{StaticResource Text.Label}"/>
-                        <TextBlock Text="{Binding Events.Count}" Style="{StaticResource StatValue}"
-                                   Foreground="{StaticResource Brush.Paper}"/>
+                    <StackPanel>
+                        <TextBlock Text="EVENTS" Style="{StaticResource StatLabel}"/>
+                        <TextBlock Text="{Binding TotalEvents}" Style="{StaticResource StatValue}"/>
                     </StackPanel>
+                    <v:Sparkline Grid.Column="1" Height="34" Margin="14,4,0,0" VerticalAlignment="Bottom"
+                                 Values="{Binding EventHistory}" Stroke="{StaticResource Brush.Info}"/>
                 </Grid>
             </Border>
 
-            <Border Grid.Column="3" Style="{StaticResource Card}" Padding="0" Margin="6,0,0,0">
+            <Border Grid.Column="3" Style="{StaticResource Card}" Padding="16,13" Margin="7,0,0,0">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="3"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <Border CornerRadius="2,0,0,2" Background="{StaticResource Brush.Watch}"/>
-                    <StackPanel Grid.Column="1" Margin="15,13">
-                        <TextBlock Text="BEACONING" Style="{StaticResource Text.Label}"/>
-                        <TextBlock Text="{Binding BeaconCount}" Style="{StaticResource StatValue}"
-                                   Foreground="{StaticResource Brush.Paper}"/>
+                    <StackPanel>
+                        <TextBlock Text="SIGNALS / SEC" Style="{StaticResource StatLabel}"/>
+                        <TextBlock Text="{Binding SignalRate}" Style="{StaticResource StatValue}"/>
                     </StackPanel>
+                    <v:Sparkline Grid.Column="1" Height="34" Margin="14,4,0,0" VerticalAlignment="Bottom"
+                                 Values="{Binding RateHistory}" Stroke="{StaticResource Brush.Accent}"/>
                 </Grid>
             </Border>
         </Grid>
@@ -270,31 +350,32 @@
         <!-- Threats table + details/actions -->
         <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="380"/>
+                <ColumnDefinition Width="1.4*" MinWidth="340"/>
+                <ColumnDefinition Width="*" MinWidth="300" MaxWidth="400"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Table -->
             <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0" Margin="0,0,14,0">
                 <DockPanel>
-                    <Grid DockPanel.Dock="Top" Margin="16,13,16,11">
+                    <Grid DockPanel.Dock="Top" Margin="16,12,16,10">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="180"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*" MaxWidth="220"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="Process verdicts" Style="{StaticResource Text.Title}"/>
-                            <TextBlock Text="Contained and flagged processes, live" Margin="0,2,0,0"
-                                       FontSize="10.5" Foreground="{StaticResource Brush.Faint}"/>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="Process verdicts" Style="{StaticResource Text.Title}" VerticalAlignment="Center"/>
+                            <Border Style="{StaticResource Pill}" Margin="10,0,0,0">
+                                <TextBlock Text="{Binding Threats.Count}" Style="{StaticResource Pill.Text}"/>
+                            </Border>
                         </StackPanel>
-                        <TextBox Grid.Column="1" Style="{StaticResource Input.Search}"
-                                 VerticalAlignment="Center" Margin="0,0,10,0"
+                        <TextBox Grid.Column="1" Style="{StaticResource Input.Search}" Height="30" MinWidth="90"
+                                 VerticalAlignment="Center" Margin="14,0,8,0"
                                  ToolTip="Filter by process, pid, path or state"
+                                 AutomationProperties.Name="Filter process verdicts"
                                  Text="{Binding ThreatSearch, UpdateSourceTrigger=PropertyChanged}"/>
-                        <Button Grid.Column="2" Content="Refresh" VerticalAlignment="Center" Padding="12,5"
-                                Style="{StaticResource Btn.Subtle}" Command="{Binding RefreshCommand}"
-                                ToolTip="Refresh now (F5)"/>
+                        <Button Grid.Column="2" Content="&#xE72C;" Style="{StaticResource Btn.Icon}"
+                                Command="{Binding RefreshCommand}" ToolTip="Refresh now (F5)"
+                                AutomationProperties.Name="Refresh"/>
                     </Grid>
                     <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource Brush.LineSoft}"/>
                     <Grid>
@@ -303,43 +384,37 @@
                                   Style="{StaticResource Grid.Base}" Margin="4,2,4,4">
                             <DataGrid.ContextMenu>
                                 <ContextMenu>
-                                    <MenuItem Header="Copy incident report" Command="{Binding CopyReportCommand}"/>
-                                    <MenuItem Header="Copy image path" Command="{Binding CopyPathCommand}"/>
-                                    <MenuItem Header="Open file location" Command="{Binding OpenLocationCommand}"/>
+                                    <MenuItem Header="Copy incident report" Command="{Binding CopyReportCommand}">
+                                        <MenuItem.Icon><TextBlock Text="&#xE8C8;" Style="{StaticResource Icon}" FontSize="12"/></MenuItem.Icon>
+                                    </MenuItem>
+                                    <MenuItem Header="Copy image path" Command="{Binding CopyPathCommand}">
+                                        <MenuItem.Icon><TextBlock Text="&#xE71B;" Style="{StaticResource Icon}" FontSize="12"/></MenuItem.Icon>
+                                    </MenuItem>
+                                    <Separator/>
+                                    <MenuItem Header="Open file location" Command="{Binding OpenLocationCommand}">
+                                        <MenuItem.Icon><TextBlock Text="&#xE838;" Style="{StaticResource Icon}" FontSize="12"/></MenuItem.Icon>
+                                    </MenuItem>
                                 </ContextMenu>
                             </DataGrid.ContextMenu>
                             <DataGrid.Columns>
                                 <DataGridTemplateColumn Width="12">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
-                                            <Border Width="3" CornerRadius="2" Margin="4,4" HorizontalAlignment="Left">
-                                                <Border.Style>
-                                                    <Style TargetType="Border">
-                                                        <Setter Property="Background" Value="{StaticResource Brush.Watch}"/>
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding Severity}" Value="threat">
-                                                                <Setter Property="Background" Value="{StaticResource Brush.Threat}"/>
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding Severity}" Value="safe">
-                                                                <Setter Property="Background" Value="{StaticResource Brush.Safe}"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Border.Style>
-                                            </Border>
+                                            <Border Width="3" CornerRadius="2" Margin="4,4" HorizontalAlignment="Left"
+                                                    Style="{StaticResource SeverityFill}"/>
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70"
-                                                    ElementStyle="{StaticResource Cell.Data}"/>
-                                <DataGridTemplateColumn Header="PROCESS" Width="*">
+                                <DataGridTemplateColumn Header="PROCESS" Width="*" MinWidth="110" SortMemberPath="Name">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <StackPanel VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding Name}" FontWeight="Medium"
-                                                           FontSize="{StaticResource Size.Body}"
-                                                           Foreground="{StaticResource Brush.Paper}"
-                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock TextTrimming="CharacterEllipsis">
+                                                    <Run Text="{Binding Name, Mode=OneWay}" FontWeight="Medium"
+                                                         FontSize="{StaticResource Size.Body}" Foreground="{StaticResource Brush.Paper}"/>
+                                                    <Run Text="{Binding Pid, Mode=OneWay}" FontFamily="{StaticResource Font.Data}"
+                                                         FontSize="10.5" Foreground="{StaticResource Brush.Faint}"/>
+                                                </TextBlock>
                                                 <TextBlock Text="{Binding ImagePath}" Margin="0,1,0,0"
                                                            FontFamily="{StaticResource Font.Data}" FontSize="10"
                                                            Foreground="{StaticResource Brush.Faint}"
@@ -349,52 +424,56 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="SCORE" Width="118" SortMemberPath="Score">
+                                <DataGridTemplateColumn Header="SCORE" Width="100" SortMemberPath="Score">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding Score}" Style="{StaticResource ScoreText}"
-                                                           Width="26"/>
-                                                <ProgressBar Style="{StaticResource ScoreMeter}" Width="52"
+                                                <TextBlock Text="{Binding Score}" Width="30" Style="{StaticResource SeverityFg}"
+                                                           FontFamily="{StaticResource Font.Data}" FontSize="{StaticResource Size.Data}"
+                                                           FontWeight="Medium" VerticalAlignment="Center"/>
+                                                <ProgressBar Style="{StaticResource ScoreMeter}" Width="40"
                                                              Value="{Binding Score, Mode=OneWay}"/>
                                             </StackPanel>
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="STATE" Width="112" SortMemberPath="State">
+                                <DataGridTemplateColumn Header="STATE" Width="128" SortMemberPath="State">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Border Style="{StaticResource RowBadge}">
                                                 <StackPanel Orientation="Horizontal">
-                                                    <Border Width="4" Height="4" CornerRadius="2" VerticalAlignment="Center"
-                                                            Margin="0,0,6,0">
-                                                        <Border.Style>
-                                                            <Style TargetType="Border">
-                                                                <Setter Property="Background" Value="{StaticResource Brush.Watch}"/>
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding Severity}" Value="threat">
-                                                                        <Setter Property="Background" Value="{StaticResource Brush.Threat}"/>
-                                                                    </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Severity}" Value="safe">
-                                                                        <Setter Property="Background" Value="{StaticResource Brush.Safe}"/>
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </Border.Style>
-                                                    </Border>
+                                                    <Border Width="5" Height="5" CornerRadius="2.5" VerticalAlignment="Center"
+                                                            Margin="0,0,6,0" Style="{StaticResource SeverityFill}"/>
                                                     <TextBlock Text="{Binding State}" Style="{StaticResource RowBadgeText}"/>
                                                 </StackPanel>
                                             </Border>
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="TRUST" Binding="{Binding Trust}" Width="78"
-                                                    ElementStyle="{StaticResource Cell.Faint}"/>
+                                <DataGridTemplateColumn Width="40" SortMemberPath="Trusted">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontSize="12" HorizontalAlignment="Center" ToolTip="{Binding Trust}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                                                        <Setter Property="Text" Value="&#xE7BA;"/>
+                                                        <Setter Property="Foreground" Value="{StaticResource Brush.Faint}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Trusted}" Value="True">
+                                                                <Setter Property="Text" Value="&#xE73E;"/>
+                                                                <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
 
-                        <!-- Designed empty state -->
-                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
                             <StackPanel.Style>
                                 <Style TargetType="StackPanel">
                                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -405,18 +484,13 @@
                                     </Style.Triggers>
                                 </Style>
                             </StackPanel.Style>
-                            <Border Width="36" Height="36" CornerRadius="8" HorizontalAlignment="Center"
-                                    Background="{StaticResource Brush.InkRaised}"
-                                    BorderBrush="{StaticResource Brush.Line}" BorderThickness="1">
-                                <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                           Foreground="{StaticResource Brush.Faint}"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Border Style="{StaticResource IconWell}" Width="40" Height="40" HorizontalAlignment="Center"
+                                    Background="{StaticResource Brush.SafeDim}" BorderBrush="#4D34D399">
+                                <TextBlock Text="&#xE73E;" Style="{StaticResource Icon}" FontSize="15"
+                                           HorizontalAlignment="Center" Foreground="{StaticResource Brush.Safe}"/>
                             </Border>
                             <TextBlock Text="Nothing flagged" Style="{StaticResource Text.Body}" FontWeight="Medium"
                                        HorizontalAlignment="Center" Margin="0,10,0,0"/>
-                            <TextBlock Text="BruceEDR is watching. Verdicts land here the moment a process misbehaves."
-                                       FontSize="11.5" Foreground="{StaticResource Brush.Faint}" TextWrapping="Wrap"
-                                       MaxWidth="300" TextAlignment="Center" Margin="0,4,0,0"/>
                         </StackPanel>
                     </Grid>
                 </DockPanel>
@@ -425,8 +499,7 @@
             <!-- Details / actions -->
             <Border Grid.Column="1" Style="{StaticResource Card}" Padding="0">
                 <Grid>
-                    <!-- Empty state -->
-                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="260">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="240">
                         <StackPanel.Style>
                             <Style TargetType="StackPanel">
                                 <Style.Triggers>
@@ -436,35 +509,26 @@
                                 </Style.Triggers>
                             </Style>
                         </StackPanel.Style>
-                        <Border Width="36" Height="36" CornerRadius="8" HorizontalAlignment="Center"
-                                Background="{StaticResource Brush.InkRaised}"
-                                BorderBrush="{StaticResource Brush.Line}" BorderThickness="1">
-                            <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                       Foreground="{StaticResource Brush.Faint}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <Border Style="{StaticResource IconWell}" Width="40" Height="40" HorizontalAlignment="Center">
+                            <TextBlock Text="&#xE946;" Style="{StaticResource Icon}" FontSize="15"
+                                       HorizontalAlignment="Center" Foreground="{StaticResource Brush.Faint}"/>
                         </Border>
-                        <TextBlock Text="No process selected" Style="{StaticResource Text.Body}" FontWeight="Medium"
+                        <TextBlock Text="Select a process" Style="{StaticResource Text.Body}" FontWeight="Medium"
                                    HorizontalAlignment="Center" Margin="0,10,0,0"/>
-                        <TextBlock Text="Select a row to see why it flagged, its ATT&amp;CK techniques, and take action."
-                                   FontSize="11.5" Foreground="{StaticResource Brush.Faint}" TextWrapping="Wrap"
-                                   TextAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
 
-                    <!-- Detail -->
-                    <!-- DataContext is the selected row, so Visibility must bind HasSelection
-                         against the MainViewModel explicitly (via the UserControl), or it would
-                         resolve against the row (no such property) and the panel never hides. -->
+                    <!-- DataContext is the selected row, so the panel's own visibility binds back to the
+                         view model through the UserControl, or it would never hide. -->
                     <DockPanel Visibility="{Binding DataContext.HasSelection, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVis}}"
                                DataContext="{Binding SelectedThreat}">
 
-                        <!-- Header -->
                         <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Brush.LineSoft}"
                                 BorderThickness="0,0,0,1" Padding="16,13">
                             <StackPanel>
                                 <Grid>
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Name}" Style="{StaticResource Text.Title}"
-                                                   MaxWidth="170" TextTrimming="CharacterEllipsis"/>
+                                                   MaxWidth="190" TextTrimming="CharacterEllipsis"/>
                                         <TextBlock Margin="8,0,0,0" VerticalAlignment="Center"
                                                    FontFamily="{StaticResource Font.Data}" FontSize="10.5"
                                                    Foreground="{StaticResource Brush.Faint}">
@@ -477,91 +541,155 @@
                                 </Grid>
                                 <TextBlock Text="{Binding ImagePath}" Margin="0,7,0,0"
                                            FontFamily="{StaticResource Font.Data}" FontSize="10.5"
-                                           Foreground="{StaticResource Brush.Faint}" TextWrapping="Wrap"
-                                           ToolTip="{Binding ImagePath}"/>
+                                           Foreground="{StaticResource Brush.Faint}" TextWrapping="Wrap"/>
                             </StackPanel>
                         </Border>
 
-                        <!-- Actions pinned to the bottom -->
                         <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource Brush.LineSoft}"
-                                BorderThickness="0,1,0,0" Padding="16,12">
+                                BorderThickness="0,1,0,0" Padding="14,10">
                             <StackPanel>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="8"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Button Grid.Column="0" Content="Release" Style="{StaticResource Btn.Primary}"
-                                            ToolTip="Resume the process and remove its firewall block"
-                                            Command="{Binding DataContext.ReleaseCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
-                                    <Button Grid.Column="2" Content="Suspend" Style="{StaticResource Btn.Subtle}"
-                                            Command="{Binding DataContext.SuspendCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
-                                </Grid>
-                                <Button Content="End process" Style="{StaticResource Btn.Danger}" Margin="0,8,0,0"
-                                        Command="{Binding DataContext.EndCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
-                                <Grid Margin="0,8,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="8"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Button Grid.Column="0" Content="Copy report" Style="{StaticResource Btn.Subtle}"
-                                            ToolTip="Copy a plain-text incident report to the clipboard"
-                                            Command="{Binding DataContext.CopyReportCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
-                                    <Button Grid.Column="2" Content="Open location" Style="{StaticResource Btn.Subtle}"
-                                            ToolTip="Reveal the image in File Explorer"
-                                            Command="{Binding DataContext.OpenLocationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Scrolling body -->
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <StackPanel Margin="16,12,16,12">
-                                <!-- Fact grid -->
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="Auto"/>
-                                    </Grid.RowDefinitions>
-                                    <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,10">
-                                        <TextBlock Text="RISK SCORE" Style="{StaticResource DetailLabel}"/>
-                                        <TextBlock Style="{StaticResource Text.Data}">
-                                            <Run Text="{Binding Score, Mode=OneWay}"/><Run Text=" / 100" Foreground="{StaticResource Brush.Faint}"/>
-                                        </TextBlock>
-                                    </StackPanel>
-                                    <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,10">
-                                        <TextBlock Text="PEAK" Style="{StaticResource DetailLabel}"/>
-                                        <TextBlock Text="{Binding PeakScore}" Style="{StaticResource Text.Data}"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,8,0">
-                                        <TextBlock Text="FIRST SEEN" Style="{StaticResource DetailLabel}"/>
-                                        <TextBlock Text="{Binding FirstSeen}" Style="{StaticResource Text.Data}"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Row="1" Grid.Column="1">
-                                        <TextBlock Text="TRUST" Style="{StaticResource DetailLabel}"/>
-                                        <TextBlock Text="{Binding Trust}" Style="{StaticResource Text.Data}"
-                                                   Foreground="{StaticResource Brush.Mist}"/>
-                                    </StackPanel>
-                                </Grid>
-
-                                <!-- Ancestry -->
-                                <StackPanel Visibility="{Binding HasAncestry, Converter={StaticResource BoolToVis}}"
-                                            Margin="0,12,0,0">
-                                    <TextBlock Text="ANCESTRY" Style="{StaticResource DetailLabel}"/>
-                                    <TextBlock Text="{Binding Ancestry}" TextWrapping="Wrap"
-                                               FontFamily="{StaticResource Font.Data}" FontSize="11"
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8"
+                                            Visibility="{Binding DataContext.IsReplay, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="&#xE72E;" Style="{StaticResource Icon}" FontSize="11"
+                                               Foreground="{StaticResource Brush.Accent}" Margin="0,0,7,0"/>
+                                    <TextBlock Text="Actions are off during a replay." FontSize="11.5"
                                                Foreground="{StaticResource Brush.Mist}"/>
                                 </StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="6"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="6"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0" Style="{StaticResource Btn.Primary}" Padding="6,7"
+                                            ToolTip="Resume the process and remove its firewall block"
+                                            Command="{Binding DataContext.ReleaseCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE768;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Release"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Grid.Column="2" Style="{StaticResource Btn.Subtle}" Padding="6,7"
+                                            ToolTip="Freeze the process until it is released"
+                                            Command="{Binding DataContext.SuspendCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE769;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Suspend"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Grid.Column="4" Style="{StaticResource Btn.Danger}" Padding="6,7"
+                                            ToolTip="End the process and its child tree"
+                                            Command="{Binding DataContext.EndCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE71A;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,6,0"/>
+                                            <TextBlock Text="End"/>
+                                        </StackPanel>
+                                    </Button>
+                                </Grid>
+                                <Grid Margin="0,6,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="6"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0" Style="{StaticResource Btn.Subtle}" Padding="6,6"
+                                            ToolTip="Copy a plain-text incident report to the clipboard"
+                                            Command="{Binding DataContext.CopyReportCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE8C8;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Copy report"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Grid.Column="2" Style="{StaticResource Btn.Subtle}" Padding="6,6"
+                                            ToolTip="Reveal the image in File Explorer"
+                                            Command="{Binding DataContext.OpenLocationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE838;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Open location"/>
+                                        </StackPanel>
+                                    </Button>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
 
-                                <!-- Command line well -->
-                                <StackPanel Visibility="{Binding HasCommandLine, Converter={StaticResource BoolToVis}}"
-                                            Margin="0,12,0,0">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Margin="16,14,16,12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <v:ScoreRing Width="92" Height="92" Margin="0,0,16,0"
+                                                 Value="{Binding Score}" Severity="{Binding Severity}"
+                                                 WarnAt="{Binding DataContext.WarnAt, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                 ContainAt="{Binding DataContext.ContainAt, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                 ToolTip="Ticks mark the warn and contain thresholds"/>
+                                    <Grid Grid.Column="1" VerticalAlignment="Center">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,10">
+                                            <TextBlock Text="PEAK" Style="{StaticResource DetailLabel}"/>
+                                            <TextBlock Text="{Binding PeakScore}" Style="{StaticResource Text.Data}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,10">
+                                            <TextBlock Text="FIRST SEEN" Style="{StaticResource DetailLabel}"/>
+                                            <TextBlock Text="{Binding FirstSeen}" Style="{StaticResource Text.Data}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,8,0">
+                                            <TextBlock Text="TRUST" Style="{StaticResource DetailLabel}"/>
+                                            <TextBlock Text="{Binding Trust}" Style="{StaticResource Text.Data}"
+                                                       Foreground="{StaticResource Brush.Mist}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="1"
+                                                    Visibility="{Binding HasIncident, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="INCIDENT" Style="{StaticResource DetailLabel}"/>
+                                            <TextBlock Text="{Binding IncidentId}" Style="{StaticResource Text.Data}" FontSize="11"
+                                                       Foreground="{StaticResource Brush.Mist}" TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding IncidentId}"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+
+                                <!-- Lineage, oldest ancestor first, the flagged process last -->
+                                <StackPanel Visibility="{Binding HasAncestry, Converter={StaticResource BoolToVis}}" Margin="0,14,0,0">
+                                    <TextBlock Text="LINEAGE" Style="{StaticResource DetailLabel}"/>
+                                    <ItemsControl ItemsSource="{Binding Lineage}" Margin="0,2,0,0">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Border x:Name="chip" CornerRadius="4" Padding="7,3" BorderThickness="1"
+                                                            Background="{StaticResource Brush.InkRaised}" BorderBrush="{StaticResource Brush.Line}">
+                                                        <TextBlock x:Name="label" Text="{Binding Name}" FontFamily="{StaticResource Font.Data}"
+                                                                   FontSize="10.5" Foreground="{StaticResource Brush.Mist}"/>
+                                                    </Border>
+                                                    <TextBlock x:Name="chevron" Text="&#xE76C;" Style="{StaticResource Icon}" FontSize="9"
+                                                               Margin="5,0" Foreground="{StaticResource Brush.Faint}"/>
+                                                </StackPanel>
+                                                <DataTemplate.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSubject}" Value="True">
+                                                        <Setter TargetName="chip" Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                                                        <Setter TargetName="chip" Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                                                        <Setter TargetName="label" Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                                                        <Setter TargetName="chevron" Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                </DataTemplate.Triggers>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+
+                                <StackPanel Visibility="{Binding HasCommandLine, Converter={StaticResource BoolToVis}}" Margin="0,10,0,0">
                                     <TextBlock Text="COMMAND LINE" Style="{StaticResource DetailLabel}"/>
                                     <Border Background="{StaticResource Brush.InkRaised}"
                                             BorderBrush="{StaticResource Brush.LineSoft}" BorderThickness="1"
@@ -572,30 +700,27 @@
                                     </Border>
                                 </StackPanel>
 
-                                <!-- ATT&CK technique chips -->
-                                <StackPanel Visibility="{Binding HasTechniques, Converter={StaticResource BoolToVis}}"
-                                            Margin="0,12,0,0">
+                                <StackPanel Visibility="{Binding HasTechniques, Converter={StaticResource BoolToVis}}" Margin="0,14,0,0">
                                     <TextBlock Text="MITRE ATT&amp;CK" Style="{StaticResource DetailLabel}"/>
-                                    <ItemsControl ItemsSource="{Binding Techniques}" Margin="0,4,0,0">
+                                    <ItemsControl ItemsSource="{Binding TechniqueChips}" Margin="0,2,0,0">
                                         <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <WrapPanel/>
-                                            </ItemsPanelTemplate>
+                                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
                                         </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <Border Style="{StaticResource TechChip}">
-                                                    <TextBlock Text="{Binding}" FontFamily="{StaticResource Font.Data}"
-                                                               FontSize="10.5" FontWeight="Medium"
-                                                               Foreground="{StaticResource Brush.Accent}"/>
-                                                </Border>
+                                                <Button Style="{StaticResource Chip}" Margin="0,0,6,6" Padding="8,4"
+                                                        ToolTip="{Binding Name}"
+                                                        Command="{Binding DataContext.OpenUrlCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding Url}">
+                                                    <TextBlock Text="{Binding Id}" FontFamily="{StaticResource Font.Data}"
+                                                               FontSize="10.5" FontWeight="Medium" Foreground="{StaticResource Brush.Accent}"/>
+                                                </Button>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </StackPanel>
 
-                                <!-- Why it flagged -->
-                                <TextBlock Text="WHY IT FLAGGED" Style="{StaticResource DetailLabel}" Margin="0,12,0,4"/>
+                                <TextBlock Text="WHY IT FLAGGED" Style="{StaticResource DetailLabel}" Margin="0,10,0,6"/>
                                 <ItemsControl ItemsSource="{Binding Reasons}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
@@ -605,8 +730,7 @@
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
                                                 <Border Width="6" Height="6" CornerRadius="3" Margin="1,5,9,0"
-                                                        VerticalAlignment="Top"
-                                                        Background="{StaticResource Brush.Watch}"/>
+                                                        VerticalAlignment="Top" Background="{StaticResource Brush.Watch}"/>
                                                 <TextBlock Grid.Column="1" Text="{Binding}" TextWrapping="Wrap"
                                                            FontSize="11.5" Foreground="{StaticResource Brush.Mist}"/>
                                             </Grid>

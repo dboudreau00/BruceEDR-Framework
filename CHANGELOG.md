@@ -18,6 +18,7 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   the exited process, even after a new process has taken the pid; newer ones still start
   clean. A verdict on an exited process is recorded but contains nothing, and takes no
   signature discount from the pid's new owner.
+- Scores are not capped at 100, so the detail panel no longer shows "765 / 100".
 - Row severity follows the configured contain threshold instead of a fixed 70.
 - Tooltips, context menus and the watchlist pickers were stock light controls on the dark
   theme; the pickers' selected value was close to unreadable.
@@ -26,6 +27,9 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 
 ### Added
 
+- Dashboard: an activity timeline by severity, sparklines, a score ring with the warn and
+  contain thresholds marked, the process lineage as a chain, and named ATT&CK chips that open
+  the MITRE page.
 - Sidebar icons with live badges, a status card, toasts for action results and view transitions.
 
 ## [3.2.0] - 2026-10-08

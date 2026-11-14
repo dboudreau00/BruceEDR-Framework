@@ -1,8 +1,15 @@
 using System.Text;
 using BruceEDR.Core;
+using BruceEDR.Detection;
 using BruceEDR.Telemetry;
 
 namespace BruceEDR.Gui.ViewModels;
+
+/// <summary>An ATT&amp;CK id with its catalogue name, for detail chips.</summary>
+public sealed record TechniqueChip(string Id, string Name, string Url);
+
+/// <summary>One process in the ancestry chain; the last one is the flagged process itself.</summary>
+public sealed record LineageStep(string Name, bool IsSubject);
 
 /// <summary>A single process in the threat table. Severity drives the row signal colour.</summary>
 public sealed class ThreatRow : ViewModelBase
@@ -21,13 +28,16 @@ public sealed class ThreatRow : ViewModelBase
     public string FirstSeen { get; private set; } = "";
     public IReadOnlyList<string> Reasons { get; private set; } = Array.Empty<string>();
     public IReadOnlyList<string> StagedArchives { get; private set; } = Array.Empty<string>();
-    /// <summary>MITRE ATT&amp;CK technique ids observed for this process, for detail chips.</summary>
+    /// <summary>MITRE ATT&amp;CK technique ids observed for this process.</summary>
     public IReadOnlyList<string> Techniques { get; private set; } = Array.Empty<string>();
-    /// <summary>Ancestry rendered nearest-parent-first, e.g. "explorer.exe → cmd.exe".</summary>
+    public IReadOnlyList<TechniqueChip> TechniqueChips { get; private set; } = Array.Empty<TechniqueChip>();
+    /// <summary>Ancestry rendered oldest-first, e.g. "explorer.exe > cmd.exe > this.exe".</summary>
     public string Ancestry { get; private set; } = "";
-    public bool HasAncestry => Ancestry.Length > 0;
+    public IReadOnlyList<LineageStep> Lineage { get; private set; } = Array.Empty<LineageStep>();
+    public bool HasAncestry => Lineage.Count > 1;
     public bool HasCommandLine => CommandLine.Length > 0;
     public bool HasTechniques => Techniques.Count > 0;
+    public bool HasIncident => IncidentId.Length > 0;
 
     public ThreatRow(ProfileSnapshot s, int containAt)
     {
@@ -47,10 +57,20 @@ public sealed class ThreatRow : ViewModelBase
         FirstSeen = s.FirstSeenUtc.ToLocalTime().ToString("HH:mm:ss");
         Reasons = s.Reasons;
         StagedArchives = s.StagedArchives;
-        Techniques = s.Techniques;
-        Ancestry = s.Ancestry.Count > 0
-            ? string.Join(" → ", s.Ancestry.Reverse().Append(s.ProcessName))
-            : "";
+        if (!Techniques.SequenceEqual(s.Techniques))
+        {
+            Techniques = s.Techniques;
+            TechniqueChips = s.Techniques
+                .Select(id => { var t = AttackCatalog.Lookup(id); return new TechniqueChip(t.Id, t.Name, t.Url); })
+                .ToArray();
+        }
+        var chain = s.Ancestry.Reverse().Append(s.ProcessName).ToArray();
+        string ancestry = s.Ancestry.Count > 0 ? string.Join(" > ", chain) : "";
+        if (ancestry != Ancestry)
+        {
+            Ancestry = ancestry;
+            Lineage = chain.Select((n, i) => new LineageStep(n, i == chain.Length - 1)).ToArray();
+        }
         State = s.Terminated ? "Terminated"
               : s.SuspendedByAnalyst ? "Suspended"
               : s.Contained ? (s.ContainmentSkipped ? "Would contain" : "Contained")
@@ -61,24 +81,7 @@ public sealed class ThreatRow : ViewModelBase
                  : s.Score >= containAt ? "threat"
                  : "watch";
 
-        OnPropertyChanged(nameof(Name));
-        OnPropertyChanged(nameof(Score));
-        OnPropertyChanged(nameof(PeakScore));
-        OnPropertyChanged(nameof(State));
-        OnPropertyChanged(nameof(Severity));
-        OnPropertyChanged(nameof(Trusted));
-        OnPropertyChanged(nameof(Trust));
-        OnPropertyChanged(nameof(ImagePath));
-        OnPropertyChanged(nameof(CommandLine));
-        OnPropertyChanged(nameof(IncidentId));
-        OnPropertyChanged(nameof(FirstSeen));
-        OnPropertyChanged(nameof(Reasons));
-        OnPropertyChanged(nameof(StagedArchives));
-        OnPropertyChanged(nameof(Techniques));
-        OnPropertyChanged(nameof(Ancestry));
-        OnPropertyChanged(nameof(HasAncestry));
-        OnPropertyChanged(nameof(HasCommandLine));
-        OnPropertyChanged(nameof(HasTechniques));
+        OnPropertyChanged(string.Empty);
     }
 
     /// <summary>True when the search text matches the name, pid, path or state.</summary>

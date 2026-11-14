@@ -20,7 +20,7 @@ your machine actually talks to.**
 </div>
 
 <div align="center">
-<img src="docs/dashboard.png" alt="BruceEDR dashboard — a contained credential-theft chain with its ATT&CK techniques and reasons" width="880" />
+<img src="docs/dashboard.png" alt="BruceEDR dashboard: a replayed credential-theft chain with its score, lineage, command line and ATT&CK techniques" width="880" />
 </div>
 
 <div align="center">
