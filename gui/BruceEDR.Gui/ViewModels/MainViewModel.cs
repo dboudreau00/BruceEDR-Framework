@@ -145,6 +145,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         if (_composition is not null || _stopping) return;
 
         // Building the engine and starting ETW can take seconds: keep the window responsive.
+        ResetFeed();
         var sink = new UiEventSink(OnEvent);
         Composition? built = null;
         bool running;
@@ -349,6 +350,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             Markers.Clear();
             ContainedCount = FlaggedCount = 0;
             EndpointCount = TotalEndpointCount = BeaconCount = 0;
+            HiddenEndpointCount = PlaintextCount = MappedCount = 0;
+            Unplaced.Set(0, 0);
+            SignalRate = "0/s";
+            SignalsProcessed = "0";
+            LatencyP95 = "n/a";
+            DroppedSignals = 0;
+            Uptime = "0s";
+            RateHistory = Array.Empty<double>();
             RuleCount = IndicatorCount = CoveredTechniqueCount = ObservedTechniqueCount = 0;
         }
         catch (Exception ex) { AppLog.Error("reset views", ex); }
@@ -400,6 +409,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         StatusText = "Not monitoring";
         ResetLiveViews();
         Setup.Load();
+        ApplyRuleCoverage(Setup.Rules, 0);
+        MergeTechniques(null);
         Setup.Message = "Stopping...";
         IsSetupOpen = true;
 
@@ -592,6 +603,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             UnreadLevel = "watch";
         }
         catch (Exception ex) { AppLog.Error("clear events", ex); }
+    }
+
+    /// <summary>A new session starts with an empty feed, chart and counters.</summary>
+    private void ResetFeed()
+    {
+        ClearEvents();
+        _timeline.Clear();
+        _rateSamples.Clear();
+        RateHistory = Array.Empty<double>();
+        TotalEvents = 0;
+        ResetLiveViews();
+        PublishTimeline(force: true);
     }
 
     private void TogglePause()

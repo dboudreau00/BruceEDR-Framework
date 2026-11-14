@@ -25,6 +25,7 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - API surface had no column headers; its endpoint count was the display cap, not the total.
 - Settings refuses warn and contain thresholds the config would silently clamp, and says why.
   It also lists the correct shortcuts (Ctrl+1 to Ctrl+7).
+- Event counts, the status bar and the coverage view reset properly between sessions.
 - `publish-release.ps1` fails if the zip has backslash entry names. Under Windows PowerShell 5.1
   the .NET Framework zip API still writes them, so run the script under PowerShell 7 (`pwsh`).
 
