@@ -18,6 +18,7 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   the exited process, even after a new process has taken the pid; newer ones still start
   clean. A verdict on an exited process is recorded but contains nothing, and takes no
   signature discount from the pid's new owner.
+- Row severity follows the configured contain threshold instead of a fixed 70.
 - Tooltips, context menus and the watchlist pickers were stock light controls on the dark
   theme; the pickers' selected value was close to unreadable.
 - `publish-release.ps1` fails if the zip has backslash entry names. Under Windows PowerShell 5.1

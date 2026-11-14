@@ -38,6 +38,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private long _lastSignals;          // for the events/sec estimate
     private DateTime _lastSignalsAtUtc;
 
+    private Func<DetectionConfig>? _detection;
+
     public ObservableCollection<ThreatRow> Threats { get; } = new();
     public ObservableCollection<EventRow> Events { get; } = new();
     /// <summary>Endpoints this host has actually been observed talking to.</summary>
@@ -156,6 +158,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             _composition = built!;
             _host = _composition.Host;
+            var comp = _composition;
+            _detection = () => comp.Config.Detection;
             IsLive = true;
             IsMonitorOnly = _host.MonitorOnly;
 
@@ -230,6 +234,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         _composition = null;
         _host = null;
+        _detection = null;
         try { _timer?.Stop(); } catch (Exception ex) { AppLog.Error("timer stop", ex); }
         _timer = null;
         if (comp is not null)
@@ -366,6 +371,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _timer = null;
         _composition = null;
         _host = null;
+        _detection = null;
         IsRunning = false;
         IsLive = false;
         Monitors = "not started";
@@ -686,6 +692,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             // Settings can switch the mode live, so follow the host rather than the start value.
             IsMonitorOnly = host.MonitorOnly;
+            var detection = _detection?.Invoke();
+            if (detection is not null)
+            {
+                WarnAt = detection.WarnThreshold;
+                ContainAt = detection.QuarantineThreshold;
+            }
             MergeThreats(snaps);
 
             IReadOnlyList<SurfaceEndpoint> endpoints;
@@ -763,8 +775,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             foreach (var s in snaps)
             {
                 var row = Threats.FirstOrDefault(r => r.Pid == s.Pid);
-                if (row is null) Threats.Add(new ThreatRow(s));
-                else row.Update(s);
+                if (row is null) Threats.Add(new ThreatRow(s, ContainAt));
+                else row.Update(s, ContainAt);
             }
             for (int i = Threats.Count - 1; i >= 0; i--)
                 if (!snaps.Any(s => s.Pid == Threats[i].Pid))
@@ -942,6 +954,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private bool _isRunning;
     public bool IsRunning { get => _isRunning; set { if (Set(ref _isRunning, value)) CommandManager.InvalidateRequerySuggested(); } }
+    private int _warnAt = 40;
+    public int WarnAt { get => _warnAt; private set => Set(ref _warnAt, value); }
+
+    private int _containAt = 70;
+    public int ContainAt { get => _containAt; private set => Set(ref _containAt, value); }
+
 
     private bool _isLive;
     /// <summary>True while an engine exists, between Start and Stop.</summary>

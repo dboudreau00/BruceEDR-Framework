@@ -29,13 +29,13 @@ public sealed class ThreatRow : ViewModelBase
     public bool HasCommandLine => CommandLine.Length > 0;
     public bool HasTechniques => Techniques.Count > 0;
 
-    public ThreatRow(ProfileSnapshot s)
+    public ThreatRow(ProfileSnapshot s, int containAt)
     {
         Pid = s.Pid;
-        Update(s);
+        Update(s, containAt);
     }
 
-    public void Update(ProfileSnapshot s)
+    public void Update(ProfileSnapshot s, int containAt)
     {
         Name = s.ProcessName;
         Score = s.Score;
@@ -58,7 +58,7 @@ public sealed class ThreatRow : ViewModelBase
         Severity = s.Terminated ? "safe"
                  : s.Contained ? "threat"
                  : s.Trusted ? "safe"
-                 : s.Score >= 70 ? "threat"
+                 : s.Score >= containAt ? "threat"
                  : "watch";
 
         OnPropertyChanged(nameof(Name));
