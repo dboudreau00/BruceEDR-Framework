@@ -124,8 +124,20 @@ public sealed class EventRow
     public BruceEvent Raw { get; }
     public string Time { get; }
     public string Level { get; }       // QUARANTINE | WARN | ACTION | ERROR | INFO
+    public string LevelLabel { get; }
     public string Category { get; }
     public string Text { get; }
+
+    public bool HasProcess { get; }
+    public string Process { get; }
+    public int Pid { get; }
+    public string Detail { get; }
+    public int Score { get; }
+    public bool HasScore => Score > 0;
+
+    private readonly DateTime _arrivedUtc = DateTime.UtcNow;
+    /// <summary>True for a couple of seconds after arrival, so only new rows flash, not a re-filtered list.</summary>
+    public bool IsFresh => DateTime.UtcNow - _arrivedUtc < TimeSpan.FromSeconds(2);
 
     /// <summary>Everything worth grepping, so the search box finds rules/techniques too.</summary>
     public string SearchText { get; }
@@ -138,10 +150,22 @@ public sealed class EventRow
         Raw = e;
         Time = e.TimeUtc.ToLocalTime().ToString("HH:mm:ss");
         Level = e.Level;
+        LevelLabel = e.Level switch
+        {
+            "QUARANTINE" => "QUARANTINE",
+            "WARN" => "WARN",
+            "ACTION" => "ACTION",
+            "ERROR" => "ERROR",
+            _ => "INFO",
+        };
         Category = e.Category;
-        Text = e.Pid > 0
-            ? $"pid {e.Pid} {e.Process} — {(string.IsNullOrEmpty(e.Trigger) ? e.Message : e.Trigger)}"
-              + (e.Score > 0 ? $"  (score {e.Score})" : "")
+        HasProcess = e.Pid > 0;
+        Pid = e.Pid;
+        Process = e.Process;
+        Detail = HasProcess && !string.IsNullOrEmpty(e.Trigger) ? e.Trigger : e.Message;
+        Score = e.Score;
+        Text = HasProcess
+            ? $"pid {e.Pid} {e.Process}: {Detail}" + (e.Score > 0 ? $"  (score {e.Score})" : "")
             : e.Message;
 
         SearchText = string.Join(' ',
@@ -152,6 +176,7 @@ public sealed class EventRow
         sb.Append(e.Category);
         if (e.Techniques.Count > 0) sb.Append("  ·  ").Append(string.Join(", ", e.Techniques));
         if (e.RuleIds.Count > 0) sb.Append("  ·  rules: ").Append(string.Join(", ", e.RuleIds));
+        if (HasProcess && !string.IsNullOrEmpty(e.Trigger) && e.Message != e.Trigger) sb.Append('\n').Append(e.Message);
         if (!string.IsNullOrEmpty(e.Image)) sb.Append('\n').Append(e.Image);
         Tooltip = sb.ToString();
     }

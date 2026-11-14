@@ -1,14 +1,13 @@
 <UserControl x:Class="BruceEDR.Gui.Views.EventsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="Transparent">
+             xmlns:v="clr-namespace:BruceEDR.Gui.Views"
+             Style="{StaticResource View.Root}">
+    <UserControl.RenderTransform>
+        <TranslateTransform/>
+    </UserControl.RenderTransform>
     <UserControl.Resources>
-        <!-- Coloured severity dot for a feed row -->
-        <Style x:Key="EventDot" TargetType="Border">
-            <Setter Property="Width" Value="7"/>
-            <Setter Property="Height" Value="7"/>
-            <Setter Property="CornerRadius" Value="3.5"/>
-            <Setter Property="VerticalAlignment" Value="Center"/>
+        <Style x:Key="LevelFill" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource Brush.Faint}"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Level}" Value="QUARANTINE">
@@ -26,8 +25,46 @@
             </Style.Triggers>
         </Style>
 
-        <!-- Filter chip: quiet by default, violet-tinted when it is the active filter.
-             The chip's Tag carries its filter key; selection is EventFilter == Tag. -->
+        <Style x:Key="LevelPill" TargetType="Border" BasedOn="{StaticResource Pill}">
+            <Setter Property="Padding" Value="7,1.5"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Level}" Value="QUARANTINE">
+                    <Setter Property="Background" Value="{StaticResource Brush.ThreatDim}"/>
+                    <Setter Property="BorderBrush" Value="#4DF2555A"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="ERROR">
+                    <Setter Property="Background" Value="{StaticResource Brush.ThreatDim}"/>
+                    <Setter Property="BorderBrush" Value="#4DF2555A"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="WARN">
+                    <Setter Property="Background" Value="{StaticResource Brush.WatchDim}"/>
+                    <Setter Property="BorderBrush" Value="#4DF2B33D"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="ACTION">
+                    <Setter Property="Background" Value="{StaticResource Brush.InfoDim}"/>
+                    <Setter Property="BorderBrush" Value="#4D4C8DFF"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="LevelPillText" TargetType="TextBlock" BasedOn="{StaticResource Pill.Text}">
+            <Setter Property="FontSize" Value="9"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Level}" Value="QUARANTINE">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="ERROR">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="WARN">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Watch}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="ACTION">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Info}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Filter chip: violet-tinted when it is the active filter. Tag carries the filter key. -->
         <Style x:Key="FilterChip" TargetType="Button" BasedOn="{StaticResource Chip}">
             <Setter Property="Command" Value="{Binding SetEventFilterCommand}"/>
             <Setter Property="CommandParameter" Value="{Binding Tag, RelativeSource={RelativeSource Self}}"/>
@@ -46,13 +83,22 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
-
+        <Style x:Key="ChipDot" TargetType="Border">
+            <Setter Property="Width" Value="6"/>
+            <Setter Property="Height" Value="6"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="Margin" Value="0,0,7,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
         <Style x:Key="ChipCount" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
             <Setter Property="FontSize" Value="10"/>
             <Setter Property="Foreground" Value="{StaticResource Brush.Faint}"/>
-            <Setter Property="Margin" Value="6,0,0,0"/>
+            <Setter Property="Margin" Value="7,0,0,0"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="HeaderLabel" TargetType="TextBlock" BasedOn="{StaticResource Text.Label}">
+            <Setter Property="FontWeight" Value="Medium"/>
         </Style>
     </UserControl.Resources>
 
@@ -60,37 +106,77 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Margin="0,0,0,12">
-            <StackPanel>
+        <Grid Grid.Row="0" Margin="0,0,0,14">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="Live events" Style="{StaticResource Text.Display}"/>
-                <TextBlock Text="Warnings, containments, and analyst actions as they happen"
-                           Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" Margin="0,3,0,0"/>
+                <Border Style="{StaticResource Pill}" Margin="12,4,0,0">
+                    <TextBlock Style="{StaticResource Pill.Text}">
+                        <Run Text="{Binding TotalEvents, Mode=OneWay}"/><Run Text=" total"/>
+                    </TextBlock>
+                </Border>
+                <Border Background="{StaticResource Brush.WatchDim}" BorderBrush="#4DF2B33D" BorderThickness="1"
+                        CornerRadius="10" Padding="8,2" Margin="8,4,0,0" VerticalAlignment="Center"
+                        Visibility="{Binding IsPaused, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="PAUSED" Style="{StaticResource Pill.Text}" Foreground="{StaticResource Brush.Watch}"/>
+                </Border>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                <Button Content="{Binding PauseLabel}" Style="{StaticResource Btn.Subtle}"
+                <Button Style="{StaticResource Btn.Subtle}" MinWidth="96"
                         ToolTip="Hold the feed to read; buffered events flush on resume"
-                        Command="{Binding TogglePauseCommand}" MinWidth="86"/>
-                <Button Content="Export" Style="{StaticResource Btn.Subtle}" Margin="8,0,0,0"
-                        ToolTip="Save the filtered feed as CSV or JSON"
-                        Command="{Binding ExportEventsCommand}"/>
-                <Button Content="Clear" Style="{StaticResource Btn.Subtle}" Margin="8,0,0,0"
-                        Command="{Binding ClearEventsCommand}"/>
+                        Command="{Binding TogglePauseCommand}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontSize="11" Margin="0,0,7,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                                    <Setter Property="Text" Value="&#xE769;"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                            <Setter Property="Text" Value="&#xE768;"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Text="{Binding PauseLabel}"/>
+                    </StackPanel>
+                </Button>
+                <Button Style="{StaticResource Btn.Subtle}" Margin="8,0,0,0"
+                        ToolTip="Save the filtered feed as CSV or JSON" Command="{Binding ExportEventsCommand}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xEDE1;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,7,0"/>
+                        <TextBlock Text="Export"/>
+                    </StackPanel>
+                </Button>
+                <Button Style="{StaticResource Btn.Subtle}" Margin="8,0,0,0" Command="{Binding ClearEventsCommand}"
+                        ToolTip="Clear the feed (the activity chart keeps its counts)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,7,0"/>
+                        <TextBlock Text="Clear"/>
+                    </StackPanel>
+                </Button>
             </StackPanel>
         </Grid>
 
+        <!-- Activity strip -->
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,12">
+            <v:TimelineChart Height="54" Buckets="{Binding TimelineBuckets}"/>
+        </Border>
+
         <!-- Search + severity chips -->
-        <Grid Grid.Row="1" Margin="0,0,0,12">
+        <Grid Grid.Row="2" Margin="0,0,0,12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="240"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <TextBox Grid.Column="0" Style="{StaticResource Input.Search}"
+            <TextBox Grid.Column="0" Style="{StaticResource Input.Search}" Height="30"
                      ToolTip="Filter by process, message, rule id or technique"
+                     AutomationProperties.Name="Filter events"
                      Text="{Binding EventSearch, UpdateSourceTrigger=PropertyChanged}"/>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center">
+            <WrapPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
                 <Button Style="{StaticResource FilterChip}" Tag="ALL">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="All"/>
@@ -99,122 +185,177 @@
                 </Button>
                 <Button Style="{StaticResource FilterChip}" Tag="QUARANTINE">
                     <StackPanel Orientation="Horizontal">
+                        <Border Style="{StaticResource ChipDot}" Background="{StaticResource Brush.Threat}"/>
                         <TextBlock Text="Quarantine"/>
                         <TextBlock Text="{Binding CountQuarantine}" Style="{StaticResource ChipCount}"/>
                     </StackPanel>
                 </Button>
                 <Button Style="{StaticResource FilterChip}" Tag="WARN">
                     <StackPanel Orientation="Horizontal">
+                        <Border Style="{StaticResource ChipDot}" Background="{StaticResource Brush.Watch}"/>
                         <TextBlock Text="Warn"/>
                         <TextBlock Text="{Binding CountWarn}" Style="{StaticResource ChipCount}"/>
                     </StackPanel>
                 </Button>
                 <Button Style="{StaticResource FilterChip}" Tag="ACTION">
                     <StackPanel Orientation="Horizontal">
+                        <Border Style="{StaticResource ChipDot}" Background="{StaticResource Brush.Info}"/>
                         <TextBlock Text="Action"/>
                         <TextBlock Text="{Binding CountAction}" Style="{StaticResource ChipCount}"/>
                     </StackPanel>
                 </Button>
                 <Button Style="{StaticResource FilterChip}" Tag="INFO">
                     <StackPanel Orientation="Horizontal">
+                        <Border Style="{StaticResource ChipDot}" Background="{StaticResource Brush.Faint}"/>
                         <TextBlock Text="Info"/>
                         <TextBlock Text="{Binding CountInfo}" Style="{StaticResource ChipCount}"/>
                     </StackPanel>
                 </Button>
                 <Button Style="{StaticResource FilterChip}" Tag="ERROR">
                     <StackPanel Orientation="Horizontal">
+                        <Border Style="{StaticResource ChipDot}" Background="{StaticResource Brush.Threat}"/>
                         <TextBlock Text="Error"/>
                         <TextBlock Text="{Binding CountError}" Style="{StaticResource ChipCount}"/>
                     </StackPanel>
                 </Button>
-
-                <!-- Paused indicator -->
-                <Border Background="{StaticResource Brush.WatchDim}" BorderBrush="#4DF2B33D" BorderThickness="1"
-                        CornerRadius="4" Padding="8,3" Margin="6,0,0,0"
-                        Visibility="{Binding IsPaused, Converter={StaticResource BoolToVis}}">
-                    <TextBlock Text="FEED PAUSED" Style="{StaticResource Text.Label}"
-                               Foreground="{StaticResource Brush.Watch}"/>
-                </Border>
-            </StackPanel>
+            </WrapPanel>
         </Grid>
 
-        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
-            <Grid>
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding Events}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Padding="12,8" Margin="2,1" CornerRadius="4"
-                                        ToolTip="{Binding Tooltip}">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Background" Value="Transparent"/>
-                                            <Style.Triggers>
-                                                <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter Property="Background" Value="{StaticResource Brush.PanelHover}"/>
-                                                </Trigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <Border.ContextMenu>
-                                        <ContextMenu>
-                                            <MenuItem Header="Copy line"
-                                                      Command="{Binding PlacementTarget.Tag.CopyEventCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                                      CommandParameter="{Binding}"/>
-                                        </ContextMenu>
-                                    </Border.ContextMenu>
-                                    <Border.Tag>
-                                        <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
-                                    </Border.Tag>
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="86"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Border Grid.Column="0" Style="{StaticResource EventDot}" Margin="2,0,12,0"/>
-                                        <TextBlock Grid.Column="1" Text="{Binding Time}" VerticalAlignment="Center"
-                                                   FontFamily="{StaticResource Font.Data}" FontSize="11"
-                                                   Foreground="{StaticResource Brush.Faint}" Margin="0,0,14,0"/>
-                                        <TextBlock Grid.Column="2" Text="{Binding Level}" VerticalAlignment="Center"
-                                                   Style="{StaticResource Text.Label}"/>
-                                        <TextBlock Grid.Column="3" Text="{Binding Text}" VerticalAlignment="Center"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Paper}"/>
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
+        <Border Grid.Row="3" Style="{StaticResource Card}" Padding="0">
+            <DockPanel>
+                <Grid DockPanel.Dock="Top" Margin="16,10,26,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="15"/>
+                        <ColumnDefinition Width="70"/>
+                        <ColumnDefinition Width="104"/>
+                        <ColumnDefinition Width="170"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="60"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="1" Text="TIME" Style="{StaticResource HeaderLabel}"/>
+                    <TextBlock Grid.Column="2" Text="LEVEL" Style="{StaticResource HeaderLabel}"/>
+                    <TextBlock Grid.Column="3" Text="PROCESS" Style="{StaticResource HeaderLabel}"/>
+                    <TextBlock Grid.Column="4" Text="DETAIL" Style="{StaticResource HeaderLabel}"/>
+                    <TextBlock Grid.Column="5" Text="SCORE" Style="{StaticResource HeaderLabel}" HorizontalAlignment="Right"/>
+                </Grid>
+                <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource Brush.LineSoft}"/>
+                <Grid>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4">
+                        <ItemsControl ItemsSource="{Binding Events}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border x:Name="row" Padding="10,7" Margin="2,1" CornerRadius="4" ToolTip="{Binding Tooltip}">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="Transparent"/>
+                                                <Style.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="Background" Value="{StaticResource Brush.PanelHover}"/>
+                                                    </Trigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <Border.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="Copy line"
+                                                          Command="{Binding PlacementTarget.Tag.CopyEventCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                          CommandParameter="{Binding}">
+                                                    <MenuItem.Icon><TextBlock Text="&#xE8C8;" Style="{StaticResource Icon}" FontSize="12"/></MenuItem.Icon>
+                                                </MenuItem>
+                                            </ContextMenu>
+                                        </Border.ContextMenu>
+                                        <Border.Tag>
+                                            <Binding Path="DataContext" RelativeSource="{RelativeSource AncestorType=UserControl}"/>
+                                        </Border.Tag>
+                                        <Grid>
+                                            <Border x:Name="flash" Margin="-10,-7" CornerRadius="4" Opacity="0"
+                                                    Background="{StaticResource Brush.AccentDim}" IsHitTestVisible="False"/>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="15"/>
+                                                    <ColumnDefinition Width="70"/>
+                                                    <ColumnDefinition Width="104"/>
+                                                    <ColumnDefinition Width="170"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="60"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left"
+                                                        Style="{StaticResource LevelFill}"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Time}" VerticalAlignment="Center"
+                                                           FontFamily="{StaticResource Font.Data}" FontSize="11"
+                                                           Foreground="{StaticResource Brush.Faint}"/>
+                                                <Border Grid.Column="2" Style="{StaticResource LevelPill}">
+                                                    <TextBlock Text="{Binding LevelLabel}" Style="{StaticResource LevelPillText}"/>
+                                                </Border>
+                                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0"
+                                                            Visibility="{Binding HasProcess, Converter={StaticResource BoolToVis}}">
+                                                    <TextBlock Text="{Binding Process}" FontSize="12" FontWeight="Medium"
+                                                               Foreground="{StaticResource Brush.Paper}" TextTrimming="CharacterEllipsis"
+                                                               MaxWidth="118"/>
+                                                    <TextBlock Text="{Binding Pid}" Margin="6,0,0,0" FontFamily="{StaticResource Font.Data}"
+                                                               FontSize="10" Foreground="{StaticResource Brush.Faint}" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="3" Text="system" VerticalAlignment="Center" FontSize="11.5"
+                                                           Foreground="{StaticResource Brush.Faint}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasProcess}" Value="False">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Grid.Column="4" Text="{Binding Detail}" VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Style="{StaticResource Text.Body}" FontSize="12"
+                                                           Foreground="{StaticResource Brush.Mist}"/>
+                                                <TextBlock Grid.Column="5" Text="{Binding Score}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                           FontFamily="{StaticResource Font.Data}" FontSize="11.5" FontWeight="Medium"
+                                                           Foreground="{StaticResource Brush.Paper}"
+                                                           Visibility="{Binding HasScore, Converter={StaticResource BoolToVis}}"/>
+                                            </Grid>
+                                        </Grid>
+                                    </Border>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding IsFresh}" Value="True">
+                                            <DataTrigger.EnterActions>
+                                                <BeginStoryboard>
+                                                    <Storyboard>
+                                                        <DoubleAnimation Storyboard.TargetName="flash" Storyboard.TargetProperty="Opacity"
+                                                                         From="1" To="0" Duration="0:0:1.4"/>
+                                                    </Storyboard>
+                                                </BeginStoryboard>
+                                            </DataTrigger.EnterActions>
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
 
-                <!-- Designed empty state -->
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <StackPanel.Style>
-                        <Style TargetType="StackPanel">
-                            <Setter Property="Visibility" Value="Collapsed"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding Events.Count}" Value="0">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </StackPanel.Style>
-                    <Border Width="36" Height="36" CornerRadius="8" HorizontalAlignment="Center"
-                            Background="{StaticResource Brush.InkRaised}"
-                            BorderBrush="{StaticResource Brush.Line}" BorderThickness="1">
-                        <TextBlock Text="&#xE823;" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                   Foreground="{StaticResource Brush.Faint}"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                    <TextBlock Text="No events yet" Style="{StaticResource Text.Body}" FontWeight="Medium"
-                               HorizontalAlignment="Center" Margin="0,10,0,0"/>
-                    <TextBlock Text="Detections, containments and analyst actions stream in here in real time."
-                               FontSize="11.5" Foreground="{StaticResource Brush.Faint}" TextWrapping="Wrap"
-                               MaxWidth="300" TextAlignment="Center" Margin="0,4,0,0"/>
-                </StackPanel>
-            </Grid>
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Events.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <Border Style="{StaticResource IconWell}" Width="40" Height="40" HorizontalAlignment="Center">
+                            <TextBlock Text="&#xE823;" Style="{StaticResource Icon}" FontSize="15"
+                                       HorizontalAlignment="Center" Foreground="{StaticResource Brush.Faint}"/>
+                        </Border>
+                        <TextBlock Text="No events yet" Style="{StaticResource Text.Body}" FontWeight="Medium"
+                                   HorizontalAlignment="Center" Margin="0,10,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </DockPanel>
         </Border>
     </Grid>
 </UserControl>
