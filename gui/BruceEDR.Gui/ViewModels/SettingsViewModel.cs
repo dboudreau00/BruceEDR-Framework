@@ -253,6 +253,10 @@ public sealed class SettingsViewModel : ViewModelBase
         if (QuarantineThreshold > 100) return "Contain at score cannot be above 100.";
         if (TrustDiscount < 0) return "The trusted-signer discount cannot be negative.";
         if (CorrelationWindowSeconds < 1) return "The correlation window must be at least 1 second.";
+        if (SyslogEnabled && (SyslogPort < 1 || SyslogPort > 65535)) return "Syslog port must be between 1 and 65535.";
+        if (WebhookEnabled && (!Uri.TryCreate(WebhookUrl.Trim(), UriKind.Absolute, out var u) ||
+            (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps)))
+            return "Webhook URL must be a full http:// or https:// address when webhook forwarding is on.";
         return null;
     }
 

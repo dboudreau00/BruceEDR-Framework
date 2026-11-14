@@ -164,6 +164,8 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - **The set-up screen saved thresholds Settings would refuse.** Warn at must be 1 to 99 and
   contain at above it and at most 100; the set-up screen now checks before it saves or asks
   about enforce mode, and shows its errors in the error colour.
+- **Settings checks the syslog port and the webhook URL** when those outputs are on: a port from
+  1 to 65535, and a full `http://` or `https://` address.
 
 ## [3.3.0] - 2026-11-14
 
