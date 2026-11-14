@@ -184,6 +184,23 @@ public sealed class GeoIpDatabase
         catch { return GeoLocation.Unknown; }
     }
 
+    /// <summary>Centroid of a country by ISO code, or <see cref="GeoLocation.Unknown"/>.</summary>
+    public GeoLocation Country(string? iso2)
+    {
+        if (string.IsNullOrWhiteSpace(iso2)) return GeoLocation.Unknown;
+        for (int i = 1; i < _codes.Length; i++)
+            if (string.Equals(_codes[i], iso2.Trim(), StringComparison.OrdinalIgnoreCase))
+                return new GeoLocation
+                {
+                    CountryCode = _codes[i],
+                    Country = _names[i],
+                    Latitude = _lat[i],
+                    Longitude = _lon[i],
+                    IsPrivate = false,
+                };
+        return GeoLocation.Unknown;
+    }
+
     /// <summary>
     /// Address space that never belongs on a world map: loopback, RFC1918, link-local,
     /// CGNAT, documentation and multicast. Mirrors NetworkUtil.IsRoutableRemote's intent,

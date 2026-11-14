@@ -15,7 +15,7 @@ your machine actually talks to.**
 [![License: MIT](https://img.shields.io/badge/License-MIT-3FA9B8.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0E1621.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-2261%20passing-3FA9B8.svg)](#verifying-a-build)
+[![Tests](https://img.shields.io/badge/tests-2262%20passing-3FA9B8.svg)](#verifying-a-build)
 
 </div>
 
@@ -27,11 +27,11 @@ your machine actually talks to.**
 
 <table>
 <tr>
-<td width="50%"><img src="docs/network-map.png" alt="Network map — observed destinations plotted offline, hover-linked to the endpoint list" /></td>
+<td width="50%"><img src="docs/network-map.png" alt="Network map: observed destinations plotted offline, hover-linked to the destination list" /></td>
 <td width="50%"><img src="docs/watchlist.png" alt="Watchlist — operator-authored detections that contain on sight" /></td>
 </tr>
 <tr>
-<td align="center"><b>Network map</b> — where this host is talking, resolved entirely offline</td>
+<td align="center"><b>Network map</b>: where this host is talking, resolved entirely offline</td>
 <td align="center"><b>Watchlist</b> — your own detections, armed without a restart</td>
 </tr>
 </table>
@@ -298,7 +298,7 @@ That false-positive guard matters as much as the malicious ones.
 Builds the solution, runs the full xUnit suite, validates every rule pack, and replays every
 detection scenario. As of this commit:
 
-- **2,261 tests passing**, 0 skipped
+- **2,262 tests passing**, 0 skipped
 - **0 build warnings**
 - 72 rules loading with 0 validation errors
 - 3/3 replay scenarios meeting their expectations

@@ -21,6 +21,19 @@ public sealed class GeoIpTests
 
     private static GeoIpDatabase Load() => GeoIpDatabase.Load(DataDir());
 
+    [Fact]
+    public void Country_centroid_lookup_is_by_code_and_unknown_stays_unknown()
+    {
+        var db = Load();
+        var ca = db.Country("ca");
+        Assert.Equal("CA", ca.CountryCode);
+        Assert.InRange(ca.Latitude, 40, 75);
+        Assert.InRange(ca.Longitude, -140, -60);
+        Assert.Equal("", db.Country("ZZ").CountryCode);
+        Assert.Equal("", db.Country("").CountryCode);
+        Assert.Equal("", GeoIpDatabase.Empty.Country("CA").CountryCode);
+    }
+
     [Theory]
     [InlineData("10.0.0.5")]
     [InlineData("192.168.1.1")]

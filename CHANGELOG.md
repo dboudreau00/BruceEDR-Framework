@@ -31,6 +31,8 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - Dashboard: an activity timeline by severity, sparklines, a score ring with the warn and
   contain thresholds marked, the process lineage as a chain, and named ATT&CK chips that open
   the MITRE page.
+- Network map: Miller projection instead of a stretched plate carree, glowing markers, country
+  labels, a pulse on threat markers, and arcs from the country of the Windows region setting.
 - Sidebar icons with live badges, a status card, toasts for action results and view transitions.
 
 ## [3.2.0] - 2026-10-08

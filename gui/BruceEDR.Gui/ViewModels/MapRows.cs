@@ -130,3 +130,6 @@ public sealed class UnplacedGroup : ViewModelBase
         OnPropertyChanged(nameof(HasAny));
     }
 }
+
+/// <summary>Where arcs start on the map: the country of the Windows region setting.</summary>
+public sealed record MapHome(string CountryCode, string Country, double Latitude, double Longitude);

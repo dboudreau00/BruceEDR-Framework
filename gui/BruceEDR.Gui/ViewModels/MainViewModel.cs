@@ -234,9 +234,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             World = WorldMap.Load(Path.Combine(geoDir, "world.txt"), m => AppLog.Info("geo: " + m));
             OnPropertyChanged(nameof(World));
             GeoReady = _geo.IsLoaded;
+            // The Windows region setting stands in for "here": arcs start from it, and the map
+            // says so. It is a convenience, never a measurement.
+            var home = _geo.Country(RegionInfo.CurrentRegion.TwoLetterISORegionName);
+            Home = home.CountryCode.Length > 0 ? new MapHome(home.CountryCode, home.Country, home.Latitude, home.Longitude) : null;
         }
         catch (Exception ex) { AppLog.Error("geo load", ex); }
     }
+
+    private MapHome? _home;
+    public MapHome? Home { get => _home; private set => Set(ref _home, value); }
 
     /// <summary>Tears down a half-started engine, off the UI thread, so a retry starts clean.</summary>
     private void AbandonStart(Composition? comp, string why)
