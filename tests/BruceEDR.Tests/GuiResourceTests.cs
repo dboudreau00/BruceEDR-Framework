@@ -265,4 +265,49 @@ public class GuiResourceTests
         Assert.True(unknown.Count == 0,
             "TriageView.xaml binds to members that do not exist (they render blank):\n  " + string.Join("\n  ", unknown));
     }
+
+    [Fact]
+    public void Setup_Settings_And_Watchlist_Views_Bind_Only_To_Members_That_Exist()
+    {
+        var gui = GuiDirectory();
+        if (gui is null) return;
+
+        var known = PropertiesDeclaredIn(gui,
+            Path.Combine("ViewModels", "MainViewModel.cs"),
+            Path.Combine("ViewModels", "SetupViewModel.cs"),
+            Path.Combine("ViewModels", "SettingsViewModel.cs"),
+            Path.Combine("ViewModels", "WatchlistViewModel.cs"),
+            Path.Combine("ViewModels", "TriageViewModel.cs"));
+        known.Add("Count");
+
+        Assert.Contains("MessageIsError", known);
+        Assert.Contains("FirewallFailed", known);
+        Assert.Contains("SaveFailed", known);
+
+        string[] views = { "SetupView.xaml", "SettingsView.xaml", "WatchlistView.xaml" };
+        var unknown = new List<string>();
+        foreach (var name in views)
+        {
+            string xaml = File.ReadAllText(Path.Combine(gui, "Views", name));
+            foreach (Match m in Regex.Matches(xaml, @"\{Binding(?:\s+([^{}]*))?\}"))
+            {
+                string body = m.Groups[1].Value.Trim();
+                string path = body.Split(',')[0].Trim();
+                if (path.StartsWith("Path=", StringComparison.Ordinal)) path = path[5..];
+                if (path.Length == 0 || path.Contains('=')) continue;
+                if (Regex.IsMatch(body, @"\b(ElementName|Source)=")) continue;
+                if (body.Contains("RelativeSource=", StringComparison.Ordinal))
+                {
+                    if (!body.Contains("AncestorType=UserControl", StringComparison.Ordinal) ||
+                        !path.StartsWith("DataContext.", StringComparison.Ordinal)) continue;
+                    path = path["DataContext.".Length..];
+                }
+                if (path.Split('.').Any(segment => !known.Contains(segment)))
+                    unknown.Add($"{name} -> {path}");
+            }
+        }
+
+        Assert.True(unknown.Count == 0,
+            "Setup/Settings/Watchlist XAML binds to members that do not exist:\n  " + string.Join("\n  ", unknown.Distinct()));
+    }
 }
