@@ -95,6 +95,15 @@ public sealed class SetupViewModel : ViewModelBase
         || QuarantineThreshold != _loadedQuarantine
         || !SplitLines(Publishers).SequenceEqual(SplitLines(_loadedPublishers));
 
+    /// <summary>The config would silently clamp these, so say what is wrong before saving.</summary>
+    public string? ValidateThresholds()
+    {
+        if (WarnThreshold < 1 || WarnThreshold > 99) return "Warn at score must be between 1 and 99.";
+        if (QuarantineThreshold <= WarnThreshold) return "Contain at score must be higher than warn at score.";
+        if (QuarantineThreshold > 100) return "Contain at score cannot be above 100.";
+        return null;
+    }
+
     /// <summary>
     /// Writes the set-up choices back (read-modify-write, like Settings). Unchanged choices
     /// are not written: a rewrite drops the file's comments, and a read-only file would
@@ -103,6 +112,12 @@ public sealed class SetupViewModel : ViewModelBase
     public bool Save()
     {
         if (LoadError.Length > 0) return false;
+        var problem = ValidateThresholds();
+        if (problem is not null)
+        {
+            Message = "Not saved. " + problem;
+            return false;
+        }
         if (!IsDirty) return true;
         try
         {
@@ -236,7 +251,15 @@ public sealed class SetupViewModel : ViewModelBase
     public string Message
     {
         get => _message;
-        set { if (Set(ref _message, value)) OnPropertyChanged(nameof(HasMessage)); }
+        set
+        {
+            if (!Set(ref _message, value)) return;
+            OnPropertyChanged(nameof(HasMessage));
+            OnPropertyChanged(nameof(MessageIsError));
+        }
     }
     public bool HasMessage => _message.Length > 0;
+    public bool MessageIsError => _message.StartsWith("Not saved", StringComparison.Ordinal)
+                               || _message.StartsWith("No monitor", StringComparison.Ordinal)
+                               || _message.Contains("could not", StringComparison.OrdinalIgnoreCase);
 }

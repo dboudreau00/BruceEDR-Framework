@@ -402,6 +402,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         if (IsLive || _stopping || _starting) return;
         Setup.Message = "";
+        var problem = Setup.ValidateThresholds();
+        if (problem is not null)
+        {
+            Setup.Message = "Not saved. " + problem;
+            return;
+        }
         if (Setup.Enforce && !SetupViewModel.ConfirmEnforceMode("Start in enforce mode")) return;
         if (!Setup.Save()) return;
 
@@ -489,6 +495,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
         if (!IsLive)
         {
+            var problem = Setup.ValidateThresholds();
+            if (problem is not null)
+            {
+                Setup.Message = "Not saved. " + problem;
+                return;
+            }
             // Saving here writes the mode too, so enforce gets the same confirmation as Start.
             if (Setup.Enforce && !Setup.EnforceOnDisk && !SetupViewModel.ConfirmEnforceMode("Turn on enforce mode"))
                 Setup.Enforce = false;

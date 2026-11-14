@@ -406,9 +406,20 @@
                             ToolTip="Saves these choices and opens the full Settings page without starting anything"
                             Command="{Binding ReviewSettingsCommand}"/>
                 </StackPanel>
-                <TextBlock Grid.Column="1" Text="{Binding Setup.Message}" Style="{StaticResource Text.Body}"
-                           Foreground="{StaticResource Brush.Mist}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="16,0,0,0"
-                           Visibility="{Binding Setup.HasMessage, Converter={StaticResource BoolToVis}}"/>
+                <TextBlock Grid.Column="1" Text="{Binding Setup.Message}"
+                           TextWrapping="Wrap" VerticalAlignment="Center" Margin="16,0,0,0"
+                           Visibility="{Binding Setup.HasMessage, Converter={StaticResource BoolToVis}}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource Text.Body}">
+                            <Setter Property="Foreground" Value="{StaticResource Brush.Mist}"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Setup.MessageIsError}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
             </Grid>
         </Border>
     </Grid>

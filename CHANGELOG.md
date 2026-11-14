@@ -161,6 +161,9 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - **Reload from disk could crash the desktop app.** In Settings and Watchlist it read the config
   file without catching a syntax error, so a bad edit on disk threw on the UI thread. It now says
   "Reload failed" with the reason, and "Reloaded from disk." when it worked.
+- **The set-up screen saved thresholds Settings would refuse.** Warn at must be 1 to 99 and
+  contain at above it and at most 100; the set-up screen now checks before it saves or asks
+  about enforce mode, and shows its errors in the error colour.
 
 ## [3.3.0] - 2026-11-14
 
