@@ -439,7 +439,10 @@ public static class IocDatabase
         new("firefox", @"\mozilla\firefox\profiles\", new[] { "firefox.exe" }),
         new("electrum", @"\electrum\wallets\", new[] { "electrum.exe" }),
         new("exodus", @"\exodus\exodus.wallet\", new[] { "exodus.exe" }),
-        new("discord", @"\discord\local storage\leveldb\", new[] { "discord.exe" })
+        new("discord", @"\discord\local storage\leveldb\", new[] { "discord.exe" }),
+        // The PTB and Canary builds keep their tokens in folders of their own, which stealers read too.
+        new("discordptb", @"\discordptb\local storage\leveldb\", new[] { "discordptb.exe" }),
+        new("discordcanary", @"\discordcanary\local storage\leveldb\", new[] { "discordcanary.exe" })
     };
 
     /// <summary>

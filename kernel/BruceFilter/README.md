@@ -149,7 +149,7 @@ is trusted for.
   `{ "image": "C:\\Program Files\\Vendor\\agent.exe", "stores": ["chrome"] }`. Leave out
   `stores` to trust the image for every store. The same permission rule applies.
 - `detection.kernelExemptStores`: stores to leave unguarded, by name (`chrome`, `edge`,
-  `firefox`, `electrum`, `exodus`, `discord`).
+  `firefox`, `electrum`, `exodus`, `discord`, `discordptb`, `discordcanary`).
 
 Changes to these reload live: the agent rebuilds the policy and swaps it in whole.
 
@@ -158,8 +158,8 @@ Changes to these reload live: the agent rebuilds the policy and swaps it in whol
 - **Trust is by image path.** Code injected into a trusted process inherits its access. The
   guard stops a stealer reading the stores itself; it does not stop one running inside the
   browser.
-- **Programs installed per user cannot be trusted.** Discord and Exodus always install per
-  user, as Chrome can: anything running as that user could replace them. With blocking on
+- **Programs installed per user cannot be trusted.** Discord (all three builds) and Exodus
+  always install per user, as Chrome can: anything running as that user could replace them. With blocking on
   they are refused their own stores unless exempted.
 - **Electrum is never trusted by default.** Its installer registers no App Paths key and names
   the program `electrum-<version>.exe`, so no owner is found. Exempt the store, or trust the

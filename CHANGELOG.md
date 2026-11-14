@@ -23,10 +23,11 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   Build and install the driver from this release.
 - **The agent connects only as the service.** The driver's port now admits LocalSystem alone;
   the console run as an administrator logs that it was refused.
-- **The kernel guards six named stores** (`chrome`, `edge`, `firefox`, `electrum`, `exodus`,
-  `discord`), each by the store's own folder. `\exodus\` matched Exodus's install directory and
-  would have kept the wallet from starting; it is now `\exodus\exodus.wallet\`. `\discord\leveldb\`
-  matched nothing Discord writes; it is now `\discord\local storage\leveldb\`.
+- **The kernel guards eight named stores** (`chrome`, `edge`, `firefox`, `electrum`, `exodus`,
+  `discord`, `discordptb`, `discordcanary`), each by the store's own folder; Discord's PTB and
+  Canary builds keep their tokens in folders of their own. `\exodus\` matched Exodus's install
+  directory and would have kept the wallet from starting; it is now `\exodus\exodus.wallet\`.
+  `\discord\leveldb\` matched nothing Discord writes; it is now `\discord\local storage\leveldb\`.
 
 ### Added
 

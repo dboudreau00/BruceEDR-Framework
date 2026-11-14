@@ -81,14 +81,15 @@ public sealed class KernelPolicyTests : IDisposable
             ["msedge.exe"] = new[] { Edge }
         }));
 
-        Assert.Equal(new[] { "chrome", "edge", "firefox", "electrum", "exodus", "discord" }, plan.Stores.Select(s => s.Name));
+        Assert.Equal(new[] { "chrome", "edge", "firefox", "electrum", "exodus", "discord", "discordptb", "discordcanary" },
+            plan.Stores.Select(s => s.Name));
         Assert.Equal(2, plan.Trusted.Count);
         var chrome = Assert.Single(plan.Trusted, t => t.Path == Chrome);
         Assert.Equal(0, chrome.StoreIndex);
         Assert.Equal(@"\Device\HarddiskVolume3\Program Files\Google\Chrome\Application\chrome.exe", chrome.NtPath);
         Assert.Equal(1, Assert.Single(plan.Trusted, t => t.Path == Edge).StoreIndex);
-        // Firefox, Electrum, Exodus and Discord have no trusted reader, and the plan says so.
-        Assert.Equal(4, plan.Notes.Count(n => n.Contains("nothing trusted")));
+        // Firefox, Electrum, Exodus and the three Discord builds have no trusted reader, and the plan says so.
+        Assert.Equal(6, plan.Notes.Count(n => n.Contains("nothing trusted")));
         Assert.Contains(plan.Notes, n => n.StartsWith("discord: nothing trusted") && n.Contains("discord.exe included"));
     }
 
@@ -147,7 +148,8 @@ public sealed class KernelPolicyTests : IDisposable
     {
         var d = new DetectionConfig { KernelExemptStores = new[] { "Discord", "exodus", "icq" } };
         var plan = KernelPolicy.Build(d, Machine(new()));
-        Assert.Equal(new[] { "chrome", "edge", "firefox", "electrum" }, plan.Stores.Select(s => s.Name));
+        // Exempting "discord" leaves the PTB and Canary stores guarded: each is its own store.
+        Assert.Equal(new[] { "chrome", "edge", "firefox", "electrum", "discordptb", "discordcanary" }, plan.Stores.Select(s => s.Name));
         Assert.Contains(plan.Notes, n => n.Contains("'icq' is not a guarded store"));
         Assert.Contains(plan.Notes, n => n.Contains("not guarded") && n.Contains("discord") && n.Contains("exodus"));
     }

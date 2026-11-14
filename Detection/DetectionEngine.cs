@@ -551,7 +551,7 @@ public sealed class DetectionEngine
         {
             "chrome" or "edge" or "firefox" => Tech("T1555.003", "T1539"),
             "electrum" or "exodus" => Tech("T1555", "T1005"),
-            "discord" => Tech("T1539", "T1552.001"),
+            "discord" or "discordptb" or "discordcanary" => Tech("T1539", "T1552.001"),
             _ => Tech("T1555")
         };
         Score(p, 40, $"Kernel refused {what} of the {store} credential store",

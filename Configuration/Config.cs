@@ -75,7 +75,7 @@ public sealed class DetectionConfig
 
     /// <summary>
     /// Stores the minifilter leaves unguarded, by name (chrome, edge, firefox, electrum,
-    /// exodus, discord). A program installed per user cannot be trusted by its path, so with
+    /// exodus, discord, discordptb, discordcanary). A program installed per user cannot be trusted by its path, so with
     /// blocking on it is refused its own store; exempting the store keeps it working. Every
     /// store not named here is guarded, including any a later version adds.
     /// </summary>
