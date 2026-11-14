@@ -22,6 +22,7 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - Row severity follows the configured contain threshold instead of a fixed 70.
 - Tooltips, context menus and the watchlist pickers were stock light controls on the dark
   theme; the pickers' selected value was close to unreadable.
+- API surface had no column headers; its endpoint count was the display cap, not the total.
 - `publish-release.ps1` fails if the zip has backslash entry names. Under Windows PowerShell 5.1
   the .NET Framework zip API still writes them, so run the script under PowerShell 7 (`pwsh`).
 

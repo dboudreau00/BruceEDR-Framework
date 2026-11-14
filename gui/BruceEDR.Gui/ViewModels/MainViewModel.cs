@@ -737,6 +737,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             EndpointCount = Math.Min(endpoints.Count, SurfaceDisplayCap);
             TotalEndpointCount = endpoints.Count;
             BeaconCount = endpoints.Count(e => e.Beaconing);
+            PlaintextCount = Surface.Count(r => r.IsPlaintext);
             UpdateStats(host);
             PublishTimeline(force: true);
 
@@ -839,6 +840,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             for (int i = Surface.Count - 1; i >= 0; i--)
                 if (!ordered.Any(e => e.Key == Surface[i].Key))
                     Surface.RemoveAt(i);
+
+            double busiest = Math.Max(1, Surface.Count == 0 ? 1 : Surface.Max(r => r.Connections));
+            foreach (var r in Surface) r.Share = 100.0 * r.Connections / busiest;
 
             MergeMarkers();
         }
@@ -1041,6 +1045,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public string UnreadLevel { get => _unreadLevel; private set => Set(ref _unreadLevel, value); }
 
     public string DashboardBadgeLevel => _containedCount > 0 ? "threat" : "watch";
+
+    private int _plaintextCount;
+    public int PlaintextCount { get => _plaintextCount; private set => Set(ref _plaintextCount, value); }
 
     // ---- toast ----
     private string _toastText = "";

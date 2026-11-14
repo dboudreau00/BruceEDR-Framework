@@ -45,7 +45,7 @@ public sealed class SurfaceRow : ViewModelBase
     public bool IsHighlighted { get => _isHighlighted; set => Set(ref _isHighlighted, value); }
 
     /// <summary>Country name, or the reason there isn't one.</summary>
-    public string Location => Geo.IsPrivate ? "Local network"
+    public string Location => Geo.IsPrivate ? "Local or reserved"
                             : Geo.CountryCode.Length > 0 ? Geo.Country
                             : "Unplaced";
 
@@ -57,6 +57,12 @@ public sealed class SurfaceRow : ViewModelBase
     public string Detail => Host == Address || string.IsNullOrEmpty(Host) ? "" : Address;
 
     public string Cadence => Beaconing ? "beaconing" : "";
+
+    public string CountryCode => Geo.IsPrivate ? "LAN" : Geo.CountryCode;
+
+    private double _share;
+    /// <summary>Connections as a percentage of the busiest endpoint on screen, for the inline bar.</summary>
+    public double Share { get => _share; set => Set(ref _share, value); }
 
     /// <summary>safe | watch | threat — beaconing to an untrusted process is the alarming case.</summary>
     public string Severity => Beaconing && !Trusted ? "threat"
@@ -105,6 +111,7 @@ public sealed class SurfaceRow : ViewModelBase
         OnPropertyChanged(nameof(IsPlaintext));
         OnPropertyChanged(nameof(Transport));
         OnPropertyChanged(nameof(Location));
+        OnPropertyChanged(nameof(CountryCode));
     }
 }
 
