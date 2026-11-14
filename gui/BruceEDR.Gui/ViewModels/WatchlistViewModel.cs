@@ -131,6 +131,15 @@ public sealed class WatchlistViewModel : ViewModelBase
         RemoveCommand = new RelayCommandP(p => Remove(p as WatchRow));
         SaveCommand = new RelayCommand(Save);
         ReloadCommand = new RelayCommand(() => LoadFrom(ConfigLoader.Load(_configPath)));
+        Rows.CollectionChanged += (_, e) =>
+        {
+            foreach (WatchRow r in e.NewItems ?? Array.Empty<WatchRow>())
+                r.PropertyChanged += (_, pe) =>
+                {
+                    if (pe.PropertyName is nameof(WatchRow.Action) or nameof(WatchRow.Enabled))
+                        OnPropertyChanged(nameof(ContainCount));
+                };
+        };
     }
 
     public ICommand AddCommand { get; }
@@ -150,12 +159,14 @@ public sealed class WatchlistViewModel : ViewModelBase
         Message = "";
         ArmedCount = c.Watchlist.Enabled ? Rows.Count(r => r.Enabled) : 0;
         OnPropertyChanged(nameof(IsEmpty));
+        OnPropertyChanged(nameof(ContainCount));
     }
 
     private void Add()
     {
         Rows.Add(new WatchRow());
         OnPropertyChanged(nameof(IsEmpty));
+        OnPropertyChanged(nameof(ContainCount));
     }
 
     private void Remove(WatchRow? row)
@@ -163,6 +174,7 @@ public sealed class WatchlistViewModel : ViewModelBase
         if (row is null) return;
         Rows.Remove(row);
         OnPropertyChanged(nameof(IsEmpty));
+        OnPropertyChanged(nameof(ContainCount));
     }
 
     private void Save()
@@ -240,6 +252,11 @@ public sealed class WatchlistViewModel : ViewModelBase
     /// <summary>Entries armed in the saved config, for the sidebar badge.</summary>
     public int ArmedCount { get => _armedCount; private set => Set(ref _armedCount, value); }
 
+    public int ContainCount => Rows.Count(r => r.Enabled && string.Equals(r.Action, "quarantine", StringComparison.OrdinalIgnoreCase));
+
     private string _message = "";
-    public string Message { get => _message; set => Set(ref _message, value); }
+    public string Message { get => _message; set { if (Set(ref _message, value)) OnPropertyChanged(nameof(MessageIsError)); } }
+    public bool MessageIsError => _message.StartsWith("Not saved", StringComparison.Ordinal)
+                               || _message.StartsWith("Save failed", StringComparison.Ordinal)
+                               || _message.Contains("still invalid", StringComparison.Ordinal);
 }
