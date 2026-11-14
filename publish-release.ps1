@@ -124,6 +124,14 @@ if (-not ('System.IO.Compression.ZipFile' -as [type])) {
 }
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
     $stage, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+# Windows PowerShell 5.1 runs this on .NET Framework, whose ZipFile still writes backslashes.
+$archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+try { $bad = @($archive.Entries | Where-Object { $_.FullName.Contains('\') }).Count }
+finally { $archive.Dispose() }
+if ($bad -gt 0) {
+    Remove-Item $zip -Force
+    throw "$bad zip entries use backslash separators; run this script under PowerShell 7 (pwsh)"
+}
 
 # 6) MSI from the same staged folder.
 Write-Host "-- msi" -ForegroundColor Cyan
