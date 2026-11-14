@@ -166,6 +166,10 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   about enforce mode, and shows its errors in the error colour.
 - **Settings checks the syslog port and the webhook URL** when those outputs are on: a port from
   1 to 65535, and a full `http://` or `https://` address.
+- Settings: a failed firewall-rule cleanup shows in the error colour; Open app log and Open config
+  file say when the file does not exist yet instead of doing nothing; removing the assistant key
+  says so when the key is still there; the save message names kernel blocking among the settings
+  that apply live.
 
 ## [3.3.0] - 2026-11-14
 

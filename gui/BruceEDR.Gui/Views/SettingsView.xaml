@@ -91,8 +91,18 @@
                                 <TextBlock Text="Remove BruceEDR firewall rules" Style="{StaticResource Text.Body}"/>
                                 <TextBlock Text="Outbound blocks stay in Windows Firewall after BruceEDR stops. Removing them also lifts host isolation that BruceEDR applied."
                                            Style="{StaticResource Caption}"/>
-                                <TextBlock Text="{Binding FirewallMessage}" Style="{StaticResource Caption}"
-                                           Foreground="{StaticResource Brush.Mist}" Margin="0,6,0,0"/>
+                                <TextBlock Text="{Binding FirewallMessage}" Margin="0,6,0,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource Caption}">
+                                            <Setter Property="Foreground" Value="{StaticResource Brush.Mist}"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding FirewallFailed}" Value="True">
+                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                             </StackPanel>
                             <Button Style="{StaticResource Btn.Subtle}" HorizontalAlignment="Right" VerticalAlignment="Top"
                                     Command="{Binding RemoveFirewallRulesCommand}">

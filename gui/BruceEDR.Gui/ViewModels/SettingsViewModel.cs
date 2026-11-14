@@ -114,11 +114,26 @@ public sealed class SettingsViewModel : ViewModelBase
     private void RemoveAssistantKey()
     {
         if (Assistant is null) return;
-        Assistant.Keys.Delete(Assistant.Provider);
-        Assistant.RaiseKey();
-        OnPropertyChanged(nameof(AssistantStatus));
-        AssistantMessageIsError = false;
-        AssistantMessage = "Key removed.";
+        try
+        {
+            Assistant.Keys.Delete(Assistant.Provider);
+            Assistant.RaiseKey();
+            OnPropertyChanged(nameof(AssistantStatus));
+            if (Assistant.HasKey)
+            {
+                AssistantMessageIsError = true;
+                AssistantMessage = "The key could not be removed.";
+                return;
+            }
+            AssistantMessageIsError = false;
+            AssistantMessage = "Key removed.";
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("remove key", ex);
+            AssistantMessageIsError = true;
+            AssistantMessage = "The key could not be removed: " + ex.Message;
+        }
     }
 
     private bool _testing;
@@ -182,14 +197,24 @@ public sealed class SettingsViewModel : ViewModelBase
         }
     }
 
-    private static void OpenFile(string path)
+    private void OpenFile(string path)
     {
         try
         {
-            if (File.Exists(path))
-                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+            if (!File.Exists(path))
+            {
+                SaveFailed = true;
+                SaveMessage = $"File does not exist yet: {Path.GetFileName(path)}";
+                return;
+            }
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
         }
-        catch (Exception ex) { AppLog.Error("open file", ex); }
+        catch (Exception ex)
+        {
+            AppLog.Error("open file", ex);
+            SaveFailed = true;
+            SaveMessage = "Could not open Explorer: " + ex.Message;
+        }
     }
 
     private void ReloadFromDisk()
@@ -309,7 +334,7 @@ public sealed class SettingsViewModel : ViewModelBase
             LoadFrom(_config);
             SaveMessage = declined
                 ? "Saved, still in monitor mode: enforce mode was not turned on."
-                : "Saved. Response mode, thresholds and allowlist apply live; scan engine and telemetry take effect on restart.";
+                : "Saved. Response mode, thresholds, kernel blocking and allowlist apply live; scan engine and telemetry take effect on restart.";
         }
         catch (Exception ex)
         {
@@ -344,5 +369,11 @@ public sealed class SettingsViewModel : ViewModelBase
     private string _webhookUrl = ""; public string WebhookUrl { get => _webhookUrl; set => Set(ref _webhookUrl, value); }
 
     private string _saveMessage = ""; public string SaveMessage { get => _saveMessage; set => Set(ref _saveMessage, value); }
-    private string _firewallMessage = ""; public string FirewallMessage { get => _firewallMessage; set => Set(ref _firewallMessage, value); }
+    private string _firewallMessage = "";
+    public string FirewallMessage
+    {
+        get => _firewallMessage;
+        set { if (Set(ref _firewallMessage, value)) OnPropertyChanged(nameof(FirewallFailed)); }
+    }
+    public bool FirewallFailed => _firewallMessage.StartsWith("Not finished:", StringComparison.Ordinal);
 }
