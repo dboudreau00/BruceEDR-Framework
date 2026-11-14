@@ -23,6 +23,10 @@ public sealed class SettingsViewModel : ViewModelBase
         OpenLogCommand = new RelayCommand(() => OpenFile(AppLog.LogPath));
         OpenConfigCommand = new RelayCommand(() => OpenFile(_configPath));
         RemoveFirewallRulesCommand = new RelayCommand(RemoveFirewallRules, () => !_cleaning);
+        SaveAssistantKeyCommand = new RelayCommandP(SaveAssistantKey);
+        RemoveAssistantKeyCommand = new RelayCommand(RemoveAssistantKey, () => Assistant?.HasKey == true);
+        TestAssistantCommand = new RelayCommand(TestAssistant, () => !_testing && Assistant?.HasKey == true);
+        ToggleAssistantCommand = new RelayCommand(() => AssistantOpen = !AssistantOpen);
     }
 
     private bool _cleaning;
@@ -52,6 +56,108 @@ public sealed class SettingsViewModel : ViewModelBase
             _cleaning = false;
             CommandManager.InvalidateRequerySuggested();
         }, TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    /// <summary>Incident triage assistant settings, shared with the triage view.</summary>
+    public AssistantSettings? Assistant { get; private set; }
+
+    public void AttachAssistant(AssistantSettings assistant)
+    {
+        Assistant = assistant;
+        assistant.PropertyChanged += (_, _) => OnPropertyChanged(nameof(AssistantStatus));
+        OnPropertyChanged(nameof(Assistant));
+        OnPropertyChanged(nameof(AssistantStatus));
+    }
+
+    private bool _assistantOpen;
+    /// <summary>The section is folded away until asked for.</summary>
+    public bool AssistantOpen { get => _assistantOpen; set => Set(ref _assistantOpen, value); }
+
+    public string AssistantStatus => Assistant is null ? ""
+        : Assistant.HasKey ? $"A {Assistant.ProviderName} key is saved, encrypted for this Windows account."
+        : $"No {Assistant.ProviderName} key saved.";
+
+    private string _assistantMessage = "";
+    public string AssistantMessage { get => _assistantMessage; set => Set(ref _assistantMessage, value); }
+
+    private bool _assistantMessageIsError;
+    public bool AssistantMessageIsError { get => _assistantMessageIsError; set => Set(ref _assistantMessageIsError, value); }
+
+    /// <summary>The PasswordBox is passed in so the key never sits in a bindable string property.</summary>
+    private void SaveAssistantKey(object? p)
+    {
+        if (Assistant is null || p is not System.Windows.Controls.PasswordBox box) return;
+        string key = box.Password.Trim();
+        box.Clear();
+        if (key.Length < 8 || key.Any(char.IsWhiteSpace))
+        {
+            AssistantMessageIsError = true;
+            AssistantMessage = "That does not look like an API key.";
+            return;
+        }
+        try
+        {
+            Assistant.Keys.Save(Assistant.Provider, key);
+            Assistant.RaiseKey();
+            OnPropertyChanged(nameof(AssistantStatus));
+            AssistantMessageIsError = false;
+            AssistantMessage = "Key saved.";
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("save key", ex);
+            AssistantMessageIsError = true;
+            AssistantMessage = "The key could not be saved: " + ex.Message;
+        }
+    }
+
+    private void RemoveAssistantKey()
+    {
+        if (Assistant is null) return;
+        Assistant.Keys.Delete(Assistant.Provider);
+        Assistant.RaiseKey();
+        OnPropertyChanged(nameof(AssistantStatus));
+        AssistantMessageIsError = false;
+        AssistantMessage = "Key removed.";
+    }
+
+    private bool _testing;
+
+    /// <summary>One tiny request to prove the key, model and network path work.</summary>
+    private async void TestAssistant()
+    {
+        if (Assistant is null || _testing) return;
+        string? key = Assistant.Keys.Load(Assistant.Provider);
+        if (string.IsNullOrEmpty(key)) { AssistantMessageIsError = true; AssistantMessage = "Save a key first."; return; }
+        _testing = true;
+        CommandManager.InvalidateRequerySuggested();
+        AssistantMessageIsError = false;
+        AssistantMessage = $"Asking {Assistant.Vendor}...";
+        var probe = new BruceEDR.Assistant.IncidentCase
+        {
+            Key = "settings-test",
+            ProcessName = "notepad.exe",
+            State = "Flagged",
+            Steps = new[] { new BruceEDR.Assistant.IncidentStep { Number = 1, Title = "Connection test, not a real event", Stage = "Other" } },
+        };
+        var request = new BruceEDR.Assistant.TriageRequest(Assistant.Provider, Assistant.Model, key, BruceEDR.Assistant.Personas.Get("soc"), probe, true);
+        key = null;
+        try
+        {
+            var r = await Task.Run(() => new BruceEDR.Assistant.TriageNarrator().GenerateAsync(request, _ => { }, CancellationToken.None));
+            AssistantMessageIsError = r.Error.Length > 0;
+            AssistantMessage = r.Error.Length > 0 ? r.Error : r.Refused ? "The model declined the test." : $"{Assistant.Vendor} answered. The assistant is ready.";
+        }
+        catch (Exception ex)
+        {
+            AssistantMessageIsError = true;
+            AssistantMessage = "The test failed: " + ex.Message;
+        }
+        finally
+        {
+            _testing = false;
+            CommandManager.InvalidateRequerySuggested();
+        }
     }
 
     /// <summary>Wire the persisted interface preferences (owned by the window).</summary>
@@ -91,6 +197,10 @@ public sealed class SettingsViewModel : ViewModelBase
     public ICommand OpenLogCommand { get; }
     public ICommand OpenConfigCommand { get; }
     public ICommand RemoveFirewallRulesCommand { get; }
+    public ICommand SaveAssistantKeyCommand { get; }
+    public ICommand RemoveAssistantKeyCommand { get; }
+    public ICommand TestAssistantCommand { get; }
+    public ICommand ToggleAssistantCommand { get; }
 
     public void LoadFrom(BruceConfig c)
     {

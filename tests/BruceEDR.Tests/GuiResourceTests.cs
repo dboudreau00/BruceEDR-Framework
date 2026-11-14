@@ -131,6 +131,39 @@ public class GuiResourceTests
         Assert.Contains("<v:CoverageView", xaml, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Incident_Triage_Leads_The_Sidebar()
+    {
+        var gui = GuiDirectory();
+        if (gui is null) return;
+
+        string xaml = File.ReadAllText(Path.Combine(gui, "MainWindow.xaml"));
+        var first = Regex.Match(xaml, @"<TabItem\b[^>]*>");
+        Assert.True(first.Success, "MainWindow.xaml declares no tabs");
+        Assert.Contains("Header=\"Incident triage\"", first.Value, StringComparison.Ordinal);
+        int next = xaml.IndexOf("<TabItem", first.Index + 1, StringComparison.Ordinal);
+        Assert.Contains("<v:TriageView", xaml[first.Index..(next < 0 ? xaml.Length : next)], StringComparison.Ordinal);
+    }
+
+    /// <summary>The owner wants the key out of the way: last in Settings, folded shut.</summary>
+    [Fact]
+    public void The_Assistant_Key_Is_The_Last_Thing_In_Settings_And_Starts_Folded()
+    {
+        var gui = GuiDirectory();
+        if (gui is null) return;
+
+        string xaml = File.ReadAllText(Path.Combine(gui, "Views", "SettingsView.xaml"));
+        int fold = xaml.IndexOf("AutomationProperties.Name=\"Assistant settings\"", StringComparison.Ordinal);
+        int end = xaml.IndexOf("</ScrollViewer>", StringComparison.Ordinal);
+        Assert.True(fold > 0 && end > fold, "the Assistant section is missing or outside the scrolled settings");
+
+        string tail = xaml[fold..end];
+        Assert.Single(Regex.Matches(tail, @"Style=""\{StaticResource SectionCard\}"""));
+        Assert.Contains("Visibility=\"{Binding AssistantOpen", tail, StringComparison.Ordinal);
+        int key = xaml.IndexOf("<PasswordBox", StringComparison.Ordinal);
+        Assert.True(key > fold && key < end, "the API key field must sit inside the folded Assistant section");
+    }
+
     /// <summary>
     /// Public property names declared in a C# source file. Matched textually rather than by
     /// reflection: referencing the WPF GUI assembly from this test project would force
@@ -186,5 +219,50 @@ public class GuiResourceTests
         Assert.True(unknown.Count == 0,
             "XAML binds to properties that do not exist on the view model or the row types " +
             "(these silently render blank):\n  " + string.Join("\n  ", unknown));
+    }
+
+    [Fact]
+    public void The_Triage_View_Binds_Only_To_Members_That_Exist()
+    {
+        var gui = GuiDirectory();
+        if (gui is null) return;
+
+        string view = Path.Combine(gui, "Views", "TriageView.xaml");
+        Assert.True(File.Exists(view), "Views/TriageView.xaml is missing");
+        string triage = Path.Combine("..", "..", "Assistant", "Triage.cs");
+        var known = PropertiesDeclaredIn(gui, Path.Combine("ViewModels", "TriageViewModel.cs"), triage);
+        foreach (Match record in Regex.Matches(File.ReadAllText(Path.Combine(gui, triage)), @"record\s+\w+\(([^)]*)\)"))
+            foreach (var parameter in record.Groups[1].Value.Split(','))
+                known.Add(parameter.Trim().Split(' ').Last());
+        known.Add("Count");
+        Assert.Contains("NarrationState", known);   // sanity: the scrape found the view model
+        Assert.Contains("Glyph", known);            // and the positional Persona record
+
+        var paths = new List<string>();
+        string xaml = File.ReadAllText(view);
+        foreach (Match m in Regex.Matches(xaml, @"\{Binding(?:\s+([^{}]*))?\}"))
+        {
+            string body = m.Groups[1].Value.Trim();
+            string path = body.Split(',')[0].Trim();
+            if (path.StartsWith("Path=", StringComparison.Ordinal)) path = path[5..];
+            if (path.Length == 0 || path.Contains('=')) continue;
+            if (Regex.IsMatch(body, @"\b(ElementName|Source)=")) continue;
+            if (body.Contains("RelativeSource=", StringComparison.Ordinal))
+            {
+                // Rows reach the page's commands through the UserControl's DataContext.
+                if (!body.Contains("AncestorType=UserControl", StringComparison.Ordinal) ||
+                    !path.StartsWith("DataContext.", StringComparison.Ordinal)) continue;
+                path = path["DataContext.".Length..];
+            }
+            paths.Add(path);
+        }
+        foreach (Match m in Regex.Matches(xaml, @"<Binding\s+Path=""([^""]+)""([^>]*)>"))
+            if (!Regex.IsMatch(m.Groups[2].Value, @"\b(ElementName|RelativeSource)="))
+                paths.Add(m.Groups[1].Value);
+
+        Assert.NotEmpty(paths);
+        var unknown = paths.Where(p => p.Split('.').Any(segment => !known.Contains(segment))).Distinct().ToList();
+        Assert.True(unknown.Count == 0,
+            "TriageView.xaml binds to members that do not exist (they render blank):\n  " + string.Join("\n  ", unknown));
     }
 }

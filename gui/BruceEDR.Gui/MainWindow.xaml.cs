@@ -16,7 +16,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         string configPath = ResolveConfigPath(Environment.GetCommandLineArgs());
         _ui = UiState.Load();
-        _vm = new MainViewModel(configPath);
+        _vm = new MainViewModel(configPath, _ui);
         DataContext = _vm;
 
         RestorePlacement();

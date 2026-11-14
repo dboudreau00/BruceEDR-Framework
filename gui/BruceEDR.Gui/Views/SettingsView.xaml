@@ -316,8 +316,120 @@
                         <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
                             <Border Style="{StaticResource Pill}" Margin="0,0,6,0"><TextBlock Text="F5" Style="{StaticResource Pill.Text}"/></Border>
                             <TextBlock Text="refresh" Style="{StaticResource Caption}" Margin="0,0,14,0" VerticalAlignment="Center"/>
-                            <Border Style="{StaticResource Pill}" Margin="0,0,6,0"><TextBlock Text="Ctrl+1 to Ctrl+7" Style="{StaticResource Pill.Text}"/></Border>
+                            <Border Style="{StaticResource Pill}" Margin="0,0,6,0"><TextBlock Text="Ctrl+1 to Ctrl+8" Style="{StaticResource Pill.Text}"/></Border>
                             <TextBlock Text="switch views" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Assistant: folded away at the very end on purpose -->
+                <Button Style="{StaticResource Btn.Fold}" Command="{Binding ToggleAssistantCommand}" Margin="0,4,0,10"
+                        AutomationProperties.Name="Assistant settings">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontSize="9" Margin="0,0,8,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                                    <Setter Property="Text" Value="&#xE76C;"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding AssistantOpen}" Value="True">
+                                            <Setter Property="Text" Value="&#xE70D;"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Text="Assistant"/>
+                    </StackPanel>
+                </Button>
+
+                <Border Style="{StaticResource SectionCard}"
+                        Visibility="{Binding AssistantOpen, Converter={StaticResource BoolToVis}}">
+                    <StackPanel DataContext="{Binding Assistant}">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                            <Border Style="{StaticResource SectionIcon}">
+                                <TextBlock Text="&#xE945;" Style="{StaticResource SectionGlyph}"/>
+                            </Border>
+                            <TextBlock Text="Assistant" Style="{StaticResource Text.Title}" VerticalAlignment="Center"/>
+                        </StackPanel>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                                <TextBlock Text="PROVIDER" Style="{StaticResource FieldLabel}"/>
+                                <ComboBox Style="{StaticResource Picker}" ItemContainerStyle="{StaticResource PickerItem}"
+                                          ItemsSource="{Binding Providers}" SelectedItem="{Binding Provider, Mode=TwoWay}"
+                                          AutomationProperties.Name="Assistant provider"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                                <TextBlock Text="MODEL" Style="{StaticResource FieldLabel}"/>
+                                <TextBox Style="{StaticResource Input}" FontFamily="{StaticResource Font.Data}"
+                                         Text="{Binding Model, Mode=TwoWay}" AutomationProperties.Name="Assistant model"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="API KEY" Style="{StaticResource FieldLabel}" Margin="0,14,0,6"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <PasswordBox x:Name="AssistantKey" Grid.Column="0" Style="{StaticResource Input.Password}"
+                                         AutomationProperties.Name="API key"/>
+                            <Button Grid.Column="1" Style="{StaticResource Btn.Primary}" Margin="10,0,0,0"
+                                    Command="{Binding DataContext.SaveAssistantKeyCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding ElementName=AssistantKey}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE72E;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,7,0"/>
+                                    <TextBlock Text="Save key"/>
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                        <TextBlock Text="{Binding DataContext.AssistantStatus, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                   Style="{StaticResource Caption}" Margin="0,6,0,0"/>
+
+                        <Border Style="{StaticResource Divider}"/>
+
+                        <Grid>
+                            <StackPanel>
+                                <TextBlock Text="Redact user names and secrets" Style="{StaticResource Text.Body}"/>
+                                <TextBlock Text="Incident details go to the provider when an answer is generated."
+                                           Style="{StaticResource Caption}"/>
+                            </StackPanel>
+                            <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                          IsChecked="{Binding Redact}" AutomationProperties.Name="Redact user names and secrets"/>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                            <Button Style="{StaticResource Btn.Subtle}"
+                                    Command="{Binding DataContext.TestAssistantCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE768;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,7,0"/>
+                                    <TextBlock Text="Test"/>
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource Btn.Subtle}" Margin="10,0,0,0"
+                                    Command="{Binding DataContext.RemoveAssistantKeyCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,7,0"/>
+                                    <TextBlock Text="Remove key"/>
+                                </StackPanel>
+                            </Button>
+                            <TextBlock Text="{Binding DataContext.AssistantMessage, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                       VerticalAlignment="Center" Margin="14,0,0,0" TextWrapping="Wrap" MaxWidth="420">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource Text.Body}">
+                                        <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DataContext.AssistantMessageIsError, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                                <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
                         </StackPanel>
                     </StackPanel>
                 </Border>

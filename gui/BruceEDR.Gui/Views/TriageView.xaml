@@ -1,0 +1,1156 @@
+<UserControl x:Class="BruceEDR.Gui.Views.TriageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:BruceEDR.Gui.Views"
+             Style="{StaticResource View.Root}">
+    <UserControl.RenderTransform>
+        <TranslateTransform/>
+    </UserControl.RenderTransform>
+    <UserControl.Resources>
+        <v:TriageSpeedConverter x:Key="SpeedSelected"/>
+        <v:TriageTypingConverter x:Key="Typing"/>
+        <v:TriageScoreTrailConverter x:Key="ScoreTrail"/>
+
+        <!-- Each page fades in when the view model switches to it -->
+        <Style x:Key="Page" TargetType="Grid">
+            <Style.Triggers>
+                <Trigger Property="Visibility" Value="Visible">
+                    <Trigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.2"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </Trigger.EnterActions>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="Eyebrow" TargetType="TextBlock" BasedOn="{StaticResource Text.Label}">
+            <Setter Property="FontWeight" Value="Medium"/>
+        </Style>
+
+        <Style x:Key="Mono" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
+            <Setter Property="FontSize" Value="{StaticResource Size.DataSmall}"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Mist}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+        <!-- Severity (threat | watch | info) of the row's data context -->
+        <Style x:Key="Sev.Text" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Info}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Severity}" Value="watch">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Watch}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Severity}" Value="threat">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="Sev.Tile" TargetType="Border">
+            <Setter Property="CornerRadius" Value="9"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Background" Value="{StaticResource Brush.InfoDim}"/>
+            <Setter Property="BorderBrush" Value="#4D4C8DFF"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Severity}" Value="watch">
+                    <Setter Property="Background" Value="{StaticResource Brush.WatchDim}"/>
+                    <Setter Property="BorderBrush" Value="#4DF2B33D"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Severity}" Value="threat">
+                    <Setter Property="Background" Value="{StaticResource Brush.ThreatDim}"/>
+                    <Setter Property="BorderBrush" Value="#4DF2555A"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="Sev.Bar" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource Brush.Info}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Severity}" Value="watch">
+                    <Setter Property="Background" Value="{StaticResource Brush.Watch}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Severity}" Value="threat">
+                    <Setter Property="Background" Value="{StaticResource Brush.Threat}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsRevealed}" Value="False">
+                    <Setter Property="Background" Value="{StaticResource Brush.Line}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="Sev.Spark" TargetType="v:Sparkline">
+            <Setter Property="Stroke" Value="{StaticResource Brush.Watch}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Severity}" Value="threat">
+                    <Setter Property="Stroke" Value="{StaticResource Brush.Threat}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- REPLAY (violet) or LIVE (green) -->
+        <Style x:Key="Source.Pill" TargetType="Border" BasedOn="{StaticResource Pill}">
+            <Setter Property="Background" Value="{StaticResource Brush.SafeDim}"/>
+            <Setter Property="BorderBrush" Value="#4D34D399"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsReplay}" Value="True">
+                    <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="Source.Text" TargetType="TextBlock" BasedOn="{StaticResource Pill.Text}">
+            <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsReplay}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.AccentHover}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="State.Pill" TargetType="Border" BasedOn="{StaticResource Pill}">
+            <Setter Property="Background" Value="{StaticResource Brush.WatchDim}"/>
+            <Setter Property="BorderBrush" Value="#4DF2B33D"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Severity}" Value="threat">
+                    <Setter Property="Background" Value="{StaticResource Brush.ThreatDim}"/>
+                    <Setter Property="BorderBrush" Value="#4DF2555A"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="State.Text" TargetType="TextBlock" BasedOn="{StaticResource Pill.Text}">
+            <Setter Property="Foreground" Value="{StaticResource Brush.Watch}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Severity}" Value="threat">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Reader picker: a row of glyphs, the chosen one opens to show its label -->
+        <Style x:Key="Reader.Item" TargetType="ListBoxItem">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Ring}"/>
+            <Setter Property="AutomationProperties.Name" Value="{Binding Label}"/>
+            <Setter Property="ToolTip" Value="{Binding Label}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="bd" Height="26" MinWidth="30" Padding="8,0" CornerRadius="5"
+                                Background="Transparent" BorderBrush="Transparent" BorderThickness="1">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <TextBlock x:Name="glyph" Text="{Binding Glyph}" Style="{StaticResource Icon}" FontSize="13"
+                                           Foreground="{StaticResource Brush.Faint}"/>
+                                <TextBlock x:Name="label" Text="{Binding Label}" Visibility="Collapsed" Margin="7,0,1,0"
+                                           FontFamily="{StaticResource Font.Ui}" FontSize="12" FontWeight="Medium"
+                                           Foreground="{StaticResource Brush.Paper}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource Brush.PanelHover}"/>
+                                <Setter TargetName="glyph" Property="Foreground" Value="{StaticResource Brush.Mist}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                                <Setter TargetName="glyph" Property="Foreground" Value="{StaticResource Brush.AccentHover}"/>
+                                <Setter TargetName="label" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Reader.List" TargetType="ListBox">
+            <Setter Property="ItemContainerStyle" Value="{StaticResource Reader.Item}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="AutomationProperties.Name" Value="Reader"/>
+            <Setter Property="KeyboardNavigation.DirectionalNavigation" Value="Cycle"/>
+            <Setter Property="ItemsPanel">
+                <Setter.Value>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBox">
+                        <Border Background="{StaticResource Brush.InkRaised}" BorderBrush="{StaticResource Brush.Line}"
+                                BorderThickness="1" CornerRadius="7" Padding="2">
+                            <ItemsPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Detection row in the library -->
+        <Style x:Key="Incident.Item" TargetType="ListBoxItem">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Ring}"/>
+            <Setter Property="AutomationProperties.Name" Value="{Binding Title}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="bd" Margin="0,0,0,4" Padding="10,10,10,10" CornerRadius="8"
+                                Background="Transparent" BorderBrush="Transparent" BorderThickness="1">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource Brush.InkRaised}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource Brush.PanelHover}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Full-width row button: a log in the library, an explained step in the scene -->
+        <Style x:Key="Row.Btn" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Ring}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource Brush.PanelHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.8"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Narr.Row" TargetType="Button" BasedOn="{StaticResource Row.Btn}">
+            <Setter Property="Padding" Value="8,7"/>
+            <Setter Property="Opacity" Value="0.5"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsRevealed}" Value="True">
+                    <Setter Property="Opacity" Value="1"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                    <Setter Property="Background" Value="{StaticResource Brush.PanelHover}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="Narr.Text" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource Font.Ui}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="LineHeight" Value="17.5"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Mist}"/>
+        </Style>
+
+        <Style x:Key="Narr.StepText" TargetType="TextBlock" BasedOn="{StaticResource Narr.Text}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- One step of the scrubber under the map -->
+        <Style x:Key="Seg" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="Transparent" Height="20">
+                            <Border x:Name="bar" Height="4" CornerRadius="2" Margin="1.5,0" VerticalAlignment="Center"
+                                    Style="{StaticResource Sev.Bar}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bar" Property="Height" Value="8"/>
+                                <Setter TargetName="bar" Property="CornerRadius" Value="3"/>
+                            </Trigger>
+                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                <Setter TargetName="bar" Property="Height" Value="8"/>
+                                <Setter TargetName="bar" Property="CornerRadius" Value="3"/>
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Speed.Chip" TargetType="Button" BasedOn="{StaticResource Chip}">
+            <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
+            <Setter Property="FontSize" Value="10.5"/>
+            <Setter Property="Padding" Value="7,4"/>
+            <Setter Property="Margin" Value="4,0,0,0"/>
+            <Setter Property="Command" Value="{Binding SetSpeedCommand}"/>
+            <Setter Property="CommandParameter" Value="{Binding Tag, RelativeSource={RelativeSource Self}}"/>
+            <Style.Triggers>
+                <DataTrigger Value="True">
+                    <DataTrigger.Binding>
+                        <MultiBinding Converter="{StaticResource SpeedSelected}">
+                            <Binding Path="Speed"/>
+                            <Binding Path="Tag" RelativeSource="{RelativeSource Self}"/>
+                        </MultiBinding>
+                    </DataTrigger.Binding>
+                    <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="Play.Btn" TargetType="Button" BasedOn="{StaticResource Btn.Primary}">
+            <Setter Property="FontFamily" Value="{StaticResource Font.Icon}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Width" Value="40"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Content" Value="&#xE768;"/>
+            <Setter Property="AutomationProperties.Name" Value="Play"/>
+            <Setter Property="ToolTip" Value="Play"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                    <Setter Property="Content" Value="&#xE769;"/>
+                    <Setter Property="AutomationProperties.Name" Value="Pause"/>
+                    <Setter Property="ToolTip" Value="Pause"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="Caret" TargetType="Border">
+            <Setter Property="Width" Value="2"/>
+            <Setter Property="Height" Value="13"/>
+            <Setter Property="Margin" Value="2,0,0,0"/>
+            <Setter Property="CornerRadius" Value="1"/>
+            <Setter Property="Background" Value="{StaticResource Brush.Accent}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding NarrationState}" Value="streaming">
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard Name="caretBlink">
+                            <Storyboard RepeatBehavior="Forever" AutoReverse="True" Timeline.DesiredFrameRate="20">
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.15" Duration="0:0:0.45"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <StopStoryboard BeginStoryboardName="caretBlink"/>
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Dot beside the explained count: breathes while the model writes -->
+        <Style x:Key="Busy.Dot" TargetType="Ellipse">
+            <Setter Property="Width" Value="6"/>
+            <Setter Property="Height" Value="6"/>
+            <Setter Property="Margin" Value="0,0,7,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Fill" Value="{StaticResource Brush.Accent}"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsGenerating}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard Name="busyPulse">
+                            <Storyboard RepeatBehavior="Forever" AutoReverse="True" Timeline.DesiredFrameRate="20">
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.25" Duration="0:0:0.6"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <StopStoryboard BeginStoryboardName="busyPulse"/>
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Skeleton lines with a light sweeping across them while the answer is awaited -->
+        <Style x:Key="Skeleton" TargetType="StackPanel">
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding NarrationState}" Value="waiting">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard Name="shimmer">
+                            <Storyboard RepeatBehavior="Forever" Timeline.DesiredFrameRate="30">
+                                <DoubleAnimation Storyboard.TargetProperty="(UIElement.OpacityMask).(Brush.RelativeTransform).(TranslateTransform.X)"
+                                                 From="-1" To="1" Duration="0:0:1.5"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <StopStoryboard BeginStoryboardName="shimmer"/>
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="Skeleton.Line" TargetType="Border">
+            <Setter Property="Height" Value="9"/>
+            <Setter Property="CornerRadius" Value="4.5"/>
+            <Setter Property="Margin" Value="0,0,0,9"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="Background" Value="#2B3347"/>
+        </Style>
+
+        <!-- Message block for the nokey, error and refused states -->
+        <Style x:Key="Notice" TargetType="Border">
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="12,11"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="22,20,22,16">
+
+        <!-- ============================ Library ============================ -->
+        <Grid Style="{StaticResource Page}" Visibility="{Binding IsLibraryOpen, Converter={StaticResource BoolToVis}}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Margin="0,0,0,14">
+                <TextBlock Text="Incident triage" Style="{StaticResource Text.Display}" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <TextBlock Text="READER" Style="{StaticResource Eyebrow}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <ListBox Style="{StaticResource Reader.List}" ItemsSource="{Binding PersonaOptions}"
+                             SelectedItem="{Binding SelectedPersona, Mode=TwoWay}"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- No detections yet -->
+            <Border Grid.Row="1">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource Card}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasIncidents}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <Border Style="{StaticResource IconWell}" Width="44" Height="44" HorizontalAlignment="Center">
+                        <TextBlock Text="&#xE945;" Style="{StaticResource Icon}" FontSize="17"
+                                   HorizontalAlignment="Center" Foreground="{StaticResource Brush.Faint}"/>
+                    </Border>
+                    <TextBlock Text="No detections yet" Style="{StaticResource Text.Title}" Margin="0,14,0,0"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="Flagged processes are recorded here" Style="{StaticResource Text.Body}" Margin="0,5,0,0"
+                               Foreground="{StaticResource Brush.Faint}" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+
+            <Grid Grid.Row="1"
+                  Visibility="{Binding HasIncidents, Converter={StaticResource BoolToVis}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="0.5*" MinWidth="270" MaxWidth="330"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Detections -->
+                <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0" Margin="0,0,7,0">
+                    <DockPanel>
+                        <Grid DockPanel.Dock="Top" Margin="16,12,10,10">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="DETECTIONS" Style="{StaticResource Eyebrow}" VerticalAlignment="Center"/>
+                                <Border Style="{StaticResource Pill}" Margin="8,0,0,0" Padding="6,1">
+                                    <TextBlock Text="{Binding Incidents.Count}" Style="{StaticResource Pill.Text}"/>
+                                </Border>
+                            </StackPanel>
+                            <Button Style="{StaticResource Btn.Fold}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Command="{Binding ClearHistoryCommand}" AutomationProperties.Name="Clear history">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,6,0"/>
+                                    <TextBlock Text="Clear history" FontSize="11.5"/>
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                        <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource Brush.LineSoft}"/>
+                        <ListBox ItemsSource="{Binding Incidents}" SelectedItem="{Binding SelectedIncident, Mode=TwoWay}"
+                                 ItemContainerStyle="{StaticResource Incident.Item}"
+                                 Background="Transparent" BorderThickness="0" Padding="6,8,6,4"
+                                 HorizontalContentAlignment="Stretch"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 AutomationProperties.Name="Detections">
+                            <ListBox.Template>
+                                <ControlTemplate TargetType="ListBox">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                                  Focusable="False" Padding="{TemplateBinding Padding}">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </ControlTemplate>
+                            </ListBox.Template>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Style="{StaticResource Sev.Tile}" Width="42" Height="42"
+                                                VerticalAlignment="Top" ToolTip="{Binding State}">
+                                            <TextBlock Text="{Binding Score}" Style="{StaticResource Sev.Text}" FontSize="14"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <Grid Grid.Column="1" Margin="11,0,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Title}" Style="{StaticResource Text.Title}"
+                                                       FontSize="13" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                            <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource Source.Pill}" Padding="6,1"
+                                                    ToolTip="{Binding Source}">
+                                                <TextBlock Text="{Binding SourceLabel}" Style="{StaticResource Source.Text}" FontSize="9"/>
+                                            </Border>
+                                            <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Mono}" FontSize="10.5"
+                                                       Margin="0,3,0,0" Foreground="{StaticResource Brush.Faint}"
+                                                       TextTrimming="CharacterEllipsis" HorizontalAlignment="Left">
+                                                <Run Text="pid"/> <Run Text="{Binding Pid, Mode=OneWay}"/><Run Text="  ·  "/><Run Text="{Binding TimeLabel, Mode=OneWay}"/>
+                                            </TextBlock>
+                                            <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Margin="0,6,0,0">
+                                                <TextBlock Text="STEPS" Style="{StaticResource Metric.Label}" FontSize="9.5"/>
+                                                <TextBlock Text="{Binding StepCount}" Style="{StaticResource Metric.Value}" FontSize="10.5"/>
+                                                <TextBlock Text="ATT&amp;CK" Style="{StaticResource Metric.Label}" FontSize="9.5" Margin="11,0,0,0"/>
+                                                <TextBlock Text="{Binding TechniqueCount}" Style="{StaticResource Metric.Value}" FontSize="10.5"/>
+                                            </StackPanel>
+                                            <ItemsControl Grid.Row="2" Grid.Column="1" ItemsSource="{Binding Answered}" Margin="0,6,0,0"
+                                                          HorizontalAlignment="Right" VerticalAlignment="Center" Focusable="False">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <StackPanel Orientation="Horizontal"/>
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding Glyph}" Style="{StaticResource Icon}" FontSize="11.5"
+                                                                   Margin="5,0,0,0" Foreground="{StaticResource Brush.AccentHover}"
+                                                                   ToolTip="{Binding Label}"/>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </Grid>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+                </Border>
+
+                <!-- Selected detection and its logs -->
+                <Border Grid.Column="1" Style="{StaticResource Card}" Padding="0" Margin="7,0,0,0">
+                    <Grid>
+                        <TextBlock Text="Select a detection" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource Text.Body}">
+                                    <Setter Property="Foreground" Value="{StaticResource Brush.Faint}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasSelection}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <DockPanel Margin="0,8"
+                                   Visibility="{Binding HasSelection, Converter={StaticResource BoolToVis}}">
+                            <Grid DockPanel.Dock="Top" Margin="17,8,15,0" DataContext="{Binding SelectedIncident}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Style="{StaticResource Sev.Tile}" Width="54" Height="54" CornerRadius="11"
+                                        VerticalAlignment="Top">
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Score}" Style="{StaticResource Sev.Text}" FontSize="18"
+                                                   HorizontalAlignment="Center"/>
+                                        <TextBlock Text="SCORE" FontFamily="{StaticResource Font.Data}" FontSize="8"
+                                                   Foreground="{StaticResource Brush.Faint}" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                                <StackPanel Grid.Column="1" Margin="14,0,12,0" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Title}" Style="{StaticResource Text.Display}" FontSize="19"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0">
+                                        <Border Style="{StaticResource State.Pill}" Margin="0,0,6,0">
+                                            <TextBlock Text="{Binding State}" Style="{StaticResource State.Text}"/>
+                                        </Border>
+                                        <Border Style="{StaticResource Source.Pill}">
+                                            <TextBlock Text="{Binding SourceLabel}" Style="{StaticResource Source.Text}"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Style="{StaticResource Mono}" Margin="0,7,0,0" LineHeight="15" TextWrapping="Wrap"
+                                               Foreground="{StaticResource Brush.Faint}">
+                                        <Run Text="pid"/> <Run Text="{Binding Pid, Mode=OneWay}"/><Run Text="  ·  "/><Run Text="{Binding TimeLabel, Mode=OneWay}"/><Run Text="  ·  "/><Run Text="{Binding Source, Mode=OneWay}"/>
+                                    </TextBlock>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top">
+                                    <Button Style="{StaticResource Btn.Primary}" Height="30" Padding="13,0"
+                                            Command="{Binding DataContext.PlaySceneCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE768;" Style="{StaticResource Icon}" FontSize="10.5" Margin="0,0,7,0"/>
+                                            <TextBlock Text="Play scene" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource Btn.Icon}" Content="&#xE74D;" Margin="8,0,0,0"
+                                            Command="{Binding DataContext.DeleteIncidentCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}"
+                                            ToolTip="Delete this detection and its saved answers"
+                                            AutomationProperties.Name="Delete detection"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Stages and the score as it climbed -->
+                            <Grid DockPanel.Dock="Top" Margin="17,12,15,12" DataContext="{Binding SelectedIncident}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ItemsControl Grid.Column="0" ItemsSource="{Binding Stages}" Focusable="False" VerticalAlignment="Center">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Style="{StaticResource TechChip}" Margin="0,3,6,3" Padding="8,3">
+                                                <TextBlock Text="{Binding}" FontSize="10.5" Foreground="{StaticResource Brush.Mist}"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                                    <v:Sparkline Width="110" Height="30" Style="{StaticResource Sev.Spark}"
+                                                 Values="{Binding Case, Converter={StaticResource ScoreTrail}}"
+                                                 ToolTip="Score after each step"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource Brush.LineSoft}"/>
+                            <Grid DockPanel.Dock="Top" Margin="27,9,29,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="34"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="52"/>
+                                    <ColumnDefinition Width="50"/>
+                                    <ColumnDefinition Width="20"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="LOG" Style="{StaticResource Eyebrow}"/>
+                                <TextBlock Grid.Column="1" Text="EVENT" Style="{StaticResource Eyebrow}"/>
+                                <TextBlock Grid.Column="2" Text="POINTS" Style="{StaticResource Eyebrow}" HorizontalAlignment="Right"/>
+                                <TextBlock Grid.Column="3" Text="SCORE" Style="{StaticResource Eyebrow}" HorizontalAlignment="Right"/>
+                            </Grid>
+                            <Border DockPanel.Dock="Top" Height="1" Background="{StaticResource Brush.LineSoft}"/>
+
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="7,5,7,0">
+                                <ItemsControl ItemsSource="{Binding Logs}" Focusable="False" AutomationProperties.Name="Logs">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button x:Name="row" Style="{StaticResource Row.Btn}"
+                                                    Command="{Binding DataContext.OpenLogCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat='Play scene from log {0}'}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="34"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="52"/>
+                                                        <ColumnDefinition Width="50"/>
+                                                        <ColumnDefinition Width="20"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0" Style="{StaticResource Sev.Tile}" Width="24" Height="24" CornerRadius="12"
+                                                            HorizontalAlignment="Left" VerticalAlignment="Top">
+                                                        <TextBlock Text="{Binding Number}" Style="{StaticResource Sev.Text}" FontSize="10.5"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Margin="0,0,10,0">
+                                                        <TextBlock Text="{Binding Title}" Style="{StaticResource Text.Body}" FontSize="12.5"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"/>
+                                                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                            <TextBlock Text="{Binding Time}" Style="{StaticResource Mono}" FontSize="10.5"
+                                                                       Foreground="{StaticResource Brush.Faint}"/>
+                                                            <TextBlock Text="{Binding Stage}" FontSize="10.5" Margin="10,0,0,0" VerticalAlignment="Center"
+                                                                       Foreground="{StaticResource Brush.Mist}"/>
+                                                            <ItemsControl ItemsSource="{Binding Techniques}" Margin="6,0,0,0" Focusable="False">
+                                                                <ItemsControl.ItemsPanel>
+                                                                    <ItemsPanelTemplate>
+                                                                        <StackPanel Orientation="Horizontal"/>
+                                                                    </ItemsPanelTemplate>
+                                                                </ItemsControl.ItemsPanel>
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate>
+                                                                        <TextBlock Text="{Binding}" Style="{StaticResource Mono}" FontSize="10"
+                                                                                   Margin="6,0,0,0" Foreground="{StaticResource Brush.Faint}"/>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="2" Text="{Binding Points}" Style="{StaticResource Sev.Text}" FontSize="12"
+                                                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="3" Text="{Binding ScoreAfter}" Style="{StaticResource Mono}" FontSize="12"
+                                                               HorizontalAlignment="Right"/>
+                                                    <TextBlock x:Name="go" Grid.Column="4" Text="&#xE768;" Style="{StaticResource Icon}" FontSize="10"
+                                                               HorizontalAlignment="Right" Foreground="{StaticResource Brush.Accent}" Opacity="0"/>
+                                                </Grid>
+                                            </Button>
+                                            <DataTemplate.Triggers>
+                                                <Trigger SourceName="row" Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="go" Property="Opacity" Value="1"/>
+                                                </Trigger>
+                                                <Trigger SourceName="row" Property="IsKeyboardFocused" Value="True">
+                                                    <Setter TargetName="go" Property="Opacity" Value="1"/>
+                                                </Trigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- ============================ Scene ============================ -->
+        <Grid Style="{StaticResource Page}" Visibility="{Binding IsSceneOpen, Converter={StaticResource BoolToVis}}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <DockPanel Grid.Row="0" Margin="0,0,0,12" LastChildFill="True">
+                <Button DockPanel.Dock="Left" Style="{StaticResource Btn.Subtle}" Height="30" Padding="10,0,12,0" Margin="0,0,14,0"
+                        Command="{Binding BackCommand}" AutomationProperties.Name="Back to detections">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE72B;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,7,0"/>
+                        <TextBlock Text="Back" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <ListBox DockPanel.Dock="Right" Style="{StaticResource Reader.List}" ItemsSource="{Binding PersonaOptions}"
+                         SelectedItem="{Binding SelectedPersona, Mode=TwoWay}"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,12,0"
+                            ToolTip="Time spent on this answer">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ElapsedText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StackPanel.Style>
+                    <TextBlock Text="&#xE916;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,5,0"
+                               Foreground="{StaticResource Brush.Faint}"/>
+                    <TextBlock Text="{Binding ElapsedText}" Style="{StaticResource Mono}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" DataContext="{Binding SceneIncident}">
+                    <TextBlock Text="{Binding Title}" Style="{StaticResource Text.Display}" FontSize="19" MaxWidth="250"
+                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                    <Border Style="{StaticResource Source.Pill}" Margin="11,1,0,0" ToolTip="{Binding Source}">
+                        <TextBlock Text="{Binding SourceLabel}" Style="{StaticResource Source.Text}"/>
+                    </Border>
+                    <Border Style="{StaticResource State.Pill}" Margin="6,1,0,0">
+                        <TextBlock Text="{Binding State}" Style="{StaticResource State.Text}"/>
+                    </Border>
+                </StackPanel>
+            </DockPanel>
+
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.85*"/>
+                    <ColumnDefinition Width="*" MinWidth="268"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Mind map, caption and transport -->
+                <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0" Margin="0,0,7,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <v:MindMapCanvas x:Name="Map" Grid.Row="0" Margin="6,6,6,0"
+                                         Steps="{Binding SceneSteps}"
+                                         Title="{Binding SceneIncident.Title, FallbackValue=''}"
+                                         Pid="{Binding SceneIncident.Pid, FallbackValue=0}"
+                                         ContainAt="{Binding SceneIncident.Case.ContainAt, FallbackValue=70}"
+                                         IsPlaying="{Binding IsPlaying}"
+                                         IsThinking="{Binding IsGenerating}"
+                                         JumpCommand="{Binding JumpToStepCommand}"
+                                         FocusVisualStyle="{x:Null}"
+                                         AutomationProperties.Name="Attack mind map"
+                                         AutomationProperties.HelpText="Arrow keys move between steps"/>
+
+                        <!-- Caption for the step on stage -->
+                        <Border Grid.Row="1" Margin="14,4,14,0" Padding="12,11" CornerRadius="9"
+                                Background="{StaticResource Brush.InkRaised}" BorderBrush="{StaticResource Brush.LineSoft}"
+                                BorderThickness="1">
+                            <Grid DataContext="{Binding Current}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Style="{StaticResource Sev.Tile}" Width="38" Height="38" CornerRadius="19"
+                                        VerticalAlignment="Top" Margin="0,1,13,0">
+                                    <TextBlock Text="{Binding Number}" Style="{StaticResource Sev.Text}" FontSize="15"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1">
+                                    <WrapPanel>
+                                        <TextBlock Style="{StaticResource Eyebrow}" VerticalAlignment="Center" Margin="0,0,12,0">
+                                            <Run Text="STEP"/> <Run Text="{Binding Number, Mode=OneWay}"/> <Run Text="OF"/> <Run Text="{Binding DataContext.SceneSteps.Count, Mode=OneWay, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Time}" Style="{StaticResource Mono}" FontSize="10.5" Margin="0,0,12,0"
+                                                   Foreground="{StaticResource Brush.Faint}"/>
+                                        <TextBlock Text="{Binding Stage}" FontSize="10.5" FontWeight="Medium" Margin="0,0,12,0"
+                                                   VerticalAlignment="Center" Foreground="{StaticResource Brush.Mist}"/>
+                                        <TextBlock Text="{Binding Points}" Style="{StaticResource Sev.Text}" FontSize="10.5" Margin="0,0,12,0"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Style="{StaticResource Mono}" FontSize="10.5" Foreground="{StaticResource Brush.Faint}">
+                                            <Run Text="score"/> <Run Text="{Binding ScoreAfter, Mode=OneWay}"/>
+                                        </TextBlock>
+                                    </WrapPanel>
+                                    <TextBlock Text="{Binding Caption}" Style="{StaticResource Text.Body}" FontSize="13" LineHeight="18.5"
+                                               Height="37" Margin="0,5,0,0" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding Caption}"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Scrubber and transport -->
+                        <StackPanel Grid.Row="2" Margin="14,6,14,12">
+                            <ItemsControl ItemsSource="{Binding SceneSteps}" Margin="-1.5,0" Focusable="False"
+                                          AutomationProperties.Name="Scene progress">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <UniformGrid Rows="1"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource Seg}"
+                                                Command="{Binding DataContext.JumpToStepCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" ToolTip="{Binding Title}"
+                                                AutomationProperties.Name="{Binding Number, StringFormat='Step {0}'}"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Grid Margin="0,4,0,0">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                    <Button Style="{StaticResource Btn.Icon}" Content="&#xE892;" Command="{Binding PrevStepCommand}"
+                                            ToolTip="Previous step" AutomationProperties.Name="Previous step"/>
+                                    <Button Style="{StaticResource Play.Btn}" Margin="6,0" Command="{Binding PlayPauseCommand}"/>
+                                    <Button Style="{StaticResource Btn.Icon}" Content="&#xE893;" Command="{Binding NextStepCommand}"
+                                            ToolTip="Next step" AutomationProperties.Name="Next step"/>
+                                    <Button Style="{StaticResource Btn.Icon}" Content="&#xE72C;" Margin="6,0,0,0" Command="{Binding RestartCommand}"
+                                            ToolTip="Restart from step 1" AutomationProperties.Name="Restart scene"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <TextBlock Text="SPEED" Style="{StaticResource Eyebrow}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <Button Style="{StaticResource Speed.Chip}" Tag="0.5" Content="0.5x" AutomationProperties.Name="Half speed"/>
+                                    <Button Style="{StaticResource Speed.Chip}" Tag="1" Content="1x" AutomationProperties.Name="Normal speed"/>
+                                    <Button Style="{StaticResource Speed.Chip}" Tag="2" Content="2x" AutomationProperties.Name="Double speed"/>
+                                    <Button Style="{StaticResource Speed.Chip}" Tag="4" Content="4x" AutomationProperties.Name="Four times speed"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Narration -->
+                <Border Grid.Column="1" Style="{StaticResource Card}" Padding="0" Margin="7,0,0,0">
+                    <DockPanel>
+                        <Grid DockPanel.Dock="Top" Margin="15,12,15,10">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Border Style="{StaticResource IconWell}" Width="26" Height="26" CornerRadius="7" VerticalAlignment="Center"
+                                        Background="{StaticResource Brush.AccentDim}" BorderBrush="{StaticResource Brush.AccentLine}">
+                                    <TextBlock Text="{Binding SelectedPersona.Glyph}" Style="{StaticResource Icon}" FontSize="12"
+                                               HorizontalAlignment="Center" Foreground="{StaticResource Brush.AccentHover}"/>
+                                </Border>
+                                <TextBlock Text="{Binding SelectedPersona.Label}" Style="{StaticResource Text.Title}" Margin="9,0,0,0"
+                                           VerticalAlignment="Center" MaxWidth="120" TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding SelectedPersona.Label}"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Ellipse Style="{StaticResource Busy.Dot}"/>
+                                <TextBlock Style="{StaticResource Mono}" FontSize="10.5">
+                                    <Run Text="{Binding ExplainedCount, Mode=OneWay}"/> <Run Text="of"/> <Run Text="{Binding SceneSteps.Count, Mode=OneWay}"/> <Run Text="explained"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Grid>
+                        <ProgressBar DockPanel.Dock="Top" Style="{StaticResource Meter}" Height="2" Background="{StaticResource Brush.LineSoft}"
+                                     Maximum="{Binding SceneSteps.Count, Mode=OneWay}" Value="{Binding ExplainedCount, Mode=OneWay}"
+                                     AutomationProperties.Name="Steps explained"/>
+
+                        <!-- Source line, regenerate and copy -->
+                        <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource Brush.LineSoft}" BorderThickness="0,1,0,0"
+                                Padding="15,9,11,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <DockPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock DockPanel.Dock="Left" Text="&#xE74E;" Style="{StaticResource Icon}" FontSize="10.5"
+                                               Margin="0,1,6,0" VerticalAlignment="Top" Foreground="{StaticResource Brush.Faint}"
+                                               Visibility="{Binding IsCached, Converter={StaticResource BoolToVis}}"/>
+                                    <TextBlock Text="{Binding AnswerSource}" Style="{StaticResource Mono}" FontSize="9.5" LineHeight="13"
+                                               Foreground="{StaticResource Brush.Faint}" TextWrapping="Wrap"/>
+                                </DockPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
+                                    <Button Style="{StaticResource Btn.Icon}" Width="28" Height="28" Content="&#xE72C;"
+                                            Command="{Binding RefreshCommand}" ToolTip="Regenerate this answer"
+                                            AutomationProperties.Name="Refresh answer"/>
+                                    <Button Style="{StaticResource Btn.Icon}" Width="28" Height="28" Content="&#xE8C8;" Margin="6,0,0,0"
+                                            Command="{Binding CopyAnswerCommand}" ToolTip="Copy this answer"
+                                            AutomationProperties.Name="Copy answer"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Headline -->
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding Headline}" FontFamily="{StaticResource Font.Ui}" FontSize="15"
+                                   FontWeight="SemiBold" LineHeight="21" TextWrapping="Wrap" Margin="15,13,15,2">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Headline}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <ScrollViewer x:Name="NarrationScroll" VerticalScrollBarVisibility="Auto" Padding="15,11,11,6">
+                            <StackPanel>
+                                <!-- No key stored -->
+                                <Border Background="{StaticResource Brush.InkRaised}" BorderBrush="{StaticResource Brush.Line}">
+                                    <Border.Style>
+                                        <Style TargetType="Border" BasedOn="{StaticResource Notice}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding NarrationState}" Value="nokey">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel Margin="0,10">
+                                        <Border Style="{StaticResource IconWell}" Width="38" Height="38" HorizontalAlignment="Center">
+                                            <TextBlock Text="&#xE8D7;" Style="{StaticResource Icon}" FontSize="15"
+                                                       HorizontalAlignment="Center" Foreground="{StaticResource Brush.Faint}"/>
+                                        </Border>
+                                        <TextBlock Text="No API key saved" Style="{StaticResource Text.Title}" Margin="0,12,0,0"
+                                                   HorizontalAlignment="Center"/>
+                                        <TextBlock Text="Settings, Assistant" Style="{StaticResource Text.Body}" Margin="0,4,0,0"
+                                                   Foreground="{StaticResource Brush.Faint}" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Failed -->
+                                <Border Background="{StaticResource Brush.ThreatDim}" BorderBrush="#4DF2555A">
+                                    <Border.Style>
+                                        <Style TargetType="Border" BasedOn="{StaticResource Notice}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding NarrationState}" Value="error">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE783;" Style="{StaticResource Icon}" FontSize="13" Margin="0,0,8,0"
+                                                       Foreground="{StaticResource Brush.Threat}"/>
+                                            <TextBlock Text="No answer" Style="{StaticResource Text.Title}" Foreground="{StaticResource Brush.Threat}"/>
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding NarrationError}" Style="{StaticResource Narr.Text}" Margin="0,7,0,0"
+                                                   Foreground="{StaticResource Brush.Paper}"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Declined by the model -->
+                                <Border Background="{StaticResource Brush.WatchDim}" BorderBrush="#4DF2B33D">
+                                    <Border.Style>
+                                        <Style TargetType="Border" BasedOn="{StaticResource Notice}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding NarrationState}" Value="refused">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE7BA;" Style="{StaticResource Icon}" FontSize="13" Margin="0,0,8,0"
+                                                       Foreground="{StaticResource Brush.Watch}"/>
+                                            <TextBlock Text="The model declined" Style="{StaticResource Text.Title}"
+                                                       Foreground="{StaticResource Brush.Watch}"/>
+                                        </StackPanel>
+                                        <TextBlock Text="Refresh to ask again, or pick another reader" Style="{StaticResource Narr.Text}"
+                                                   Margin="0,7,0,0" Foreground="{StaticResource Brush.Paper}"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Waiting for the first words -->
+                                <StackPanel Style="{StaticResource Skeleton}" Margin="0,3,0,0">
+                                    <StackPanel.OpacityMask>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                            <LinearGradientBrush.RelativeTransform>
+                                                <TranslateTransform X="-1"/>
+                                            </LinearGradientBrush.RelativeTransform>
+                                            <GradientStop Color="#55000000" Offset="0"/>
+                                            <GradientStop Color="#FF000000" Offset="0.5"/>
+                                            <GradientStop Color="#55000000" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </StackPanel.OpacityMask>
+                                    <Border Style="{StaticResource Skeleton.Line}" Height="12" Width="230" Margin="0,0,0,8"/>
+                                    <Border Style="{StaticResource Skeleton.Line}" Height="12" Width="150" Margin="0,0,0,20"/>
+                                    <Border Style="{StaticResource Skeleton.Line}" Width="250"/>
+                                    <Border Style="{StaticResource Skeleton.Line}" Width="205" Margin="0,0,0,18"/>
+                                    <Border Style="{StaticResource Skeleton.Line}" Width="240"/>
+                                    <Border Style="{StaticResource Skeleton.Line}" Width="170" Margin="0,0,0,18"/>
+                                    <Border Style="{StaticResource Skeleton.Line}" Width="225"/>
+                                    <Border Style="{StaticResource Skeleton.Line}" Width="120"/>
+                                </StackPanel>
+
+                                <!-- Steps as they are explained -->
+                                <ItemsControl x:Name="StepList" ItemsSource="{Binding SceneSteps}" Margin="-8,0,-4,0" Focusable="False"
+                                              AutomationProperties.Name="Explained steps">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Style="{StaticResource Narr.Row}"
+                                                    Visibility="{Binding IsExplained, Converter={StaticResource BoolToVis}}"
+                                                    Command="{Binding DataContext.JumpToStepCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}"
+                                                    AutomationProperties.Name="{Binding Number, StringFormat='Go to step {0}'}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0" Style="{StaticResource Sev.Tile}" Width="20" Height="20" CornerRadius="10"
+                                                            VerticalAlignment="Top" Margin="0,0,9,0">
+                                                        <TextBlock Text="{Binding Number}" Style="{StaticResource Sev.Text}" FontSize="9.5"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <TextBlock Grid.Column="1" Text="{Binding Explanation}" Style="{StaticResource Narr.StepText}"
+                                                               Margin="0,1,0,0"/>
+                                                </Grid>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- Impact -->
+                                <StackPanel Margin="0,12,0,0">
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Impact}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+                                    <TextBlock Text="IMPACT" Style="{StaticResource Eyebrow}"/>
+                                    <Border Margin="0,6,0,0" Padding="11,0,0,0" BorderBrush="{StaticResource Brush.Watch}" BorderThickness="2,0,0,0">
+                                        <TextBlock Text="{Binding Impact}" Style="{StaticResource Narr.Text}" Foreground="{StaticResource Brush.Paper}"/>
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- Next steps -->
+                                <StackPanel Margin="0,14,0,0">
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding NextSteps.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+                                    <TextBlock Text="NEXT STEPS" Style="{StaticResource Eyebrow}"/>
+                                    <ItemsControl ItemsSource="{Binding NextSteps}" Margin="0,3,0,0" Focusable="False">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,5,0,0">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="&#xE76C;" Style="{StaticResource Icon}" FontSize="9"
+                                                               VerticalAlignment="Top" Margin="0,4,8,0" Foreground="{StaticResource Brush.Safe}"/>
+                                                    <TextBlock Grid.Column="1" Text="{Binding}" Style="{StaticResource Narr.Text}"
+                                                               Foreground="{StaticResource Brush.Paper}"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+
+                                <!-- The line being written -->
+                                <StackPanel Margin="0,12,0,0">
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding NarrationState}" Value="streaming">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+                                    <TextBlock Text="{Binding TypingLine, Converter={StaticResource Typing}, ConverterParameter=label}"
+                                               Style="{StaticResource Eyebrow}" Foreground="{StaticResource Brush.Accent}" Margin="0,0,0,4"/>
+                                    <TextBlock Style="{StaticResource Narr.Text}" Foreground="{StaticResource Brush.Paper}">
+                                        <Run Text="{Binding TypingLine, Mode=OneWay, Converter={StaticResource Typing}}"/><InlineUIContainer BaselineAlignment="Center"><Border Style="{StaticResource Caret}"/></InlineUIContainer>
+                                    </TextBlock>
+                                </StackPanel>
+                                <Border Height="8"/>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>

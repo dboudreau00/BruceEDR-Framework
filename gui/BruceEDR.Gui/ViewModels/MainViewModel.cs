@@ -11,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using BruceEDR.Analysis;
 using BruceEDR.Api;
+using BruceEDR.Assistant;
 using BruceEDR.Configuration;
 using BruceEDR.Core;
 using BruceEDR.Detection;
@@ -63,6 +64,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public SetupViewModel Setup { get; }
     /// <summary>Editor for the operator watchlist; writes the same config the engine reloads.</summary>
     public WatchlistViewModel WatchlistEditor { get; }
+    /// <summary>Recorded detections, replayed as a scene and explained by the configured model.</summary>
+    public TriageViewModel Triage { get; }
+    public AssistantSettings Assistant { get; }
 
     /// <summary>Raised for tray balloons: (title, message). Fired on containment and monitor loss.</summary>
     public event Action<string, string>? AlertRaised;
@@ -71,7 +75,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly List<BruceEvent> _pendingWhilePaused = new();
     private const int FeedCap = 250;
 
-    public MainViewModel(string configPath)
+    public MainViewModel(string configPath, UiState? ui = null)
     {
         _dispatcher = Dispatcher.CurrentDispatcher;
         _configPath = configPath;
@@ -79,6 +83,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         WatchlistEditor = new WatchlistViewModel(configPath);
         Setup = new SetupViewModel(configPath);
         Setup.Load();
+        Assistant = new AssistantSettings(ui, CreateKeyStore());
+        Triage = new TriageViewModel(CreateTriageStore(), Assistant);
+        Settings.AttachAssistant(Assistant);
         // Settings and the watchlist edit the config file, so they work before an engine
         // exists. Opening the window builds nothing and monitors nothing.
         try
@@ -133,6 +140,39 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ApplyRuleCoverage(Setup.Rules, 0);
         MergeTechniques(null);
         PublishTimeline(force: true);
+    }
+
+    private static ApiKeyStore CreateKeyStore()
+    {
+        try { return new ApiKeyStore(AppPaths.KeyRoot); }
+        catch (Exception ex)
+        {
+            AppLog.Error("key store", ex);
+            return new ApiKeyStore(Path.Combine(Path.GetTempPath(), "BruceEDR-assistant"));
+        }
+    }
+
+    private static TriageStore CreateTriageStore()
+    {
+        try { return new TriageStore(AppPaths.TriageRoot); }
+        catch (Exception ex)
+        {
+            AppLog.Error("triage store", ex);
+            return new TriageStore(Path.Combine(Path.GetTempPath(), "BruceEDR-triage"));
+        }
+    }
+
+    /// <summary>Every flagged profile becomes (or refreshes) a library entry the analyst can replay later.</summary>
+    private void CaptureIncidents(IReadOnlyList<ProfileSnapshot> snaps)
+    {
+        try
+        {
+            string source = IsReplay ? "Replay · " + ReplayName : "Live";
+            foreach (var s in snaps)
+                if ((s.Contained || s.Score >= WarnAt) && s.ReasonLog.Count > 0)
+                    Triage.Upsert(IncidentCase.From(s, source, IsReplay, _startedUtc, ContainAt, IsMonitorOnly));
+        }
+        catch (Exception ex) { AppLog.Error("capture incidents", ex); }
     }
 
     private readonly ICollectionView _threatsView;
@@ -378,7 +418,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         if (!IsLive) return;
         Setup.Message = "";
         IsSetupOpen = false;
-        SelectedTabIndex = 0;
+        SelectedTabIndex = DashboardTabIndex;
     }
 
     /// <summary>
@@ -490,6 +530,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         MergeTechniques(null);
         Setup.Message = wasReplay ? "Ending the replay..." : "Stopping...";
         IsSetupOpen = true;
+        Triage.FlushSaves();
 
         _stopTask = Task.Run(() =>
         {
@@ -512,6 +553,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         try { _stopTask?.Wait(TimeSpan.FromSeconds(20)); } catch (Exception ex) { AppLog.Error("stop wait", ex); }
         try { _composition?.Dispose(); } catch (Exception ex) { AppLog.Error("dispose", ex); }
         try { _replay?.Dispose(); } catch (Exception ex) { AppLog.Error("dispose replay", ex); }
+        try { Triage.CancelAll(); } catch (Exception ex) { AppLog.Error("triage shutdown", ex); }
     }
 
     // -------------------------------------------------------------- commands
@@ -839,6 +881,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 ContainAt = detection.QuarantineThreshold;
             }
             MergeThreats(snaps);
+            CaptureIncidents(snaps);
 
             IReadOnlyList<SurfaceEndpoint> endpoints;
             try { endpoints = await Task.Run(() => host.SurfaceEndpoints()); }
@@ -1227,8 +1270,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public int ContainAt { get => _containAt; private set => Set(ref _containAt, value); }
 
     // ---- nav badges ----
-    public const int DashboardTabIndex = 0;
-    public const int EventsTabIndex = 1;
+    public const int TriageTabIndex = 0;
+    public const int DashboardTabIndex = 1;
+    public const int EventsTabIndex = 2;
 
     private int _unreadAlerts;
     /// <summary>Warn and quarantine events that arrived while the feed was not on screen.</summary>
@@ -1512,7 +1556,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public bool HasHoveredMarker => _hoveredMarker is not null;
 
     /// <summary>Number of nav items, so shortcut clamping and saved state agree with the XAML.</summary>
-    public const int TabCount = 7;
+    public const int TabCount = 8;
 
     private int _selectedTabIndex;
     public int SelectedTabIndex

@@ -21,6 +21,11 @@ public sealed class UiState
     public int LastTabIndex { get; set; }
     public bool MinimizeToTray { get; set; } = true;
 
+    /// <summary>Incident triage assistant. The API key is not here: it is DPAPI-encrypted in its own file.</summary>
+    public string AssistantProvider { get; set; } = "Claude";
+    public Dictionary<string, string> AssistantModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public bool AssistantRedact { get; set; } = true;
+
     [JsonIgnore]
     public static string FilePath { get; } = BuildPath();
 

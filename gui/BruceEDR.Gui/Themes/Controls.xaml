@@ -410,6 +410,18 @@
                                            VerticalAlignment="Center" Foreground="{StaticResource Brush.Faint}"/>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                                     <ContentPresenter ContentSource="Header" VerticalAlignment="Center"/>
+                                    <Border x:Name="flag" CornerRadius="4" Padding="5,0.5" Margin="8,0,0,0" VerticalAlignment="Center"
+                                            BorderThickness="1" BorderBrush="{StaticResource Brush.AccentLine}">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                <GradientStop Color="#557C6CFF" Offset="0"/>
+                                                <GradientStop Color="#224C8DFF" Offset="1"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                        <TextBlock Text="{Binding Path=(v:Nav.Flag), RelativeSource={RelativeSource TemplatedParent}}"
+                                                   FontFamily="{StaticResource Font.Data}" FontSize="8.5" FontWeight="Bold"
+                                                   Foreground="{StaticResource Brush.Paper}"/>
+                                    </Border>
                                 </StackPanel>
                                 <Border x:Name="badge" Grid.Column="2" CornerRadius="8.5" MinWidth="20" Height="17" Padding="6,0"
                                         Background="{StaticResource Brush.InkRaised}" BorderBrush="{StaticResource Brush.Line}"
@@ -425,6 +437,9 @@
                     <ControlTemplate.Triggers>
                         <Trigger Property="v:Nav.Badge" Value="0">
                             <Setter TargetName="badge" Property="Visibility" Value="Collapsed"/>
+                        </Trigger>
+                        <Trigger Property="v:Nav.Flag" Value="">
+                            <Setter TargetName="flag" Property="Visibility" Value="Collapsed"/>
                         </Trigger>
                         <Trigger Property="v:Nav.BadgeLevel" Value="threat">
                             <Setter TargetName="badge" Property="Background" Value="{StaticResource Brush.ThreatDim}"/>
@@ -672,6 +687,57 @@
         <Setter Property="Padding" Value="0"/>
         <Setter Property="Width" Value="30"/>
         <Setter Property="Height" Value="30"/>
+    </Style>
+
+    <!-- Quiet text button for folded sections -->
+    <Style x:Key="Btn.Fold" TargetType="Button">
+        <Setter Property="FontFamily" Value="{StaticResource Font.Ui}"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{StaticResource Brush.Faint}"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalAlignment" Value="Left"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Ring}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border Background="Transparent" Padding="2,4">
+                        <ContentPresenter/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Foreground" Value="{StaticResource Brush.Mist}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="Input.Password" TargetType="PasswordBox">
+        <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
+        <Setter Property="FontSize" Value="{StaticResource Size.Body}"/>
+        <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+        <Setter Property="CaretBrush" Value="{StaticResource Brush.Accent}"/>
+        <Setter Property="SelectionBrush" Value="{StaticResource Brush.AccentDim}"/>
+        <Setter Property="Padding" Value="10,6"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="PasswordBox">
+                    <Border x:Name="bd" Background="{StaticResource Brush.InkRaised}" BorderBrush="{StaticResource Brush.Line}"
+                            BorderThickness="1" CornerRadius="{StaticResource Radius.Control}">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="BorderBrush" Value="#313A4E"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Brush.Accent}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <!-- ============================ Pills ============================ -->

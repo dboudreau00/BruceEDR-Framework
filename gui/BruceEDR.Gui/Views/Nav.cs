@@ -16,6 +16,12 @@ public static class Nav
     public static int GetBadge(DependencyObject o) => (int)o.GetValue(BadgeProperty);
     public static void SetBadge(DependencyObject o, int v) => o.SetValue(BadgeProperty, v);
 
+    /// <summary>Short accent label beside the item (e.g. "AI"); hidden when empty.</summary>
+    public static readonly DependencyProperty FlagProperty = DependencyProperty.RegisterAttached(
+        "Flag", typeof(string), typeof(Nav), new PropertyMetadata(""));
+    public static string GetFlag(DependencyObject o) => (string)o.GetValue(FlagProperty);
+    public static void SetFlag(DependencyObject o, string v) => o.SetValue(FlagProperty, v);
+
     /// <summary>threat | watch | neutral: the badge colour.</summary>
     public static readonly DependencyProperty BadgeLevelProperty = DependencyProperty.RegisterAttached(
         "BadgeLevel", typeof(string), typeof(Nav), new PropertyMetadata("neutral"));

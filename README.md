@@ -15,12 +15,18 @@ your machine actually talks to.**
 [![License: MIT](https://img.shields.io/badge/License-MIT-3FA9B8.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0E1621.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-2318%20passing-3FA9B8.svg)](#verifying-a-build)
+[![Tests](https://img.shields.io/badge/tests-2321%20passing-3FA9B8.svg)](#verifying-a-build)
 
 </div>
 
 <div align="center">
 <img src="docs/dashboard.png" alt="BruceEDR dashboard: a replayed credential-theft chain with its score, lineage, command line and ATT&CK techniques" width="880" />
+</div>
+
+<div align="center">
+<img src="docs/incident-triage.gif" alt="Incident triage: a replayed infostealer plays back on a mind map while Gemini explains each step, first for a teacher, then for Mom" width="880" />
+<br />
+<sub><b>Incident triage</b>: any detection, played back step by step and explained in plain English for the reader you pick</sub>
 </div>
 
 <div align="center">
@@ -82,8 +88,9 @@ tool that overstates itself is worse than one that admits its edges.
 | **API Studio** | Import Postman v2.1 / OpenAPI 3 / Swagger 2 / HAR / curl, or generate a collection from the endpoints this host was **observed** using. Send, assert, chain captures, and grade responses for TLS, security headers, CORS, cookie flags, leaked secrets and PII. Export to Postman / OpenAPI / `.http` / curl / Markdown; report to JSON / JUnit / HTML. |
 | **Control plane** | Localhost-only REST API (`/status`, `/profiles`, `/surface`, `/metrics`, `/rules`, `/attack`, `/events`) with bearer auth, off by default, read-only by default. |
 | **Replay** | Record or hand-write a JSON-Lines signal trace and replay it through a real engine on a simulated clock — deterministic detection tests in milliseconds, no malware required. |
+| **Incident triage** | Every detection is kept in a library and can be played back as a scene on a mind map, step by step, with a model explaining each step in plain English for the reader you pick (Teacher, SOC analyst, Network security engineer, Executive, Mom). Answers are cached per detection and reader. The library and playback work offline; the explanations need a Claude, Gemini, Grok or OpenAI key, added at the bottom of Settings. |
 | **Network map** | Plots every observed destination on a world map, grouped by country, hover-linked to the endpoint list, with **plaintext HTTP called out**. Geolocation is **fully offline** — an EDR that asked a third party where an address is would tell them what you are investigating. |
-| **Front-ends** | Console analyst REPL, and a WPF GUI with dashboard, live event feed, **API surface**, **network map**, **watchlist**, **ATT&CK coverage** and settings — plus tray monitoring, CSV/JSON export and one-click incident reports. |
+| **Front-ends** | Console analyst REPL, and a WPF GUI with **incident triage**, dashboard, live event feed, **API surface**, **network map**, **watchlist**, **ATT&CK coverage** and settings — plus tray monitoring, CSV/JSON export and one-click incident reports. |
 
 ## Quick start
 
@@ -307,7 +314,7 @@ That false-positive guard matters as much as the malicious ones.
 Builds the solution, runs the full xUnit suite, validates every rule pack, and replays every
 detection scenario. As of this commit:
 
-- **2,318 tests passing**, 0 skipped
+- **2,321 tests passing**, 0 skipped
 - **0 build warnings**
 - 72 rules loading with 0 validation errors
 - 3/3 replay scenarios meeting their expectations
@@ -370,6 +377,13 @@ changes take effect on restart.
   that `System.IO` can't open directly, so the move-to-vault step no-ops for those (it fails
   safe; suspend + firewall containment still apply). Archives caught by the `FileSystemWatcher`
   use drive-letter paths and quarantine correctly.
+- **Incident triage sends incident data to the provider you chose.** Nothing leaves the machine
+  until a key is saved and an answer is asked for. Redaction (on by default) removes user names,
+  the machine name, recognised secrets and long encoded blobs, but it is pattern-based: a
+  command line can still carry a host name, a share path or a customer string. Don't add a key
+  on machines where that matters. The key is DPAPI-encrypted for your Windows account, so anything
+  running as you can decrypt it. The explanation is a model's reading of the evidence and can be
+  wrong; the log lines beside it are the record.
 - **The extended ETW monitors are best-effort.** Registry names from the kernel provider can be
   partial, and the Kernel-Audit-API-Calls schema is undocumented and version-dependent — so each
   monitor degrades to a no-op rather than throwing, and the rules match substrings accordingly.

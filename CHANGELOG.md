@@ -4,6 +4,8 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 
 ## [Unreleased]
 
+A UX pass over the desktop app, Incident triage, and two fixes in the engine.
+
 ### Fixed
 
 - **Analyst Suspend, Resume and End now check the process name before acting.** Automatic
@@ -24,13 +26,25 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   theme; the pickers' selected value was close to unreadable.
 - API surface had no column headers; its endpoint count was the display cap, not the total.
 - Settings refuses warn and contain thresholds the config would silently clamp, and says why.
-  It also lists the correct shortcuts (Ctrl+1 to Ctrl+7).
+  It also lists the correct shortcuts (Ctrl+1 to Ctrl+8).
 - Event counts, the status bar and the coverage view reset properly between sessions.
 - `publish-release.ps1` fails if the zip has backslash entry names. Under Windows PowerShell 5.1
   the .NET Framework zip API still writes them, so run the script under PowerShell 7 (`pwsh`).
 
 ### Added
 
+- **Incident triage**, first in the sidebar. Every detection, live or replayed, is kept in a
+  library (the latest 100). Pick one and a log line, and the attack plays back as a scene on a
+  mind map: the process in the middle, its ATT&CK stages around it, each step lighting up in
+  order while a model explains it in plain English. The reader sets the tone: Teacher, SOC
+  analyst, Network security engineer, Executive or Mom. One answer is generated per detection
+  and reader and kept; Refresh asks again.
+- **Assistant**, folded away at the very end of Settings: an API key for Claude, Gemini, Grok or
+  OpenAI, encrypted with Windows DPAPI for the current account. Requests go only to the chosen
+  provider's fixed endpoint over HTTPS, through the agent's single HTTP client (same DNS pinning
+  and TLS checks, redirects refused). User names, the machine name, secrets and long encoded
+  blobs are removed first (on by default), and log text cannot close the evidence block it is
+  quoted in.
 - **Replay a recorded attack** from the set-up screen: a shipped trace plays through a real host
   in about twenty seconds, with no monitors, monitor mode forced, auto-kill off, no memory or
   image scanning, and analyst actions disabled. A banner and a REPLAY badge say so throughout.
