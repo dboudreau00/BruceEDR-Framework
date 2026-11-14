@@ -56,7 +56,7 @@ public sealed class SurfaceRow : ViewModelBase
 
     public string Detail => Host == Address || string.IsNullOrEmpty(Host) ? "" : Address;
 
-    public string Cadence => Beaconing ? "beaconing" : "—";
+    public string Cadence => Beaconing ? "beaconing" : "";
 
     /// <summary>safe | watch | threat — beaconing to an untrusted process is the alarming case.</summary>
     public string Severity => Beaconing && !Trusted ? "threat"

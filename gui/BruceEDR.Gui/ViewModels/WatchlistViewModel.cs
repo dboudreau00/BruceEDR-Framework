@@ -105,7 +105,7 @@ public sealed class WatchRow : ViewModelBase
             Warning = "Zero points does nothing on its own; the hit is still reported.";
         else if (string.Equals(Action, "quarantine", StringComparison.OrdinalIgnoreCase)
                  && Watchlist.IsProtected(Value))
-            Warning = "Protected Windows process — BruceEDR will report it but refuse to contain it.";
+            Warning = "Protected Windows process. BruceEDR will report it but refuse to contain it.";
     }
 }
 
@@ -172,7 +172,7 @@ public sealed class WatchlistViewModel : ViewModelBase
             var bad = Rows.Count(r => r.HasProblem);
             if (bad > 0)
             {
-                Message = $"{bad} entr{(bad == 1 ? "y" : "ies")} still invalid — fix or remove them first.";
+                Message = $"{bad} entr{(bad == 1 ? "y" : "ies")} still invalid. Fix or remove them first.";
                 return;
             }
 
@@ -217,7 +217,7 @@ public sealed class WatchlistViewModel : ViewModelBase
             _config = onDisk;
             LoadFrom(_config);
             Message = Enabled
-                ? "Saved. The watchlist is armed within a couple of seconds — no restart needed."
+                ? "Saved. The watchlist is armed within a couple of seconds, no restart needed."
                 : "Saved. The watchlist is turned off.";
         }
         catch (Exception ex)

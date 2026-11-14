@@ -452,7 +452,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         var row = SelectedThreat;
         if (row is null) return;
         try { Clipboard.SetText(row.ToReport()); LastMessage = "Incident report copied."; }
-        catch (Exception ex) { AppLog.Error("copy report", ex); LastMessage = "Clipboard is busy — try again."; }
+        catch (Exception ex) { AppLog.Error("copy report", ex); LastMessage = "Clipboard is busy. Try again."; }
     }
 
     private void CopyPath()
@@ -460,7 +460,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         var row = SelectedThreat;
         if (row is null || string.IsNullOrEmpty(row.ImagePath)) return;
         try { Clipboard.SetText(row.ImagePath); LastMessage = "Image path copied."; }
-        catch (Exception ex) { AppLog.Error("copy path", ex); LastMessage = "Clipboard is busy — try again."; }
+        catch (Exception ex) { AppLog.Error("copy path", ex); LastMessage = "Clipboard is busy. Try again."; }
     }
 
     private void OpenLocation()
@@ -504,7 +504,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 {
                     if (e.Level == "QUARANTINE")
                         AlertRaised?.Invoke(IsMonitorOnly ? "Threat detected (monitor only)" : "Threat contained",
-                            e.Pid > 0 ? $"pid {e.Pid} {e.Process} — {(string.IsNullOrEmpty(e.Trigger) ? e.Message : e.Trigger)}" : e.Message);
+                            e.Pid > 0 ? $"pid {e.Pid} {e.Process}: {(string.IsNullOrEmpty(e.Trigger) ? e.Message : e.Trigger)}" : e.Message);
 
                     if (IsPaused)
                     {
@@ -1055,7 +1055,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
     public bool HasDroppedSignals => _droppedSignals > 0;
 
-    private string _latencyP95 = "—";
+    private string _latencyP95 = "n/a";
     public string LatencyP95 { get => _latencyP95; set => Set(ref _latencyP95, value); }
 
     private string _uptime = "0s";

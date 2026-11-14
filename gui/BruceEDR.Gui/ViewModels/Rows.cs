@@ -14,7 +14,7 @@ public sealed class ThreatRow : ViewModelBase
     public string State { get; private set; } = "";
     public string Severity { get; private set; } = "watch";   // safe | watch | threat
     public bool Trusted { get; private set; }
-    public string Trust => Trusted ? "signed" : "—";
+    public string Trust => Trusted ? "signed" : "unsigned";
     public string ImagePath { get; private set; } = "";
     public string CommandLine { get; private set; } = "";
     public string IncidentId { get; private set; } = "";
@@ -93,10 +93,10 @@ public sealed class ThreatRow : ViewModelBase
     public string ToReport()
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"BruceEDR incident report — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine($"BruceEDR incident report, {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         sb.AppendLine($"process   : {Name} (pid {Pid})");
         if (IncidentId.Length > 0) sb.AppendLine($"incident  : {IncidentId}");
-        sb.AppendLine($"state     : {State}   score {Score} (peak {PeakScore})   {(Trusted ? "signed" : "unsigned")}");
+        sb.AppendLine($"state     : {State}   score {Score} (peak {PeakScore})   {Trust}");
         sb.AppendLine($"image     : {ImagePath}");
         if (HasCommandLine) sb.AppendLine($"cmdline   : {CommandLine}");
         if (HasAncestry) sb.AppendLine($"ancestry  : {Ancestry}");
