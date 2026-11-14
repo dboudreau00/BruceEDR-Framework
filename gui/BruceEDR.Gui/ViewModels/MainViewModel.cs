@@ -168,28 +168,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             try { WatchlistEditor.LoadFrom(_composition.Config); }
             catch (Exception ex) { AppLog.Error("watchlist load", ex); }
 
-            try
-            {
-                // Rule coverage is fixed until a reload, so compute it once here rather
-                // than rebuilding the ATT&CK matrix on every 1.5 s refresh tick.
-                _ruleCoverage = new RuleEngine(_composition.Rules).TechniqueCoverage();
-                RuleCount = _composition.Rules.Rules.Count;
-                IndicatorCount = _composition.Intel.Count;
-                CoveredTechniqueCount = _ruleCoverage.Count;
-            }
-            catch (Exception ex) { AppLog.Error("rule coverage", ex); }
-
-            try
-            {
-                // Offline assets only -- the map must never cause a network call. Missing
-                // files degrade to "unplaced" markers rather than failing the view.
-                var geoDir = Path.Combine(AppContext.BaseDirectory, "intel", "geo");
-                _geo = GeoIpDatabase.Load(geoDir, m => AppLog.Info("geo: " + m));
-                World = WorldMap.Load(Path.Combine(geoDir, "world.txt"), m => AppLog.Info("geo: " + m));
-                OnPropertyChanged(nameof(World));
-                GeoReady = _geo.IsLoaded;
-            }
-            catch (Exception ex) { AppLog.Error("geo load", ex); }
+            ApplyRuleCoverage(_composition.Rules, _composition.Intel.Count);
+            LoadGeo();
 
             if (!IsRunning)
             {
@@ -201,16 +181,48 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             AppLog.Info("Engine started. Monitors: " + Monitors +
                         (IsMonitorOnly ? " (monitor mode)" : " (ENFORCE mode)"));
 
-            _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
-            _timer.Tick += (_, _) => _ = RefreshAsync();
-            _timer.Start();
-            _ = RefreshAsync();
+            StartRefreshTimer();
         }
         catch (Exception ex)
         {
             AppLog.Error("engine start", ex);
             AbandonStart(_composition, "BruceEDR could not start its engine: " + ex.Message);
         }
+    }
+
+    private void StartRefreshTimer()
+    {
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
+        _timer.Tick += (_, _) => _ = RefreshAsync();
+        _timer.Start();
+        _ = RefreshAsync();
+    }
+
+    /// <summary>Rule coverage is fixed until a reload, so it is computed once, not per refresh.</summary>
+    private void ApplyRuleCoverage(RuleSet? rules, int indicators)
+    {
+        try
+        {
+            _ruleCoverage = rules is null ? new Dictionary<string, int>() : new RuleEngine(rules).TechniqueCoverage();
+            RuleCount = rules?.Rules.Count ?? 0;
+            IndicatorCount = indicators;
+            CoveredTechniqueCount = _ruleCoverage.Count;
+        }
+        catch (Exception ex) { AppLog.Error("rule coverage", ex); }
+    }
+
+    /// <summary>Offline assets only: the map must never cause a network call.</summary>
+    private void LoadGeo()
+    {
+        try
+        {
+            var geoDir = Path.Combine(AppContext.BaseDirectory, "intel", "geo");
+            _geo = GeoIpDatabase.Load(geoDir, m => AppLog.Info("geo: " + m));
+            World = WorldMap.Load(Path.Combine(geoDir, "world.txt"), m => AppLog.Info("geo: " + m));
+            OnPropertyChanged(nameof(World));
+            GeoReady = _geo.IsLoaded;
+        }
+        catch (Exception ex) { AppLog.Error("geo load", ex); }
     }
 
     /// <summary>Tears down a half-started engine, off the UI thread, so a retry starts clean.</summary>
