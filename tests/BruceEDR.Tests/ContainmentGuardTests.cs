@@ -172,6 +172,33 @@ public sealed class ContainmentGuardTests : IDisposable
         Assert.Null(ContainmentGuard.Refusal(child.Id));
     }
 
+    // Found in review: "a.b.exe" came back as "a.b", the pid-reuse check then compared "a" with
+    // "a.b", and containment refused to act on the right process.
+    [Fact]
+    public void The_live_name_keeps_its_extension()
+        => Assert.Equal(System.Diagnostics.Process.GetCurrentProcess().ProcessName + ".exe",
+            EngineDependencies.DefaultResolveProcessName(Environment.ProcessId));
+
+    [Fact]
+    public void A_process_that_started_before_the_agent_is_named_once_from_its_pid()
+    {
+        int lookups = 0;
+        var engine = new DetectionEngine(
+            new EngineOptions { WarnThreshold = 40, QuarantineThreshold = 70, TrustDiscount = 30 },
+            _ => false,
+            new EngineDependencies { ResolveProcessName = pid => { lookups++; return pid == 556 ? "csrss" : null; } });
+        var t = DateTime.UtcNow;
+
+        engine.Ingest(new Signal { Kind = SignalKind.FileCreate, Pid = 556, FilePath = @"C:\Windows\Temp\a.tmp", TimestampUtc = t });
+        engine.Ingest(new Signal { Kind = SignalKind.FileCreate, Pid = 556, FilePath = @"C:\Windows\Temp\b.tmp", TimestampUtc = t });
+        engine.Ingest(new Signal { Kind = SignalKind.FileCreate, Pid = 557, FilePath = @"C:\Windows\Temp\c.tmp", TimestampUtc = t });
+        engine.Ingest(new Signal { Kind = SignalKind.FileCreate, Pid = 557, FilePath = @"C:\Windows\Temp\d.tmp", TimestampUtc = t });
+
+        Assert.Equal("csrss.exe", engine.SnapshotOne(556)?.ProcessName);
+        Assert.Equal("", engine.SnapshotOne(557)?.ProcessName);
+        Assert.Equal(2, lookups);
+    }
+
     // ------------------------------------------------------------------ the host
 
     [Fact]

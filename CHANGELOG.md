@@ -91,6 +91,9 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   and the agent and the lab harness kept one. Both keep eight now: in the lab VMs the harness
   received every report (22 of 22 under Driver Verifier, 28 of 28 on Windows 11) where up to a
   third had been lost.
+- **Processes that started before the agent had no name** in events and incidents (csrss and
+  svchost showed as ""), so name watchlist entries and the pid-reuse check passed them by. Each
+  is named from its pid on its first event.
 
 ## [3.3.0] - 2026-11-14
 

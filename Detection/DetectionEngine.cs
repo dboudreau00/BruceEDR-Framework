@@ -87,12 +87,14 @@ public sealed class EngineDependencies
     /// </summary>
     public Func<int, string?>? ResolveProcessName { get; init; } = DefaultResolveProcessName;
 
-    private static string? DefaultResolveProcessName(int pid)
+    internal static string? DefaultResolveProcessName(int pid)
     {
         try
         {
+            // ProcessName drops ".exe", and a name with dots of its own (a.b.exe is "a.b") would
+            // never get it back, so the pid-reuse check compared "a" with "a.b" and refused to act.
             using var proc = System.Diagnostics.Process.GetProcessById(pid);
-            return proc.ProcessName;
+            return proc.ProcessName + ".exe";
         }
         catch { return null; }
     }
@@ -250,6 +252,14 @@ public sealed class DetectionEngine
         }
         if (s.Kind == SignalKind.ProcessStart) p.StartedUtc = s.TimestampUtc;
         if (!string.IsNullOrEmpty(s.ProcessName)) p.ProcessName = s.ProcessName;
+        else if (p.ProcessName.Length == 0 && !p.NameLookedUp && s.Kind != SignalKind.ProcessStart)
+        {
+            // A process that started before the agent sends no ProcessStart, so its events carry
+            // only the pid. Name it once, as a ProcessAccess target is named: unnamed, the
+            // watchlist, the pid-reuse check and the incident all saw "" for csrss and svchost.
+            p.NameLookedUp = true;
+            p.ProcessName = ResolveTargetName(s.Pid);
+        }
         if (!string.IsNullOrEmpty(s.ImagePath)) p.ImagePath = s.ImagePath;
         if (!string.IsNullOrEmpty(s.CommandLine)) p.CommandLine = s.CommandLine;
         if (s.ParentPid > 0) p.ParentPid = s.ParentPid;

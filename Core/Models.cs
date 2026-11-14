@@ -273,6 +273,8 @@ public sealed class ThreatProfile
     /// but only a few times, because each attempt is a WinVerifyTrust call.
     /// </summary>
     public int SignatureAttempts { get; set; }
+    /// <summary>Whether the name of a process first seen without one has been looked up.</summary>
+    public bool NameLookedUp { get; set; }
     /// <summary>Last time decay was applied, so decay is charged once per interval.</summary>
     public DateTime LastDecayUtc { get; set; }
 
