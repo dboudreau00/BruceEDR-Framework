@@ -167,7 +167,9 @@ public sealed class Composition : IDisposable
             // and MatchIndicators returns early on an empty feed, so an always-on hasher costs
             // nothing when intel is off.
             ImageHash = hashes.Sha256,
-            AnalyzeImage = cfg.Detection.EnablePeAnalysis ? images.Analyze : null
+            AnalyzeImage = cfg.Detection.EnablePeAnalysis ? images.Analyze : null,
+            IdentifyPlatform = PlatformImages.Identify,
+            SelfPid = Environment.ProcessId
         };
 
         // --- response ------------------------------------------------------------

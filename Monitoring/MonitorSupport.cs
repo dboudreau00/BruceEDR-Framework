@@ -178,6 +178,29 @@ public static class MonitorSupport
         return false;
     }
 
+    private static readonly Regex RunKeyPattern = new(
+        @"\\currentversion\\run(?:once|services|servicesonce)?(?:ex)?(?:\\|$)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>
+    /// True when the path is a Run, RunOnce, RunOnceEx or RunServices key or a value under one. The
+    /// whole key name has to match: a bare substring test also matched RunNotification, which sihost
+    /// opens, and every other key that merely starts with "Run".
+    /// </summary>
+    public static bool IsRunKeyPath(string? keyPath)
+        => !string.IsNullOrEmpty(keyPath) && RunKeyPattern.IsMatch(keyPath);
+
+    /// <summary>
+    /// True for the registry monitor's key-level actions (create-key, delete-key, delete-value). A
+    /// create-key on an existing key is how RegCreateKeyEx opens it, so Explorer's shell, sihost and
+    /// the driver installer all "create" the Run keys; persistence is a value written into one.
+    /// </summary>
+    public static bool IsKeyLevelRegistryAction(string? detail)
+        => detail is not null &&
+           (detail.Equals("create-key", StringComparison.OrdinalIgnoreCase) ||
+            detail.Equals("delete-key", StringComparison.OrdinalIgnoreCase) ||
+            detail.Equals("delete-value", StringComparison.OrdinalIgnoreCase));
+
     // --------------------------------------------------------------------- dns
 
     /// <summary>

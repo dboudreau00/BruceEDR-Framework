@@ -226,6 +226,17 @@ public sealed record RuleContext
     /// <summary>True when the image is signed by an allowlisted publisher.</summary>
     public bool Trusted { get; init; }
 
+    /// <summary>
+    /// Canonical name of the Windows component the subject verifiably is (the image sits at the
+    /// component's own location in a folder only administrators can write), or empty. Unlike
+    /// <c>processName</c> it cannot be had by renaming a file. Prefer <see cref="PlatformLookup"/>
+    /// from the engine, which resolves it only when a rule actually asks.
+    /// </summary>
+    public string Platform { get; init; } = "";
+
+    /// <summary>Late-bound <see cref="Platform"/>: the check reads the image's permissions from disk.</summary>
+    public Func<string>? PlatformLookup { get; init; }
+
     /// <summary>Context for a signal with no known process history.</summary>
     public static readonly RuleContext Empty = new();
 }
@@ -236,7 +247,7 @@ internal enum RuleField
     Kind, Pid, ParentPid, TargetPid, ProcessName, ImagePath, CommandLine, FilePath,
     FileName, FileExtension, RemoteAddress, RemotePort, Domain, RegistryKey, RegistryValue,
     PipeName, ScriptText, User, Detail, PrimaryTarget, ParentName, Ancestry, Score,
-    DesiredAccess, Trusted
+    DesiredAccess, Trusted, Platform
 }
 
 /// <summary>
@@ -328,7 +339,8 @@ internal static class RuleFields
         ["ancestry"] = RuleField.Ancestry,
         ["score"] = RuleField.Score,
         ["desiredAccess"] = RuleField.DesiredAccess,
-        ["trusted"] = RuleField.Trusted
+        ["trusted"] = RuleField.Trusted,
+        ["platform"] = RuleField.Platform
     };
 
     private static readonly string[] Canonical = BuildCanonical();
@@ -389,6 +401,8 @@ internal static class RuleFields
             case RuleField.Score: return FieldValues.One(ctx.Score.ToString(CultureInfo.InvariantCulture));
             case RuleField.DesiredAccess: return FieldValues.Many(ExpandAccessMask(s.DesiredAccess));
             case RuleField.Trusted: return FieldValues.One(ctx.Trusted ? "true" : "false");
+            case RuleField.Platform:
+                return FieldValues.One(ctx.Platform.Length > 0 ? ctx.Platform : ctx.PlatformLookup?.Invoke() ?? "");
             default: return FieldValues.None;
         }
     }

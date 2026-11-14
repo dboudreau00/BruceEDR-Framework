@@ -100,6 +100,23 @@ public sealed class ContainmentGuardTests : IDisposable
         Assert.Null(ContainmentGuard.Refusal(1000, 9999, new LiveProcess("WmiPrvSE", wmi, ServiceAccount: true), AdminOnly));
     }
 
+    // The same instance rule keeps a hollowed copy from passing as a Windows component in detection.
+    [Fact]
+    public void A_platform_component_counts_only_for_the_instance_Windows_started()
+    {
+        const string svchost = @"C:\Windows\System32\svchost.exe";
+        const string wmi = @"C:\Windows\System32\wbem\WmiPrvSE.exe";
+
+        Assert.True(PlatformImages.IsWindowsInstance("svchost.exe", new LiveProcess("svchost", svchost, StartedByServices: true)));
+        Assert.False(PlatformImages.IsWindowsInstance("svchost.exe", new LiveProcess("svchost", svchost, ServiceAccount: true)));
+        Assert.True(PlatformImages.IsWindowsInstance("wmiprvse.exe", new LiveProcess("WmiPrvSE", wmi, ServiceAccount: true)));
+        Assert.False(PlatformImages.IsWindowsInstance("wmiprvse.exe", new LiveProcess("WmiPrvSE", wmi, ServiceAccount: false)));
+        Assert.False(PlatformImages.IsWindowsInstance("wmiprvse.exe", new LiveProcess("WmiPrvSE", wmi)));
+        Assert.True(PlatformImages.IsWindowsInstance("csrss.exe", new LiveProcess("csrss", @"C:\Windows\System32\csrss.exe", Protected: true)));
+        Assert.True(PlatformImages.IsWindowsInstance("conhost.exe",
+            new LiveProcess("conhost", @"C:\Windows\System32\conhost.exe", ServiceAccount: false)));
+    }
+
     [Theory]
     [InlineData("S-1-5-18", true)]
     [InlineData("S-1-5-19", true)]

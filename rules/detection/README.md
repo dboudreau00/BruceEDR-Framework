@@ -106,6 +106,7 @@ may be true).
 | `ancestry` | every ancestor process name, nearest first |
 | `score` | the process's current score, for staged rules |
 | `trusted` | `true` when the image is Authenticode-signed by an allowlisted publisher |
+| `platform` | The Windows component the process verifiably is (`wmiprvse.exe`, `msmpeng.exe`, `svchost.exe`, `system`, ...), or empty. Set only when the image sits at that component's own location in a folder no standard user can write, so unlike `processName` it cannot be had by renaming a file. Use it in a `none` list instead of a process name. |
 
 `primaryTarget` is whichever path-like field the signal actually carries, so one rule can
 cover files, registry keys, pipes and domains at once.

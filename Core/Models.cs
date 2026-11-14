@@ -294,6 +294,10 @@ public sealed class ThreatProfile
     public int SignatureAttempts { get; set; }
     /// <summary>Whether the name of a process first seen without one has been looked up.</summary>
     public bool NameLookedUp { get; set; }
+    /// <summary>Whether <see cref="PlatformName"/> has been looked up; it is resolved once, when a rule first needs it.</summary>
+    public bool PlatformChecked { get; set; }
+    /// <summary>Canonical name of the Windows component this process really is (verified by image location), or null.</summary>
+    public string? PlatformName { get; set; }
     /// <summary>Last time decay was applied, so decay is charged once per interval.</summary>
     public DateTime LastDecayUtc { get; set; }
 

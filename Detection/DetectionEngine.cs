@@ -87,6 +87,21 @@ public sealed class EngineDependencies
     /// </summary>
     public Func<int, string?>? ResolveProcessName { get; init; } = DefaultResolveProcessName;
 
+    /// <summary>
+    /// Names the Windows component a pid really is (Security/PlatformImages: the image sits at
+    /// the component's own location and no standard user could have written it). Rules use it
+    /// to let the operating system do what it always does without scoring it. Null, the default,
+    /// means nothing is ever treated as one, so a test or a replay scores everything.
+    /// </summary>
+    public Func<int, string?>? IdentifyPlatform { get; init; }
+
+    /// <summary>
+    /// The agent's own pid. Its signals are dropped: the triage collector writes csv files into a
+    /// staging folder, and the agent's memory holds every IOC string it scans for, so scoring it
+    /// only produces incidents about itself. 0, the default, ignores nothing.
+    /// </summary>
+    public int SelfPid { get; init; }
+
     internal static string? DefaultResolveProcessName(int pid)
     {
         try
@@ -209,6 +224,22 @@ public sealed class DetectionEngine
             return results;
         }
         if (s.Pid <= 0) return results;
+
+        if (s.Pid == _deps.SelfPid)
+        {
+            // Keep the lineage (the agent's children still name it as their parent) and score nothing.
+            if (s.Kind == SignalKind.ProcessStart)
+                _deps.Tree?.OnStart(s.Pid, s.ParentPid, s.ProcessName, s.ImagePath, s.CommandLine, s.TimestampUtc);
+            else if (s.Kind == SignalKind.ProcessStop)
+                _deps.Tree?.OnExit(s.Pid, s.TimestampUtc);
+            return results;
+        }
+
+        // The registry and process-access monitors name a process the way ETW does, without
+        // ".exe" ("sihost", "svchost"); the kernel process events and the rule packs use the file
+        // name. Left alone, the last signal to arrive decided whether every exclusion by name,
+        // in the packs and in the credential-store owner table, applied to that process at all.
+        s = s with { ProcessName = NormaliseProcessName(s.ProcessName) };
 
         // A second ProcessStart for a PID means Windows recycled it: drop any stale
         // profile so the reused PID starts clean and cannot inherit the prior process's
@@ -461,7 +492,7 @@ public sealed class DetectionEngine
         // scored 35 per file under its own User Data folder and crossed the quarantine
         // threshold in milliseconds -- suspending and firewall-blocking the user's browser.
         string? artifact = FirstMatch(IocDatabase.CredentialArtifacts, file);
-        if (artifact is not null && !OwnsCredentialStore(p.ProcessName, file)
+        if (artifact is not null && !OwnsCredentialStore(p.ProcessName, file) && !OwnsWebViewStore(p, file)
             && p.FiredOnce.Add("credstore:" + artifact))
         {
             p.CredentialAccessUtc = s.TimestampUtc;
@@ -553,10 +584,13 @@ public sealed class DetectionEngine
 
         // ETW gives KCB-relative names that can be partial, so these are substring tests
         // rather than exact paths. See Monitoring/MonitorSupport.IsPersistenceKey.
-        if (key.Contains(@"\currentversion\run") || key.Contains(@"\currentversion\runonce") ||
-            key.Contains(@"\explorer\shell folders\startup"))
-            Score(p, 40, $"Wrote an autostart registry key: {Trim(s.RegistryKey)}",
-                  "builtin-run-key", Tech("T1547.001"), s.TimestampUtc);
+        if (Monitoring.MonitorSupport.IsRunKeyPath(key) || key.Contains(@"\explorer\shell folders\startup"))
+        {
+            // Opening or deleting the key is not persistence; a value written into it is.
+            if (!Monitoring.MonitorSupport.IsKeyLevelRegistryAction(s.Detail))
+                Score(p, 40, $"Wrote an autostart registry key: {Trim(s.RegistryKey)}",
+                      "builtin-run-key", Tech("T1547.001"), s.TimestampUtc);
+        }
         else if (key.Contains(@"\image file execution options\"))
             Score(p, 45, $"Wrote an IFEO debugger hook: {Trim(s.RegistryKey)}",
                   "builtin-ifeo", Tech("T1546.012"), s.TimestampUtc);
@@ -605,14 +639,45 @@ public sealed class DetectionEngine
         // Prefer the resolved target name; fall back to whatever the signal said (replay
         // traces write the name straight into Detail).
         string target = (targetName.Length > 0 ? targetName : s.Detail ?? "").ToLowerInvariant();
+        bool changesTarget = Monitoring.MonitorSupport.IsInjectionCapableAccess(s.DesiredAccess);
         if (target.Contains("lsass"))
+        {
+            // WMI and the Defender engine read LSASS as part of their work (0x410, GENERIC_READ), and
+            // the access mask is the same one a dumper asks for. What tells them apart is whose code
+            // asks: a read from the genuine component, at its own location in a folder no standard user
+            // can write, is the system working. Any right that changes LSASS is scored whoever asks.
+            if (!changesTarget && Security.PlatformImages.ReadsLsass(PlatformOf(p))) return;
             Score(p, 60, $"Opened LSASS with memory-access rights (mask 0x{s.DesiredAccess:X})",
                   "builtin-lsass-access", Tech("T1003.001"), s.TimestampUtc);
+        }
         // Any other target counts only for rights that change it. Read masks scored here put
         // WMI, Defrag and VMware Tools at quarantine on a clean lab VM within minutes.
-        else if (Monitoring.MonitorSupport.IsInjectionCapableAccess(s.DesiredAccess))
+        else if (changesTarget)
+        {
+            // csrss opens every new process with full rights, svchost and lsass duplicate handles,
+            // conhost asks for MAXIMUM_ALLOWED on its console clients: the system's own plumbing, scored
+            // 25 a target until three targets meant quarantine. Only a verified component is let off, not
+            // a name; a process injected into the component is scored on the injector.
+            if (PlatformOf(p).Length > 0) return;
             Score(p, 25, $"Opened pid {s.TargetPid} with injection-capable rights (mask 0x{s.DesiredAccess:X})",
                   "builtin-cross-process-access", Tech("T1055"), s.TimestampUtc);
+        }
+    }
+
+    /// <summary>
+    /// The Windows component this process verifiably is, or "". Resolved once per process, the first
+    /// time a rule would score it, because the check reads the image's permissions from disk. An exited
+    /// process is never identified: its pid may belong to something else by now.
+    /// </summary>
+    private string PlatformOf(ThreatProfile p)
+    {
+        if (!p.PlatformChecked)
+        {
+            p.PlatformChecked = true;
+            try { p.PlatformName = !p.Exited && OwnsPid(p) ? _deps.IdentifyPlatform?.Invoke(p.Pid) : null; }
+            catch { p.PlatformName = null; }
+        }
+        return p.PlatformName ?? "";
     }
 
     private void RuleScript(ThreatProfile p, Signal s)
@@ -664,7 +729,8 @@ public sealed class DetectionEngine
                 ? Array.Empty<string>()
                 : _deps.Tree.Ancestors(p.Pid).Select(a => a.Name).ToArray(),
             Score = p.Score,
-            Trusted = p.Trusted
+            Trusted = p.Trusted,
+            PlatformLookup = () => PlatformOf(p)
         };
 
         IReadOnlyList<RuleMatch> matches;
@@ -844,6 +910,20 @@ public sealed class DetectionEngine
     }
 
     /// <summary>
+    /// A scanned-for string written the way analysts defang an indicator, with one character in
+    /// brackets ("s[t]ealer"). The reason line goes to the incident log, and the log is read: a
+    /// log shipper, the GUI, an analyst's editor and VMware Tools copying it out of a guest all
+    /// hold its text in memory, and the scanner flagged each of them for the very strings it had
+    /// written there. A defanged string does not match itself, ASCII or UTF-16, so reading the log
+    /// no longer scores the reader. Names that are not one of the builtin strings (YARA rule ids) are left alone.
+    /// </summary>
+    internal static string DefangMemoryHit(string hit)
+    {
+        if (hit.Length < 2 || !IocDatabase.MemoryStringIocs.Contains(hit, StringComparer.OrdinalIgnoreCase)) return hit;
+        return hit[0] + "[" + hit[1] + "]" + hit[2..];
+    }
+
+    /// <summary>
     /// Owner-thread only. Folds memory-scan hits into the profile and re-decides, so a
     /// process that only crosses a threshold because of an in-memory IOC is still caught
     /// (a moment later than an inline scan would, which is the accepted trade-off).
@@ -861,7 +941,7 @@ public sealed class DetectionEngine
         if (p.Exited) return results;
 
         var now = _clock.UtcNow;
-        Score(p, 20 + 5 * Math.Min(hits.Count, 6), "Memory IOC(s): " + string.Join(", ", hits),
+        Score(p, 20 + 5 * Math.Min(hits.Count, 6), "Memory IOC(s): " + string.Join(", ", hits.Select(DefangMemoryHit)),
               "builtin-memory-ioc", Tech("T1055", "T1005"), now);
         var r = Decide(p, "MemoryScan", now);
         if (r is not null) results.Add(r);
@@ -912,6 +992,10 @@ public sealed class DetectionEngine
             : (detail.Length == 0 ? "open-process:" + targetName : detail + ":" + targetName);
         return s with { Detail = enriched };
     }
+
+    /// <summary>The file name form of a process name: "svchost" becomes "svchost.exe". Names that carry an extension are untouched.</summary>
+    internal static string NormaliseProcessName(string? name)
+        => string.IsNullOrEmpty(name) || name.Contains('.') ? name ?? "" : name + ".exe";
 
     private string ResolveTargetName(int pid)
     {
@@ -1339,6 +1423,15 @@ public sealed class DetectionEngine
                 return true;
         return false;
     }
+
+    /// <summary>
+    /// True when this is the genuine WebView2 runtime touching a store under an EBWebView folder, which is
+    /// where it keeps its host's cookies and Local State (Widgets, Search and the Start menu on Windows 11).
+    /// The image has to be verified, not named: a program called msedgewebview2.exe in a user folder gets
+    /// nothing, and neither does the genuine runtime reading a store outside EBWebView, such as Chrome's.
+    /// </summary>
+    private bool OwnsWebViewStore(ThreatProfile p, string lowerFilePath)
+        => lowerFilePath.Contains(@"\ebwebview\", StringComparison.Ordinal) && PlatformOf(p) == "msedgewebview2.exe";
 
     private static string[] CommandLineTechniques(string ioc) => ioc switch
     {

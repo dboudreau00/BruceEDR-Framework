@@ -66,6 +66,41 @@ internal sealed class PatternMatcher
 }
 
 /// <summary>
+/// Which regions of another process are worth scanning for strings. The scan looks for what an
+/// attacker put in memory, so it leaves out what Windows put there: an image-backed page that
+/// has not been written is the file on disk, and its strings (the export table of user32.dll
+/// names SetWindowsHookEx, GetAsyncKeyState and keybd_event in every process that has a window)
+/// say nothing about the process. Scanning them put +40 on every ordinary process once anything
+/// else had scored it.
+/// </summary>
+internal static class ScanRegions
+{
+    private const uint Written = PAGE_READWRITE | PAGE_EXECUTE_READWRITE;
+
+    /// <summary>
+    /// Committed, readable, and not an unmodified image page or a file mapped read-only. Private
+    /// memory is always scanned (where unpacked and injected code lives), and so is an image page
+    /// that is now writable (copy-on-write was triggered: patched or stomped code), and a mapped
+    /// section that is writable or executable (section-mapping injection).
+    ///
+    /// HONEST LIMIT: protection is a proxy for "modified". A payload written into an image-backed
+    /// page whose protection was then set back to read-only or execute-read is not scanned.
+    /// QueryWorkingSetEx tells private copies from shared pages exactly and would close this.
+    /// </summary>
+    public static bool ShouldScan(uint state, uint protect, uint type)
+    {
+        if ((state & MEM_COMMIT) == 0) return false;
+        // "Not NOACCESS and not GUARD" is not "readable": it also passed PAGE_EXECUTE (no read)
+        // and reserved-but-uncommitted protections, and a ReadProcessMemory on those fails and
+        // aborted the whole region. Require a protection that actually grants read.
+        if ((protect & PAGE_READABLE_MASK) == 0 || (protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) return false;
+        if (type == MEM_IMAGE) return (protect & Written) != 0;
+        if (type == MEM_MAPPED) return (protect & (PAGE_READABLE_MASK & ~PAGE_READONLY)) != 0;
+        return true;
+    }
+}
+
+/// <summary>
 /// Walks a target process's committed, readable memory and yields whole regions
 /// (capped) for engines that scan contiguous buffers, e.g. YARA. Bounded by a
 /// wall-clock deadline and a total-bytes budget.
@@ -98,12 +133,7 @@ internal static class ProcessMemoryReader
                 long regionSize = (long)mbi.RegionSize;
                 if (regionSize <= 0) break;
 
-                bool committed = (mbi.State & MEM_COMMIT) != 0;
-                bool readable = mbi.Protect != 0
-                                && (mbi.Protect & PAGE_NOACCESS) == 0
-                                && (mbi.Protect & PAGE_GUARD) == 0;
-
-                if (committed && readable)
+                if (ScanRegions.ShouldScan(mbi.State, mbi.Protect, mbi.Type))
                 {
                     int want = (int)Math.Min(Math.Min(regionSize, MaxRegionBytes), budget);
                     if (want > 0)

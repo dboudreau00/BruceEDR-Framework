@@ -18,11 +18,15 @@
         {
           "all": [
             { "field": "registryKey", "op": "regex", "value": "(?i)\\\\currentversion\\\\run(?:once|services|servicesonce)?(?:ex)?(?:\\\\|$)" }
+          ],
+          "none": [
+            { "field": "detail", "op": "in", "values": ["create-key", "delete-key", "delete-value"] }
           ]
         }
       ],
       "falsePositives": [
-        "Installers, updaters, sync clients and OEM utilities write Run keys as a matter of course. On a freshly imaged machine this rule fires dozens of times before the user logs in for the first time."
+        "Installers, updaters, sync clients and OEM utilities write Run keys as a matter of course. On a freshly imaged machine this rule fires dozens of times before the user logs in for the first time.",
+        "Only a value written into the key matches. The registry monitor also reports create-key, which is how RegCreateKeyEx opens a key that already exists, and sihost, Explorer and the driver installer do that to the Run keys all day."
       ]
     },
 
@@ -43,11 +47,15 @@
           "all": [
             { "field": "registryKey", "op": "regex", "value": "(?i)\\\\currentversion\\\\run(?:once|services|servicesonce)?(?:ex)?(?:\\\\|$)" },
             { "field": "processName", "op": "in", "values": ["powershell.exe", "pwsh.exe", "cmd.exe", "reg.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe", "wmic.exe"] }
+          ],
+          "none": [
+            { "field": "detail", "op": "in", "values": ["create-key", "delete-key", "delete-value"] }
           ]
         }
       ],
       "falsePositives": [
-        "Provisioning, imaging and configuration-management scripts legitimately write Run keys through reg.exe or PowerShell. Baseline your build process before treating this as an incident."
+        "Provisioning, imaging and configuration-management scripts legitimately write Run keys through reg.exe or PowerShell. Baseline your build process before treating this as an incident.",
+        "Only a value written into the key matches; creating, opening or deleting the key does not."
       ]
     },
 
@@ -66,14 +74,15 @@
       "detection": [
         {
           "all": [
-            { "field": "filePath", "op": "regex", "value": "(?i)\\\\start menu\\\\programs\\\\startup\\\\" },
+            { "field": "filePath", "op": "regex", "value": "(?i)\\\\start menu\\\\programs\\\\startup\\\\[^\\\\]+" },
             { "field": "fileExtension", "op": "notIn", "values": [".ini", ".tmp", ".db"] }
           ]
         }
       ],
       "falsePositives": [
         "Application installers place shortcuts in the Startup folder deliberately, and Group Policy preferences deploy them at scale.",
-        "Some sync clients (OneDrive, Dropbox) rewrite their own Startup shortcut on update."
+        "Some sync clients (OneDrive, Dropbox) rewrite their own Startup shortcut on update.",
+        "Only a path that names a file inside the folder matches. The monitor reports every open, and Windows shell processes open the Startup folder itself constantly, so the bare folder is not a drop."
       ]
     },
 
@@ -211,13 +220,14 @@
             { "field": "filePath", "op": "regex", "value": "(?i)\\\\windows\\\\system32\\\\tasks\\\\" }
           ],
           "none": [
-            { "field": "processName", "op": "in", "values": ["svchost.exe", "taskhostw.exe", "taskeng.exe", "schtasks.exe", "mmc.exe", "trustedinstaller.exe", "tiworker.exe", "msiexec.exe"] }
+            { "field": "processName", "op": "in", "values": ["svchost.exe", "taskhostw.exe", "taskeng.exe", "schtasks.exe", "mmc.exe", "trustedinstaller.exe", "tiworker.exe", "msiexec.exe"] },
+            { "field": "platform", "op": "in", "values": ["searchindexer.exe", "svchost.exe"] }
           ]
         }
       ],
       "falsePositives": [
         "Some management agents and imaging tools write task XML directly rather than calling the API; those need a name exclusion.",
-        "Backup software reading the Tasks directory can appear here if the monitor reports opens rather than writes."
+        "The monitor reports opens as well as writes, so anything that reads the Tasks directory matches. The Windows Search indexer and the Task Scheduler's svchost do so constantly and are excluded by verified image (the platform field), not by name; backup software is not and needs an exclusion."
       ]
     },
 

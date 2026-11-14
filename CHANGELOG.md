@@ -105,9 +105,45 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   T1055) counted read-only masks such as `0x410` and `GENERIC_READ`, so WMI, Defrag and VMware
   Tools reached quarantine on a clean lab VM by looking at three processes. It now counts only
   rights that change the target (thread creation, memory writes, handle duplication, DACL or
-  owner changes, `MAXIMUM_ALLOWED` and the wide grants). Reading LSASS still scores 60, so the
-  WMI provider host still reaches quarantine on a clean machine: it reads LSASS (`0x410`) to
-  answer process queries.
+  owner changes, `MAXIMUM_ALLOWED` and the wide grants). Reading LSASS still scores 60, apart
+  from the two readers named in the next entry.
+- **Windows' own processes no longer reach quarantine on a clean machine.** In enforce mode the
+  guard kept csrss, svchost and the antivirus alive, but the verdicts were still false and the
+  processes outside the guard (WmiPrvSE, conhost, Widgets) were suspended. The causes, each fixed
+  at its source:
+  - **Verified Windows components** (`Security/PlatformImages.cs`). A process counts as one when
+    its image is the component's own file in the component's own folder and no account other than
+    SYSTEM, Administrators or TrustedInstaller can write it or anything above it, and the
+    process is the instance Windows started (a service under a service account, svchost started
+    by services.exe), since any user can start such a file and hollow it out; the name alone
+    counts for nothing. The cross-process rule does not score such a process (csrss opens every
+    new process with full rights, svchost and lsass duplicate handles, conhost asks for
+    `MAXIMUM_ALLOWED`, the System process is pid 4), and the genuine WMI provider host and
+    Defender engine (MsMpEng, NisSrv) are not scored for reading LSASS with a read mask. Writing
+    to LSASS, or any other process, is scored whoever asks. Rule packs reach the same check
+    through the new `platform` field. The table holds services of the system only; powershell,
+    cmd, rundll32, mshta and the other programs that run whatever they are given are not in it.
+  - **Process names lost their extension.** The registry and process-access monitors report
+    `svchost`, the kernel and the rule packs say `svchost.exe`, and the last signal to arrive
+    decided whether any exclusion by name held. Names are normalised on entry.
+  - **Opening a Run key scored as persistence.** `RegCreateKeyEx` opens an existing key, so
+    sihost and the driver installer "created" `Run`, `RunOnce` and `RunNotification` (the
+    builtin rule matched any key that starts with `Run`). Only a value written into a Run,
+    RunOnce, RunOnceEx or RunServices key scores now, in the builtin rule and in both pack rules.
+  - **Opening a folder scored as a drop.** The Startup folder itself, and the Tasks folder when
+    the Windows Search indexer or the Task Scheduler's svchost reads it, no longer match
+    `startup-folder-drop` and `scheduled-task-xml-drop`; a file inside them still does.
+  - **WebView2.** The genuine runtime reading its host's cookies and Local State under an
+    `EBWebView` folder (Widgets, Search and the Start menu on Windows 11) is not scored.
+  - **The memory scan matched the operating system.** `SetWindowsHookEx`, `GetAsyncKeyState` and
+    `keybd_event` are exports of user32.dll, so every process with a window held them in
+    unmodified image pages, and any process another rule had scored 20 gained +40. The scan now
+    skips image pages that have not been written and files mapped read-only. Hits are written to
+    the incident text defanged (`s[t]ealer`): the log held the very strings the scanner looks
+    for, so every reader of it (VMware Tools copying it out of a guest, the desktop app, a
+    shell) was flagged in turn.
+  - **The agent no longer scores itself.** Its triage files in `Windows\Temp` and the IOC list in
+    its own memory scored the agent as a staging, stealing process.
 
 ## [3.3.0] - 2026-11-14
 

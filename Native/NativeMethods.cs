@@ -17,6 +17,9 @@ internal static class NativeMethods
 
     // Memory state / protection flags
     public const uint MEM_COMMIT = 0x1000;
+    public const uint MEM_PRIVATE = 0x20000;
+    public const uint MEM_MAPPED = 0x40000;
+    public const uint MEM_IMAGE = 0x1000000;
     public const uint PAGE_NOACCESS = 0x01;
     public const uint PAGE_GUARD = 0x100;
     public const uint PAGE_READONLY = 0x02;

@@ -47,16 +47,7 @@ public sealed class MemoryScanner : IMemoryScanner
                 long regionSize = (long)mbi.RegionSize;
                 if (regionSize <= 0) break;
 
-                bool committed = (mbi.State & MEM_COMMIT) != 0;
-                // "Not NOACCESS and not GUARD" is not "readable": it also passed
-                // PAGE_EXECUTE (no read) and reserved-but-uncommitted protections, and a
-                // ReadProcessMemory on those fails and aborted the whole region. Require
-                // a protection that actually grants read.
-                bool readable = (mbi.Protect & PAGE_READABLE_MASK) != 0
-                                && (mbi.Protect & PAGE_NOACCESS) == 0
-                                && (mbi.Protect & PAGE_GUARD) == 0;
-
-                if (committed && readable)
+                if (ScanRegions.ShouldScan(mbi.State, mbi.Protect, mbi.Type))
                 {
                     long scanSize = Math.Min(Math.Min(regionSize, MaxRegionBytes), budget);
                     budget -= ScanRegion(h, mbi.BaseAddress, scanSize, hits, sw);
