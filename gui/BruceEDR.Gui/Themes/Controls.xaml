@@ -888,4 +888,16 @@
         </Setter>
     </Style>
 
+    <!-- Numeric field that shows its validation message under itself instead of WPF's red box -->
+    <ControlTemplate x:Key="Validation.Inline">
+        <StackPanel>
+            <Border BorderBrush="{StaticResource Brush.Threat}" BorderThickness="1" CornerRadius="{StaticResource Radius.Control}">
+                <AdornedElementPlaceholder/>
+            </Border>
+            <TextBlock Text="{Binding [0].ErrorContent}" Margin="0,4,0,0" FontSize="11"
+                       Foreground="{StaticResource Brush.Threat}"/>
+        </StackPanel>
+    </ControlTemplate>
+
+
 </ResourceDictionary>

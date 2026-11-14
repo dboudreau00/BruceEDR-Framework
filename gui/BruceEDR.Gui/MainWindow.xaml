@@ -11,7 +11,7 @@
         TextOptions.TextFormattingMode="Ideal"
         UseLayoutRounding="True">
 
-    <!-- Analyst muscle-memory shortcuts: F5 refresh, Ctrl+1..5 jump to a view -->
+    <!-- F5 refresh, Ctrl+1..7 jump to a view -->
     <Window.InputBindings>
         <KeyBinding Key="F5" Command="{Binding RefreshCommand}"/>
         <KeyBinding Key="D1" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="0"/>

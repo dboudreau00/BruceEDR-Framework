@@ -23,6 +23,8 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - Tooltips, context menus and the watchlist pickers were stock light controls on the dark
   theme; the pickers' selected value was close to unreadable.
 - API surface had no column headers; its endpoint count was the display cap, not the total.
+- Settings refuses warn and contain thresholds the config would silently clamp, and says why.
+  It also lists the correct shortcuts (Ctrl+1 to Ctrl+7).
 - `publish-release.ps1` fails if the zip has backslash entry names. Under Windows PowerShell 5.1
   the .NET Framework zip API still writes them, so run the script under PowerShell 7 (`pwsh`).
 
@@ -36,6 +38,7 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - Network map: Miller projection instead of a stretched plate carree, glowing markers, country
   labels, a pulse on threat markers, and arcs from the country of the Windows region setting.
 - Sidebar icons with live badges, a status card, toasts for action results and view transitions.
+- A save bar pinned to the bottom of Settings.
 
 ## [3.2.0] - 2026-10-08
 

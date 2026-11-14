@@ -119,8 +119,30 @@ public sealed class SettingsViewModel : ViewModelBase
         SaveMessage = "";
     }
 
+    /// <summary>The config would silently clamp these, so say what is wrong before saving.</summary>
+    private string? ValidateThresholds()
+    {
+        if (WarnThreshold < 1 || WarnThreshold > 99) return "Warn at score must be between 1 and 99.";
+        if (QuarantineThreshold <= WarnThreshold) return "Contain at score must be higher than warn at score.";
+        if (QuarantineThreshold > 100) return "Contain at score cannot be above 100.";
+        if (TrustDiscount < 0) return "The trusted-signer discount cannot be negative.";
+        if (CorrelationWindowSeconds < 1) return "The correlation window must be at least 1 second.";
+        return null;
+    }
+
+    private bool _saveFailed;
+    public bool SaveFailed { get => _saveFailed; private set => Set(ref _saveFailed, value); }
+
     private void Save()
     {
+        var problem = ValidateThresholds();
+        if (problem is not null)
+        {
+            SaveFailed = true;
+            SaveMessage = "Not saved. " + problem;
+            return;
+        }
+        SaveFailed = false;
         try
         {
             // Read-modify-write against the file. The Watchlist editor holds its own
@@ -161,6 +183,7 @@ public sealed class SettingsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
+            SaveFailed = true;
             SaveMessage = "Save failed: " + ex.Message;
         }
     }
