@@ -7,6 +7,10 @@
 // reported to the connected agent without waiting. The decisions themselves are pure
 // functions in BruceFilterPolicy.c, tested in user mode under test\.
 //
+// The process guard (BruceProcessGuard.c) closes the other way into a trusted program, through
+// its process: while blocking is on, a handle to it loses its dangerous access rights unless
+// the process asking is trusted for the same stores.
+//
 // Names never fail open. Before an open the filter checks the opened name, and expands an
 // 8.3 alias through the normalized name. An open whose name cannot be resolved beforehand
 // (an open by file id, a failed query) is decided after the file system opens it, and
@@ -23,6 +27,7 @@
 #include <fltKernel.h>
 #include "BruceFilter.h"
 #include "BruceFilterPolicy.h"
+#include "BruceProcessGuard.h"
 
 #define BRUCE_TAG     'ecrB'
 #define BRUCE_RECHECK ((PVOID)(ULONG_PTR)1)
@@ -159,8 +164,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
         FltUnregisterFilter(gFilter);
         gFilter = NULL;
         FltDeletePushLock(&gPolicyLock);
+        return status;
     }
-    return status;
+
+    // The file guard does not wait on the process guard: if its callbacks cannot be registered
+    // (an image without /INTEGRITYCHECK or a signature, an altitude taken), the driver runs
+    // without it, and BRUCE_STATUS.ProcessGuard tells the agent.
+    (VOID)BruceProcessGuardStart(gFilter, &gPolicyLock, &gLive);
+    return STATUS_SUCCESS;
 }
 
 // The port admits SYSTEM only. FltBuildDefaultSecurityDescriptor would also admit
@@ -209,6 +220,8 @@ static NTSTATUS FLTAPI BruceUnload(FLT_FILTER_UNLOAD_FLAGS Flags)
     if (!FlagOn(Flags, FLTFL_FILTER_UNLOAD_MANDATORY) && gLive.Blocking)
         return STATUS_FLT_DO_NOT_DETACH;
 
+    // The handle callbacks and the report queue go first: they send through the port below.
+    BruceProcessGuardStop();
     // The server port closes first, or unloading can hang on a connected client.
     if (gServerPort != NULL)
     {
@@ -307,12 +320,10 @@ static VOID BruceCopyName(_Out_writes_(BRUCE_MAX_PATH) WCHAR* Dest, _In_opt_ PCU
     Dest[chars] = L'\0';
 }
 
-// Reports a refusal to the agent. Never waits: with no reader at that moment the report is
+// Sends one report to the agent. Never waits: with no reader at that moment the report is
 // dropped and counted, and the refusal stands either way.
-static VOID BruceNotify(_In_ BRUCE_OPERATION Operation, _In_ PFLT_CALLBACK_DATA Data, _In_ ULONG PrefixIndex,
-    _In_opt_ PCUNICODE_STRING Path, _In_opt_ PCUNICODE_STRING Image)
+VOID BruceSendNotification(_In_ const BRUCE_NOTIFICATION* Note)
 {
-    PBRUCE_NOTIFICATION note;
     LARGE_INTEGER noWait;
     NTSTATUS status;
 
@@ -322,9 +333,26 @@ static VOID BruceNotify(_In_ BRUCE_OPERATION Operation, _In_ PFLT_CALLBACK_DATA 
         InterlockedIncrement(&gNotifyDropped);
         return;
     }
+    noWait.QuadPart = 0;
+    status = FltSendMessage(gFilter, &gClientPort, (PVOID)Note, sizeof(*Note), NULL, NULL, &noWait);
+    if (status != STATUS_SUCCESS) InterlockedIncrement(&gNotifyDropped);
+}
+
+static VOID BruceNotify(_In_ BRUCE_OPERATION Operation, _In_ PFLT_CALLBACK_DATA Data, _In_ ULONG PrefixIndex,
+    _In_opt_ PCUNICODE_STRING Path, _In_opt_ PCUNICODE_STRING Image)
+{
+    PBRUCE_NOTIFICATION note;
+
+    if (gClientPort == NULL)
+    {
+        InterlockedIncrement(&gDenied);
+        InterlockedIncrement(&gNotifyDropped);
+        return;
+    }
     note = (PBRUCE_NOTIFICATION)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(*note), BRUCE_TAG);
     if (note == NULL)
     {
+        InterlockedIncrement(&gDenied);
         InterlockedIncrement(&gNotifyDropped);
         return;
     }
@@ -334,10 +362,7 @@ static VOID BruceNotify(_In_ BRUCE_OPERATION Operation, _In_ PFLT_CALLBACK_DATA 
     note->PrefixIndex = PrefixIndex;
     BruceCopyName(note->Path, Path);
     BruceCopyName(note->Image, Image);
-
-    noWait.QuadPart = 0;
-    status = FltSendMessage(gFilter, &gClientPort, note, sizeof(*note), NULL, NULL, &noWait);
-    if (status != STATUS_SUCCESS) InterlockedIncrement(&gNotifyDropped);
+    BruceSendNotification(note);
     ExFreePoolWithTag(note, BRUCE_TAG);
 }
 
@@ -629,6 +654,7 @@ static VOID FLTAPI BrucePortDisconnect(PVOID ConnectionCookie)
     // Sets gClientPort to NULL, in step with any FltSendMessage in flight. The policy stays:
     // killing the agent does not switch protection off.
     FltCloseClientPort(gFilter, &gClientPort);
+    BruceProcessGuardSetAgent(NULL);
 }
 
 static NTSTATUS BruceReplyStatus(_Out_writes_bytes_opt_(OutputBufferLength) PVOID OutputBuffer,
@@ -646,6 +672,7 @@ static NTSTATUS BruceReplyStatus(_Out_writes_bytes_opt_(OutputBufferLength) PVOI
     status.PrefixCount = gLive.PrefixCount;
     status.TrustedCount = gLive.TrustedCount;
     FltReleasePushLock(&gPolicyLock);
+    status.ProcessGuard = BruceProcessGuardFlags();
     status.Denied = (UINT32)gDenied;
     status.Rechecked = (UINT32)gRechecked;
     status.NotifyDropped = (UINT32)gNotifyDropped;
@@ -679,6 +706,10 @@ static NTSTATUS FLTAPI BrucePortMessage(
     *ReturnOutputBufferLength = 0;
     if (InputBuffer == NULL || InputBufferLength < sizeof(message)) return STATUS_INVALID_PARAMETER;
 
+    // Messages come from the one SYSTEM client the port admits, in its own process: the process
+    // guard leaves that process's handles whole.
+    BruceProcessGuardSetAgent(IoGetCurrentProcess());
+
     // FltMgr has probed both buffers for the caller's mode (PFLT_MESSAGE_NOTIFY), but they stay
     // raw user memory the caller can unmap at any moment: each is touched once, under
     // try/except, as a byte copy that assumes no alignment.
@@ -704,6 +735,7 @@ static NTSTATUS FLTAPI BrucePortMessage(
         FltAcquirePushLockExclusive(&gPolicyLock);
         BrucePolicyCommit(&gLive, &gStaged);
         FltReleasePushLock(&gPolicyLock);
+        BruceProcessGuardPolicyChanged();
         return STATUS_SUCCESS;
 
     case BruceQueryStatus:

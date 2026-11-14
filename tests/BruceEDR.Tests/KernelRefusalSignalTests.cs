@@ -336,6 +336,19 @@ public sealed class KernelRefusalSignalTests : IDisposable
         Assert.Equal(0, submitted);
     }
 
+    [Theory]
+    [InlineData(KernelOperation.ProcessHandle)]
+    [InlineData(KernelOperation.ThreadHandle)]
+    public void A_process_guard_report_is_not_scored_as_a_store_refusal(KernelOperation op)
+    {
+        int submitted = 0;
+        var feed = new KernelRefusalFeed(_ => submitted++);
+
+        Assert.False(Refuse(feed, 4242, "chrome", op));
+        Assert.Equal(0, submitted);
+        Assert.True(Refuse(feed, 4242, "chrome"), "a store refusal by the same process still counts");
+    }
+
     // ================================================================ containment
 
     [Fact]

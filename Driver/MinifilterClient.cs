@@ -16,19 +16,32 @@ public enum KernelOperation
     /// <summary>A hard link onto a guarded path.</summary>
     Link = 3,
     /// <summary>An open by file id or with no readable name, cancelled once the opened file's name was certain.</summary>
-    Reopen = 4
+    Reopen = 4,
+    /// <summary>Dangerous access removed from a handle to a process whose image is trusted for a store.</summary>
+    ProcessHandle = 5,
+    /// <summary>The same for a handle to one of that process's threads.</summary>
+    ThreadHandle = 6
 }
 
 /// <summary>
 /// One refusal reported by the driver (BRUCE_NOTIFICATION). Paths are NT paths
 /// (\Device\HarddiskVolume3\...). StoreIndex is the store's position in the pushed policy,
-/// or -1 when the driver refused a name it could not resolve.
+/// or -1 when the driver refused a name it could not resolve. For a handle operation
+/// (<see cref="KernelOperation.ProcessHandle"/>, <see cref="KernelOperation.ThreadHandle"/>)
+/// ProcessId and Image are the process that asked for the handle, Path is the trusted target's
+/// image and StoreIndex the first store it is trusted for.
 /// </summary>
 public sealed record KernelDenial(KernelOperation Operation, int ProcessId, int StoreIndex, string Path, string Image);
 
 /// <summary>The driver's live policy and its counters since it loaded (BRUCE_STATUS).</summary>
 public sealed record KernelStatus(uint Version, bool Blocking, uint StoreCount, uint TrustedCount,
-    uint Denied, uint Rechecked, uint NotifyDropped);
+    uint Denied, uint Rechecked, uint NotifyDropped, uint ProcessGuard = 0)
+{
+    /// <summary>BRUCE_GUARD_ACTIVE: the handle callbacks that protect trusted processes are registered.</summary>
+    public bool ProcessGuardActive => (ProcessGuard & 1) != 0;
+    /// <summary>BRUCE_GUARD_ENUMERATED: the processes running at driver load are covered too.</summary>
+    public bool ProcessGuardCoversRunning => (ProcessGuard & 2) != 0;
+}
 
 /// <summary>
 /// User-mode side of the BruceFilter minifilter, protocol 2 (kernel\BruceFilter\BruceFilter.h).
@@ -136,7 +149,10 @@ public sealed class MinifilterClient : IKernelPort
                 return KernelConnect.Failed;
             }
             _log.Info($"minifilter connected (protocol {ProtocolVersion}); live policy: {status.StoreCount} store(s), " +
-                      $"{status.TrustedCount} trusted image(s), blocking {(status.Blocking ? "ON" : "off")}");
+                      $"{status.TrustedCount} trusted image(s), blocking {(status.Blocking ? "ON" : "off")}, " +
+                      (status.ProcessGuardActive
+                          ? "process guard on" + (status.ProcessGuardCoversRunning ? "" : " (programs already running at driver load are not covered)")
+                          : "process guard OFF (handles to trusted programs are not restricted)"));
             return KernelConnect.Connected;
         }
         catch (DllNotFoundException)
@@ -227,7 +243,7 @@ public sealed class MinifilterClient : IKernelPort
     {
         if (reply.Length < StatusSize) return null;
         return new KernelStatus(U32(reply, 0), U32(reply, 4) != 0, U32(reply, 8), U32(reply, 12),
-            U32(reply, 16), U32(reply, 20), U32(reply, 24));
+            U32(reply, 16), U32(reply, 20), U32(reply, 24), U32(reply, 28));
     }
 
     /// <summary>A BRUCE_NOTIFICATION (the bytes after FILTER_MESSAGE_HEADER), or null if it is not one.</summary>
@@ -235,7 +251,7 @@ public sealed class MinifilterClient : IKernelPort
     {
         if (body.Length < NotificationSize) return null;
         uint version = U32(body, 0), operation = U32(body, 4), pid = U32(body, 8), store = U32(body, 12);
-        if (version != ProtocolVersion || operation < 1 || operation > 4 || pid > int.MaxValue) return null;
+        if (version != ProtocolVersion || operation < 1 || operation > 6 || pid > int.MaxValue) return null;
         return new KernelDenial((KernelOperation)operation, (int)pid, store < MaxStores ? (int)store : -1,
             WireText(body.Slice(16, MaxPath * 2)), WireText(body.Slice(16 + MaxPath * 2, MaxPath * 2)));
     }

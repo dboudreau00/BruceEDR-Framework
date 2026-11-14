@@ -73,6 +73,10 @@ public sealed class MinifilterClientTests
         Assert.Equal((int)KernelOperation.Rename, EnumValue(h, "BruceOpRename"));
         Assert.Equal((int)KernelOperation.Link, EnumValue(h, "BruceOpLink"));
         Assert.Equal((int)KernelOperation.Reopen, EnumValue(h, "BruceOpReopen"));
+        Assert.Equal((int)KernelOperation.ProcessHandle, EnumValue(h, "BruceOpProcessHandle"));
+        Assert.Equal((int)KernelOperation.ThreadHandle, EnumValue(h, "BruceOpThreadHandle"));
+        Assert.Equal(1u, (uint)Define(h, "BRUCE_GUARD_ACTIVE"));
+        Assert.Equal(2u, (uint)Define(h, "BRUCE_GUARD_ENUMERATED"));
     }
 
     [Fact]
@@ -108,10 +112,16 @@ public sealed class MinifilterClientTests
     public void A_Status_Reply_Reads_Every_Field()
     {
         var reply = new byte[32];
-        uint[] values = { 2, 1, 6, 3, 41, 5, 9, 0 };
+        uint[] values = { 2, 1, 6, 3, 41, 5, 9, 3 };
         for (int i = 0; i < values.Length; i++) BinaryPrimitives.WriteUInt32LittleEndian(reply.AsSpan(i * 4), values[i]);
         var status = MinifilterClient.DecodeStatus(reply);
-        Assert.Equal(new KernelStatus(2, true, 6, 3, 41, 5, 9), status);
+        Assert.Equal(new KernelStatus(2, true, 6, 3, 41, 5, 9, 3), status);
+        Assert.True(status!.ProcessGuardActive);
+        Assert.True(status.ProcessGuardCoversRunning);
+        BinaryPrimitives.WriteUInt32LittleEndian(reply.AsSpan(28), 0);
+        Assert.False(MinifilterClient.DecodeStatus(reply)!.ProcessGuardActive);
+        BinaryPrimitives.WriteUInt32LittleEndian(reply.AsSpan(28), 1);
+        Assert.False(MinifilterClient.DecodeStatus(reply)!.ProcessGuardCoversRunning);
         Assert.Null(MinifilterClient.DecodeStatus(new byte[31]));
     }
 
@@ -143,6 +153,20 @@ public sealed class MinifilterClientTests
     }
 
     [Fact]
+    public void A_Handle_Report_Names_The_Requester_And_The_Trusted_Target()
+    {
+        var process = MinifilterClient.DecodeNotification(Notification(2, 5, 777, 0,
+            @"\Device\HarddiskVolume3\Program Files\Google\Chrome\Application\chrome.exe",
+            @"\Device\HarddiskVolume3\Users\bob\AppData\Local\Temp\stealer.exe"));
+        Assert.Equal(KernelOperation.ProcessHandle, process!.Operation);
+        Assert.Equal(777, process.ProcessId);
+        Assert.Equal(0, process.StoreIndex);
+        Assert.EndsWith(@"\chrome.exe", process.Path);
+        Assert.EndsWith(@"\stealer.exe", process.Image);
+        Assert.Equal(KernelOperation.ThreadHandle, MinifilterClient.DecodeNotification(Notification(2, 6, 8, 3, "t", ""))!.Operation);
+    }
+
+    [Fact]
     public void An_Unresolved_Name_Has_No_Store()
     {
         var denial = MinifilterClient.DecodeNotification(Notification(2, 4, 8, 0xFFFFFFFF, "", ""));
@@ -156,7 +180,7 @@ public sealed class MinifilterClientTests
     {
         Assert.Null(MinifilterClient.DecodeNotification(Notification(1, 1, 8, 0, "x", "y")));
         Assert.Null(MinifilterClient.DecodeNotification(Notification(2, 0, 8, 0, "x", "y")));
-        Assert.Null(MinifilterClient.DecodeNotification(Notification(2, 5, 8, 0, "x", "y")));
+        Assert.Null(MinifilterClient.DecodeNotification(Notification(2, 7, 8, 0, "x", "y")));
         Assert.Null(MinifilterClient.DecodeNotification(Notification(2, 1, 0x80000000, 0, "x", "y")));
         Assert.Null(MinifilterClient.DecodeNotification(new byte[1055]));
     }

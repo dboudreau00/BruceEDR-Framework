@@ -289,6 +289,174 @@ static void TestMidPathStreams(void)
     CHECK(Match(&g_live, L"\\Users\\bob\\Documents\\notes.txt:Exodus\\x") == BRUCE_NO_MATCH);
 }
 
+// The rights the process guard removes are the SDK's own, spelled out in the policy header.
+// Compile-time checks, like the wire layout above.
+C_ASSERT(BRUCE_PROCESS_CREATE_THREAD == PROCESS_CREATE_THREAD);
+C_ASSERT(BRUCE_PROCESS_VM_OPERATION == PROCESS_VM_OPERATION);
+C_ASSERT(BRUCE_PROCESS_VM_WRITE == PROCESS_VM_WRITE);
+C_ASSERT(BRUCE_PROCESS_DUP_HANDLE == PROCESS_DUP_HANDLE);
+C_ASSERT(BRUCE_PROCESS_CREATE_PROCESS == PROCESS_CREATE_PROCESS);
+C_ASSERT(BRUCE_PROCESS_SET_INFORMATION == PROCESS_SET_INFORMATION);
+C_ASSERT(BRUCE_PROCESS_SUSPEND_RESUME == PROCESS_SUSPEND_RESUME);
+C_ASSERT(BRUCE_THREAD_SUSPEND_RESUME == THREAD_SUSPEND_RESUME);
+C_ASSERT(BRUCE_THREAD_SET_CONTEXT == THREAD_SET_CONTEXT);
+C_ASSERT(BRUCE_THREAD_SET_INFORMATION == THREAD_SET_INFORMATION);
+C_ASSERT(BRUCE_THREAD_DIRECT_IMPERSONATION == THREAD_DIRECT_IMPERSONATION);
+C_ASSERT(BRUCE_ACCESS_GENERIC_ALL == GENERIC_ALL);
+C_ASSERT(BRUCE_ACCESS_GENERIC_WRITE == GENERIC_WRITE);
+C_ASSERT(BRUCE_ACCESS_MAXIMUM_ALLOWED == MAXIMUM_ALLOWED);
+C_ASSERT(BRUCE_ACCESS_ALL == PROCESS_ALL_ACCESS);
+C_ASSERT(BRUCE_ACCESS_ALL == THREAD_ALL_ACCESS);
+// What stays: terminate, memory reads, queries, quota, waiting, the thread's context read.
+C_ASSERT((BRUCE_PROCESS_STRIP & (PROCESS_TERMINATE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION |
+    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_QUOTA | PROCESS_SET_LIMITED_INFORMATION | SYNCHRONIZE | READ_CONTROL)) == 0);
+C_ASSERT((BRUCE_THREAD_STRIP & (THREAD_TERMINATE | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION |
+    THREAD_QUERY_LIMITED_INFORMATION | THREAD_SET_LIMITED_INFORMATION | SYNCHRONIZE | READ_CONTROL)) == 0);
+C_ASSERT(BRUCE_PROCESS_STRIP == 0x0AEA);
+C_ASSERT(BRUCE_THREAD_STRIP == 0x0232);
+
+static void TestTrustMask(void)
+{
+    const WCHAR* chrome = L"\\Device\\HarddiskVolume3\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+    const WCHAR* firefox = L"\\Device\\HarddiskVolume3\\Program Files\\Mozilla Firefox\\firefox.exe";
+    const WCHAR* backup = L"\\Device\\HarddiskVolume3\\Program Files\\Backup\\agent.exe";
+    const WCHAR* both = L"\\Device\\HarddiskVolume3\\Program Files\\Both\\both.exe";
+
+    Seed(&g_staged);   // three fragments: bits 0, 1, 2
+    CHECK(Send(&g_staged, BruceAddTrustedImage, 0, chrome) == BruceApplyOk);
+    CHECK(Send(&g_staged, BruceAddTrustedImage, 1, firefox) == BruceApplyOk);
+    CHECK(Send(&g_staged, BruceAddTrustedImage, BRUCE_ANY_PREFIX, backup) == BruceApplyOk);
+    CHECK(Send(&g_staged, BruceAddTrustedImage, 0, both) == BruceApplyOk);
+    CHECK(Send(&g_staged, BruceAddTrustedImage, 2, both) == BruceApplyOk);
+    CHECK(BrucePolicyTrustMask(&g_staged, chrome, wcslen(chrome)) == 0x1);
+    CHECK(BrucePolicyTrustMask(&g_staged, firefox, wcslen(firefox)) == 0x2);
+    // Trusted for every store: every fragment of the policy, and no bit past them.
+    CHECK(BrucePolicyTrustMask(&g_staged, backup, wcslen(backup)) == 0x7);
+    // Two entries for one image add up.
+    CHECK(BrucePolicyTrustMask(&g_staged, both, wcslen(both)) == 0x5);
+    // Any case, nothing else: another file, a prefix, empty, null.
+    CHECK(BrucePolicyTrustMask(&g_staged, L"\\DEVICE\\HARDDISKVOLUME3\\PROGRAM FILES\\GOOGLE\\CHROME\\APPLICATION\\CHROME.EXE",
+        wcslen(chrome)) == 0x1);
+    CHECK(BrucePolicyTrustMask(&g_staged, L"\\Device\\HarddiskVolume3\\Users\\bob\\chrome.exe",
+        wcslen(L"\\Device\\HarddiskVolume3\\Users\\bob\\chrome.exe")) == 0);
+    CHECK(BrucePolicyTrustMask(&g_staged, chrome, wcslen(chrome) - 1) == 0);
+    CHECK(BrucePolicyTrustMask(&g_staged, chrome, 0) == 0);
+    CHECK(BrucePolicyTrustMask(&g_staged, NULL, 0) == 0);
+    // An entry scoped to a fragment the policy does not have (the staging rules never make one)
+    // trusts the image for nothing.
+    g_staged.TrustedPrefix[0] = 40;
+    CHECK(BrucePolicyTrustMask(&g_staged, chrome, wcslen(chrome)) == 0);
+    // A full table of fragments: the any-store mask is all 64 bits, not a wrapped shift.
+    CHECK(Send(&g_staged, BruceClearPolicy, 0, NULL) == BruceApplyOk);
+    for (int i = 0; i < BRUCE_MAX_ENTRIES; i++)
+    {
+        WCHAR fragment[32];
+        swprintf_s(fragment, 32, L"\\dir%02d\\", i);
+        CHECK(Send(&g_staged, BruceAddSensitivePath, 0, fragment) == BruceApplyOk);
+    }
+    CHECK(Send(&g_staged, BruceAddTrustedImage, BRUCE_ANY_PREFIX, backup) == BruceApplyOk);
+    CHECK(Send(&g_staged, BruceAddTrustedImage, 63, chrome) == BruceApplyOk);
+    CHECK(BrucePolicyTrustMask(&g_staged, backup, wcslen(backup)) == ~0ull);
+    CHECK(BrucePolicyTrustMask(&g_staged, chrome, wcslen(chrome)) == (1ull << 63));
+    // No fragments: trusted for every store of nothing.
+    CHECK(Send(&g_staged, BruceClearPolicy, 0, NULL) == BruceApplyOk);
+    CHECK(BrucePolicyTrustMask(&g_staged, backup, wcslen(backup)) == 0);
+}
+
+static ACCESS_MASK Guard(BOOLEAN thread, ULONGLONG target, ULONGLONG receiver, ACCESS_MASK desired)
+{
+    BRUCE_HANDLE_REQUEST request;
+    ZeroMemory(&request, sizeof(request));
+    request.IsThread = thread;
+    request.TargetTrust = target;
+    request.ReceiverTrust = receiver;
+    request.Desired = desired;
+    return BruceGuardAccess(&request);
+}
+
+static void TestGuardAccess(void)
+{
+    const ACCESS_MASK all = PROCESS_ALL_ACCESS;
+    const ACCESS_MASK keptProcess = PROCESS_TERMINATE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION |
+        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_QUOTA | SYNCHRONIZE;
+    BRUCE_HANDLE_REQUEST request;
+
+    // An untrusted process asking for everything gets what the strip mask leaves.
+    CHECK(Guard(FALSE, 0x1, 0, all) == (all & ~BRUCE_PROCESS_STRIP));
+    CHECK((Guard(FALSE, 0x1, 0, all) & keptProcess) == keptProcess);
+    CHECK((Guard(FALSE, 0x1, 0, all) & BRUCE_PROCESS_STRIP) == 0);
+    // Each stripped right alone, and each kept one alone.
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_VM_WRITE) == 0);
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_VM_OPERATION) == 0);
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_CREATE_THREAD) == 0);
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_DUP_HANDLE) == 0);
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_CREATE_PROCESS) == 0);
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_SET_INFORMATION) == 0);
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_SUSPEND_RESUME) == 0);
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_TERMINATE) == PROCESS_TERMINATE);
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_VM_READ) == PROCESS_VM_READ);
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_QUERY_LIMITED_INFORMATION) == PROCESS_QUERY_LIMITED_INFORMATION);
+    CHECK(Guard(FALSE, 0x1, 0, PROCESS_VM_READ | PROCESS_VM_WRITE) == PROCESS_VM_READ);
+    // Threads: the context write, suspend, set information and impersonation go; the rest stays.
+    CHECK(Guard(TRUE, 0x1, 0, THREAD_ALL_ACCESS) == (THREAD_ALL_ACCESS & ~BRUCE_THREAD_STRIP));
+    CHECK(Guard(TRUE, 0x1, 0, THREAD_SET_CONTEXT) == 0);
+    CHECK(Guard(TRUE, 0x1, 0, THREAD_SUSPEND_RESUME) == 0);
+    CHECK(Guard(TRUE, 0x1, 0, THREAD_SET_INFORMATION) == 0);
+    CHECK(Guard(TRUE, 0x1, 0, THREAD_DIRECT_IMPERSONATION) == 0);
+    CHECK(Guard(TRUE, 0x1, 0, THREAD_GET_CONTEXT) == THREAD_GET_CONTEXT);
+    CHECK(Guard(TRUE, 0x1, 0, THREAD_TERMINATE) == THREAD_TERMINATE);
+    CHECK(Guard(TRUE, 0x1, 0, THREAD_QUERY_LIMITED_INFORMATION) == THREAD_QUERY_LIMITED_INFORMATION);
+    // A bit means different things on a process and a thread: each object uses its own mask.
+    CHECK(Guard(FALSE, 0x1, 0, THREAD_SET_CONTEXT) == THREAD_SET_CONTEXT);   // 0x10 is PROCESS_VM_READ
+    CHECK(Guard(TRUE, 0x1, 0, PROCESS_VM_READ) == 0);                        // 0x10 is THREAD_SET_CONTEXT
+    // The target is not protected: nothing is touched.
+    CHECK(Guard(FALSE, 0, 0, all) == all);
+    CHECK(Guard(TRUE, 0, 0, THREAD_ALL_ACCESS) == THREAD_ALL_ACCESS);
+    // The receiver is trusted for every store the target is trusted for: Chrome and its renderers.
+    CHECK(Guard(FALSE, 0x1, 0x1, all) == all);
+    CHECK(Guard(FALSE, 0x1, 0x3, all) == all);               // more than enough
+    CHECK(Guard(FALSE, 0x1, ~0ull, all) == all);             // trusted for every store
+    CHECK(Guard(TRUE, 0x1, 0x1, THREAD_ALL_ACCESS) == THREAD_ALL_ACCESS);
+    // Trusted for another store only, or for some of the target's: not the same stores.
+    CHECK(Guard(FALSE, 0x1, 0x2, all) == (all & ~BRUCE_PROCESS_STRIP));
+    CHECK(Guard(FALSE, 0x5, 0x1, all) == (all & ~BRUCE_PROCESS_STRIP));
+    CHECK(Guard(FALSE, 0x5, 0x4, all) == (all & ~BRUCE_PROCESS_STRIP));
+    CHECK(Guard(FALSE, 0x5, 0x5, all) == all);
+    CHECK(Guard(FALSE, 1ull << 63, 1ull << 62, all) == (all & ~BRUCE_PROCESS_STRIP));
+    CHECK(Guard(FALSE, 1ull << 63, 1ull << 63, all) == all);
+    // The target's own process, kernel handles and exempt receivers keep what they asked for.
+    ZeroMemory(&request, sizeof(request));
+    request.TargetTrust = 0x1;
+    request.Desired = all;
+    request.SameProcess = TRUE;
+    CHECK(BruceGuardAccess(&request) == all);
+    request.SameProcess = FALSE;
+    request.KernelHandle = TRUE;
+    CHECK(BruceGuardAccess(&request) == all);
+    request.KernelHandle = FALSE;
+    request.ReceiverExempt = TRUE;
+    CHECK(BruceGuardAccess(&request) == all);
+    request.ReceiverExempt = FALSE;
+    CHECK(BruceGuardAccess(&request) == (all & ~BRUCE_PROCESS_STRIP));
+    // A request that names no right is not left to be resolved afterwards.
+    CHECK(Guard(FALSE, 0x1, 0, MAXIMUM_ALLOWED) == (PROCESS_ALL_ACCESS & ~BRUCE_PROCESS_STRIP));
+    CHECK(Guard(FALSE, 0x1, 0, GENERIC_ALL) == (PROCESS_ALL_ACCESS & ~BRUCE_PROCESS_STRIP));
+    CHECK(Guard(TRUE, 0x1, 0, MAXIMUM_ALLOWED | SYNCHRONIZE) == (THREAD_ALL_ACCESS & ~BRUCE_THREAD_STRIP));
+    CHECK(Guard(FALSE, 0x1, 0, GENERIC_WRITE) == 0);
+    CHECK(Guard(FALSE, 0x1, 0, GENERIC_READ) == GENERIC_READ);
+    CHECK(Guard(FALSE, 0x1, 0x1, MAXIMUM_ALLOWED) == MAXIMUM_ALLOWED);
+    CHECK(Guard(FALSE, 0, 0, MAXIMUM_ALLOWED) == MAXIMUM_ALLOWED);
+    // The early exit agrees: only a request holding a stripped right or a wildcard needs a lookup.
+    CHECK(BruceGuardCares(FALSE, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ | PROCESS_TERMINATE) == FALSE);
+    CHECK(BruceGuardCares(FALSE, PROCESS_VM_WRITE) == TRUE);
+    CHECK(BruceGuardCares(FALSE, MAXIMUM_ALLOWED) == TRUE);
+    CHECK(BruceGuardCares(FALSE, GENERIC_ALL) == TRUE);
+    CHECK(BruceGuardCares(FALSE, GENERIC_WRITE) == TRUE);
+    CHECK(BruceGuardCares(TRUE, THREAD_QUERY_LIMITED_INFORMATION | THREAD_GET_CONTEXT) == FALSE);
+    CHECK(BruceGuardCares(TRUE, THREAD_SET_CONTEXT) == TRUE);
+    CHECK(BruceGuardCares(FALSE, 0) == FALSE);
+}
+
 int main(void)
 {
     TestMatching();
@@ -299,6 +467,8 @@ int main(void)
     TestCommit();
     TestLinkBuffer();
     TestMidPathStreams();
+    TestTrustMask();
+    TestGuardAccess();
     printf("%d checks, %d failed\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

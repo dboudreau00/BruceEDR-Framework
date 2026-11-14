@@ -37,14 +37,24 @@ typedef struct _BRUCE_STATUS {
     UINT32 Denied;           // operations refused since load
     UINT32 Rechecked;        // opens decided after the file system opened them
     UINT32 NotifyDropped;    // denials no reader was waiting for
-    UINT32 Reserved;
+    UINT32 ProcessGuard;     // BRUCE_GUARD_* flags; 0 when the process guard is not running
 } BRUCE_STATUS, *PBRUCE_STATUS;
+
+// BRUCE_STATUS.ProcessGuard. Absent bits mean the file guard runs alone, as before.
+#define BRUCE_GUARD_ACTIVE     0x00000001u   // the handle callbacks are registered
+#define BRUCE_GUARD_ENUMERATED 0x00000002u   // processes running at load were enumerated
 
 typedef enum _BRUCE_OPERATION {
     BruceOpOpen   = 1,   // an open refused before the file system saw it
     BruceOpRename = 2,   // a rename onto a guarded path
     BruceOpLink   = 3,   // a hard link onto a guarded path
-    BruceOpReopen = 4    // an open cancelled once its name was certain
+    BruceOpReopen = 4,   // an open cancelled once its name was certain
+    // Process guard. No layout changes: ProcessId is the process that asked for the handle (the
+    // one that would receive a duplicate), PrefixIndex the first store the target is trusted
+    // for, Path the target's image and Image the requester's. An agent that predates these
+    // values drops them.
+    BruceOpProcessHandle = 5,   // dangerous access removed from a handle to a trusted process
+    BruceOpThreadHandle  = 6    // the same for a handle to one of its threads
 } BRUCE_OPERATION;
 
 // Sent to user mode for every refusal, without waiting: a slow or absent reader drops it.

@@ -117,6 +117,102 @@ static DWORD SetShortName(_In_z_ const wchar_t* path, _In_z_ const wchar_t* name
     return error;
 }
 
+// ------------------------------------------------------------------ process probes
+
+// Starts `<exe> probe hold <seconds>`: a copy of this program to be reached into.
+static BOOL StartCopy(_In_z_ const wchar_t* exe, _In_z_ const wchar_t* seconds, BOOL suspended, _Out_ PROCESS_INFORMATION* pi)
+{
+    wchar_t command[LAB_PATH + 64];
+    STARTUPINFOW si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    ZeroMemory(pi, sizeof(*pi));
+    swprintf_s(command, _countof(command), L"\"%ls\" probe hold %ls", exe, seconds);
+    return CreateProcessW(exe, command, NULL, NULL, FALSE, CREATE_NO_WINDOW | (suspended ? CREATE_SUSPENDED : 0),
+        NULL, NULL, &si, pi);
+}
+
+// The first step of an injection: a page in the other process, and one byte written to it.
+static DWORD WriteInto(HANDLE process)
+{
+    static const char byte = 'x';
+    DWORD error = ERROR_SUCCESS;
+    void* page = VirtualAllocEx(process, NULL, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (page == NULL) return GetLastError();
+    if (!WriteProcessMemory(process, page, &byte, 1, NULL)) error = GetLastError();
+    VirtualFreeEx(process, page, 0, MEM_RELEASE);
+    return error;
+}
+
+// `spawn <exe>`: CreateProcess of another copy, as Explorer or Task Scheduler starts a program.
+static DWORD Spawn(_In_z_ const wchar_t* exe)
+{
+    PROCESS_INFORMATION pi;
+    DWORD code = ERROR_SUCCESS;
+    if (!StartCopy(exe, L"0", FALSE, &pi)) return GetLastError();
+    if (WaitForSingleObject(pi.hProcess, 10000) != WAIT_OBJECT_0 || !GetExitCodeProcess(pi.hProcess, &code))
+    {
+        TerminateProcess(pi.hProcess, 0);
+        code = ERROR_TIMEOUT;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return code;
+}
+
+// `spawnwrite <exe>`: start a copy suspended, write into it and resume it, as an injector does
+// with a program it starts itself.
+static DWORD SpawnWrite(_In_z_ const wchar_t* exe)
+{
+    PROCESS_INFORMATION pi;
+    DWORD error;
+    if (!StartCopy(exe, L"30", TRUE, &pi)) return GetLastError();
+    error = WriteInto(pi.hProcess);
+    if (error == ERROR_SUCCESS && ResumeThread(pi.hThread) == (DWORD)-1) error = GetLastError();
+    TerminateProcess(pi.hProcess, 0);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return error;
+}
+
+// `vmwrite <pid>`: open a running process for writing and write into it.
+static DWORD VmWrite(_In_z_ const wchar_t* pidText)
+{
+    DWORD error;
+    HANDLE h = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE, FALSE, wcstoul(pidText, NULL, 10));
+    if (h == NULL) return GetLastError();
+    error = WriteInto(h);
+    CloseHandle(h);
+    return error;
+}
+
+// `dup <pid>`: open a running process to copy its handles, and copy one. Without
+// PROCESS_DUP_HANDLE the call fails before it looks at the handle value.
+static DWORD DupFrom(_In_z_ const wchar_t* pidText)
+{
+    DWORD error = ERROR_SUCCESS;
+    HANDLE copy = NULL;
+    HANDLE h = OpenProcess(PROCESS_DUP_HANDLE, FALSE, wcstoul(pidText, NULL, 10));
+    if (h == NULL) return GetLastError();
+    if (!DuplicateHandle(h, (HANDLE)(ULONG_PTR)4, GetCurrentProcess(), &copy, 0, FALSE, DUPLICATE_SAME_ACCESS))
+        error = GetLastError();
+    if (copy != NULL) CloseHandle(copy);
+    CloseHandle(h);
+    return error;
+}
+
+// `suspend <tid>`: open a thread to suspend it and set its context (a hijack), and suspend it.
+static DWORD SuspendIt(_In_z_ const wchar_t* tidText)
+{
+    DWORD error = ERROR_SUCCESS;
+    HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_SET_CONTEXT, FALSE, wcstoul(tidText, NULL, 10));
+    if (h == NULL) return GetLastError();
+    if (SuspendThread(h) == (DWORD)-1) error = GetLastError();
+    else ResumeThread(h);
+    CloseHandle(h);
+    return error;
+}
+
 static int Probe(int argc, _In_reads_(argc) wchar_t** argv)
 {
     const wchar_t* op;
@@ -128,6 +224,12 @@ static int Probe(int argc, _In_reads_(argc) wchar_t** argv)
     else if (wcscmp(op, L"read") == 0) error = ProbeOpen(argv[3], TRUE, FALSE);
     else if (wcscmp(op, L"list") == 0) error = ProbeList(argv[3]);
     else if (wcscmp(op, L"delete") == 0) error = DeleteFileW(argv[3]) ? ERROR_SUCCESS : GetLastError();
+    else if (wcscmp(op, L"hold") == 0) { Sleep(wcstoul(argv[3], NULL, 10) * 1000); error = ERROR_SUCCESS; }
+    else if (wcscmp(op, L"spawn") == 0) error = Spawn(argv[3]);
+    else if (wcscmp(op, L"spawnwrite") == 0) error = SpawnWrite(argv[3]);
+    else if (wcscmp(op, L"vmwrite") == 0) error = VmWrite(argv[3]);
+    else if (wcscmp(op, L"dup") == 0) error = DupFrom(argv[3]);
+    else if (wcscmp(op, L"suspend") == 0) error = SuspendIt(argv[3]);
     else if (argc < 5) error = ERROR_INVALID_PARAMETER;
     else if (wcscmp(op, L"openid") == 0) error = ProbeOpenById(argv[3], argv[4]);
     else if (wcscmp(op, L"rename") == 0) error = MoveFileExW(argv[3], argv[4], 0) ? ERROR_SUCCESS : GetLastError();
@@ -186,8 +288,10 @@ static void Disconnect(void)
 
 static void ShowStatus(_In_ const BRUCE_STATUS* s)
 {
-    Out(L"driver: protocol %u, blocking %ls, %u store(s), %u trusted image(s); denied %u, rechecked %u, reports dropped %u\n",
-        s->Version, s->Blocking ? L"ON" : L"off", s->PrefixCount, s->TrustedCount, s->Denied, s->Rechecked, s->NotifyDropped);
+    Out(L"driver: protocol %u, blocking %ls, %u store(s), %u trusted image(s); denied %u, rechecked %u, reports dropped %u; process guard %ls\n",
+        s->Version, s->Blocking ? L"ON" : L"off", s->PrefixCount, s->TrustedCount, s->Denied, s->Rechecked, s->NotifyDropped,
+        (s->ProcessGuard & BRUCE_GUARD_ACTIVE) == 0 ? L"OFF" :
+        (s->ProcessGuard & BRUCE_GUARD_ENUMERATED) != 0 ? L"on" : L"on (running programs not covered)");
 }
 
 static BOOL ResetDriver(void)
@@ -332,7 +436,9 @@ typedef struct _LAB_TREE {
     wchar_t ShadowSecret[LAB_PATH];    // secret.txt inside a Volume Shadow Copy, once one exists
     wchar_t SecretId[32];              // file id of secret.txt, hex
     wchar_t NearId[32];                // file id of near.txt, hex
-    BOOL HasJunction, HasSymlink, HasDirSymlink, HasTrustedJunction, HasShortName, HasTraverseDeny, HasSmb, HasShadow;
+    wchar_t HeldPid[16];               // a trusted copy the harness keeps running, for the process guard
+    wchar_t HeldTid[16];               //   and its first thread
+    BOOL HasJunction, HasSymlink, HasDirSymlink, HasTrustedJunction, HasShortName, HasTraverseDeny, HasSmb, HasShadow, HasHeld;
 } LAB_TREE;
 
 static const char gSecretText[] = "lab secret: whoever reads this got past the guard\r\n";
@@ -764,6 +870,8 @@ static const wchar_t* OperationName(UINT32 operation)
     case BruceOpRename: return L"rename";
     case BruceOpLink:   return L"link";
     case BruceOpReopen: return L"reopen";
+    case BruceOpProcessHandle: return L"process";
+    case BruceOpThreadHandle:  return L"thread";
     default:            return L"?";
     }
 }
@@ -1019,6 +1127,29 @@ static int Scenarios(_In_ const LAB_TREE* t, _Out_writes_(max) LAB_SCENARIO* lis
     // ~digit is never expanded: ...\data\BLSHORT\Secret Store\ would not carry the fragment.
     n = AddScenario(list, n, max, L"gives a folder above the store a short name", FALSE, ExpectRefused, BruceOpRename,
         L"shortname", t->Above, L"BLSHORT");
+
+    // The process guard. A program that starts the trusted copy must be able to (Task Scheduler
+    // could not, before the creator was exempt), and so it may write into it: residual 1. The
+    // harness started the held copy, so the probes reaching into it are not its creator.
+    n = AddScenario(list, n, max, L"untrusted starts the trusted copy", FALSE, ExpectAllowed, 0, L"spawn", gTrusted, NULL);
+    n = AddScenario(list, n, max, L"untrusted starts the trusted copy, writes into it", FALSE, ExpectResidual, 0,
+        L"spawnwrite", gTrusted, NULL);
+    n = AddScenario(list, n, max, L"untrusted writes into a running trusted copy", FALSE, ExpectRefused, BruceOpProcessHandle,
+        L"vmwrite", t->HeldPid, NULL);
+    list[n - 1].Skip = !t->HasHeld;
+    n = AddScenario(list, n, max, L"untrusted copies a handle out of it", FALSE, ExpectRefused, BruceOpProcessHandle,
+        L"dup", t->HeldPid, NULL);
+    list[n - 1].Skip = !t->HasHeld;
+    list[n - 1].DryError = ERROR_INVALID_HANDLE;   // with the right granted, handle 4 may not exist there
+    n = AddScenario(list, n, max, L"untrusted suspends one of its threads", FALSE, ExpectRefused, BruceOpThreadHandle,
+        L"suspend", t->HeldTid, NULL);
+    list[n - 1].Skip = !t->HasHeld;
+    n = AddScenario(list, n, max, L"the trusted copy writes into another trusted copy", TRUE, ExpectAllowed, 0,
+        L"vmwrite", t->HeldPid, NULL);
+    list[n - 1].Skip = !t->HasHeld;
+    n = AddScenario(list, n, max, L"untrusted writes into it, blocking off", FALSE, ExpectAllowed, 0, L"vmwrite", t->HeldPid, NULL);
+    list[n - 1].Skip = !t->HasHeld;
+    list[n - 1].BlockingOff = TRUE;
     return n;
 }
 
@@ -1094,6 +1225,7 @@ static int Run(_In_z_ const wchar_t* work)
     BRUCE_STATUS before, after;
     wchar_t trustedNt[LAB_PATH], self[LAB_PATH], selfNt[LAB_PATH];
     HANDLE reader = NULL;
+    PROCESS_INFORMATION held = { 0 };
     int count, i, exitCode;
 
     ZeroMemory(&totals, sizeof(totals));
@@ -1158,6 +1290,15 @@ static int Run(_In_z_ const wchar_t* work)
         Out(L"lab policy: %ls guarded, trusted: %ls\n", LAB_FRAGMENT, trustedNt);
     }
 
+    // Started once the policy trusts its image, so the guard counts it as protected from the start.
+    if (StartCopy(gTrusted, L"600", FALSE, &held))
+    {
+        swprintf_s(tree.HeldPid, _countof(tree.HeldPid), L"%lu", held.dwProcessId);
+        swprintf_s(tree.HeldTid, _countof(tree.HeldTid), L"%lu", held.dwThreadId);
+        tree.HasHeld = TRUE;
+    }
+    else Out(L"note: the trusted copy to hold could not be started (error %lu); its rows are skipped\n", GetLastError());
+
     count = Scenarios(&tree, scenarios, _countof(scenarios));
     Out(L"\n #  %-52ls %-9ls %-8ls %-8ls %-12ls verdict\n", L"scenario", L"as", L"expected", L"got", L"report");
     for (i = 0; i < count; i++) RunScenario(i + 1, &scenarios[i], &totals);
@@ -1165,6 +1306,14 @@ static int Run(_In_z_ const wchar_t* work)
     exitCode = totals.Fail == 0 ? 0 : EXIT_LAB_FAIL;
 
 teardown:
+    if (held.hProcess != NULL)
+    {
+        TerminateProcess(held.hProcess, 0);
+        WaitForSingleObject(held.hProcess, 5000);
+        CloseHandle(held.hProcess);
+    }
+    if (held.hThread != NULL) CloseHandle(held.hThread);
+    tree.HasHeld = FALSE;
     if (!gDryRun)
     {
         if (QueryStatus(&after))
@@ -1200,7 +1349,11 @@ static void Usage(void)
         L"  BruceLab.exe probe <open|openrp|read|list|delete> <path>\n"
         L"  BruceLab.exe probe <rename|copy> <from> <to>\n"
         L"  BruceLab.exe probe link <new-link> <existing-file>\n"
-        L"  BruceLab.exe probe openid <volume-root> <file-id-hex>\n");
+        L"  BruceLab.exe probe openid <volume-root> <file-id-hex>\n"
+        L"  BruceLab.exe probe hold <seconds>\n"
+        L"  BruceLab.exe probe <spawn|spawnwrite> <exe>\n"
+        L"  BruceLab.exe probe <vmwrite|dup> <pid>\n"
+        L"  BruceLab.exe probe suspend <tid>\n");
 }
 
 static int Command(int argc, _In_reads_(argc) wchar_t** argv)

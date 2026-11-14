@@ -47,6 +47,9 @@
     </ClCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\fltMgr.lib</AdditionalDependencies>
+      <!-- The process guard's ObRegisterCallbacks and PsSetCreateProcessNotifyRoutineEx refuse an
+           image without IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY. -->
+      <AdditionalOptions>/INTEGRITYCHECK %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
@@ -55,10 +58,12 @@
   <ItemGroup>
     <ClCompile Include="BruceFilter.c" />
     <ClCompile Include="BruceFilterPolicy.c" />
+    <ClCompile Include="BruceProcessGuard.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="BruceFilter.h" />
     <ClInclude Include="BruceFilterPolicy.h" />
+    <ClInclude Include="BruceProcessGuard.h" />
   </ItemGroup>
   <ItemGroup>
     <Inf Include="BruceFilter.inf" />

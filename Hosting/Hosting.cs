@@ -547,20 +547,28 @@ public sealed class Composition : IDisposable
         {
             KernelOperation.Rename => "rename",
             KernelOperation.Link => "hard link",
+            KernelOperation.ProcessHandle => "process handle",
+            KernelOperation.ThreadHandle => "thread handle",
             _ => "open"
         };
+        bool handle = denial.Operation is KernelOperation.ProcessHandle or KernelOperation.ThreadHandle;
         string process = image.Length > 0 ? Path.GetFileName(image) : "";
+        string who = $"pid {denial.ProcessId} " + (process.Length > 0 ? process : "(image unknown)");
+        string more = held > 0 ? $"; {held} other refusal(s) in the last minute were not logged one by one" : "";
         Log.Action(new BruceEvent
         {
             Pid = denial.ProcessId,
             Process = process,
             Image = image,
-            Trigger = "Kernel refused " + operation,
-            Reasons = new[] { "guarded store: " + store, "path: " + path },
-            Message = $"kernel refused {operation} of {path} ({store}) to pid {denial.ProcessId} " +
-                      (process.Length > 0 ? process : "(image unknown)") +
-                      (denial.Operation == KernelOperation.Reopen ? ", after the file system had opened it" : "") +
-                      (held > 0 ? $"; {held} other refusal(s) in the last minute were not logged one by one" : "")
+            Trigger = handle ? "Kernel restricted a " + operation : "Kernel refused " + operation,
+            Reasons = handle
+                ? new[] { "trusted for store: " + store, "target: " + path }
+                : new[] { "guarded store: " + store, "path: " + path },
+            Message = handle
+                ? $"kernel removed memory-write, thread, handle-duplication and suspend access from a {operation} to {path} " +
+                  $"({store}) requested by {who}{more}"
+                : $"kernel refused {operation} of {path} ({store}) to {who}" +
+                  (denial.Operation == KernelOperation.Reopen ? ", after the file system had opened it" : "") + more
         });
     }
 

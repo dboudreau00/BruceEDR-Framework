@@ -243,3 +243,41 @@ BOOLEAN BrucePolicyReadLinkTarget(_In_reads_bytes_(Length) const VOID* Buffer, _
     *NameBytes = info->FileNameLength;
     return TRUE;
 }
+
+ULONGLONG BrucePolicyTrustMask(_In_ const BRUCE_POLICY* Policy, _In_reads_(Chars) const WCHAR* Image, _In_ SIZE_T Chars)
+{
+    ULONGLONG every = Policy->PrefixCount >= 64 ? ~0ull : ((1ull << Policy->PrefixCount) - 1);
+    ULONGLONG mask = 0;
+    if (Image == NULL || Chars == 0) return 0;
+    for (ULONG t = 0; t < Policy->TrustedCount; t++)
+    {
+        ULONG scope = Policy->TrustedPrefix[t];
+        if (Policy->TrustedChars[t] != Chars || !BruceEqualsUpcased(Image, Policy->Trusted[t], Chars)) continue;
+        if (scope == BRUCE_ANY_PREFIX) mask |= every;
+        else if (scope < Policy->PrefixCount) mask |= 1ull << scope;
+    }
+    return mask;
+}
+
+ACCESS_MASK BruceGuardAccess(_In_ const BRUCE_HANDLE_REQUEST* Request)
+{
+    ACCESS_MASK strip = Request->IsThread ? BRUCE_THREAD_STRIP : BRUCE_PROCESS_STRIP;
+    ACCESS_MASK desired = Request->Desired;
+
+    if (Request->KernelHandle || Request->TargetTrust == 0) return desired;
+    if (Request->SameProcess || Request->ReceiverExempt) return desired;
+    // Trusted for every store the target is trusted for: Chrome's browser and its renderers
+    // are one image; Edge, or a backup agent trusted for another store, is not.
+    if ((Request->TargetTrust & ~Request->ReceiverTrust) == 0) return desired;
+
+    if ((desired & (BRUCE_ACCESS_GENERIC_ALL | BRUCE_ACCESS_MAXIMUM_ALLOWED)) != 0)
+        desired = (desired & ~(BRUCE_ACCESS_GENERIC_ALL | BRUCE_ACCESS_MAXIMUM_ALLOWED)) | BRUCE_ACCESS_ALL;
+    desired &= ~BRUCE_ACCESS_GENERIC_WRITE;
+    return desired & ~strip;
+}
+
+BOOLEAN BruceGuardCares(_In_ BOOLEAN IsThread, _In_ ACCESS_MASK Desired)
+{
+    ACCESS_MASK strip = IsThread ? BRUCE_THREAD_STRIP : BRUCE_PROCESS_STRIP;
+    return (Desired & (strip | BRUCE_ACCESS_GENERIC_ALL | BRUCE_ACCESS_GENERIC_WRITE | BRUCE_ACCESS_MAXIMUM_ALLOWED)) != 0;
+}

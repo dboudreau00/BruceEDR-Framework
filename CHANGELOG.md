@@ -51,9 +51,21 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - **While blocking is on, `fltmc unload` and `fltmc detach` are refused** (`STATUS_FLT_DO_NOT_DETACH`).
   A service stop still unloads it, and an administrator can still switch blocking off as SYSTEM;
   `lab.ps1 uninstall` now resets the driver first.
+- **The process guard.** While blocking is on, a program not trusted for a store can no longer
+  reach into one that is: a handle to a trusted process, or to one of its threads, loses the
+  rights to write its memory, create threads in it, copy its handles, set its information,
+  suspend it and set a thread's context. Termination, memory reads and queries stay. System,
+  protected processes, the agent and the program that started the trusted one keep every right;
+  without that last exemption Explorer and Task Scheduler could not start a trusted program. A
+  program that starts the browser itself can still write into it before it runs
+  (`kernel/BruceFilter/docs/process-guard.md`, residual 1). Each restriction is an ACTION event;
+  it is not scored, since debuggers and task managers ask for the same rights. The driver is now
+  linked with `/INTEGRITYCHECK`, which these callbacks require, and `build.ps1` fails a build in
+  which a Filter Manager release is compiled as a tail call: Driver Verifier reads that as a
+  leak, which stopped a lab VM twice during development.
 - **Every refusal is an event**: ACTION, with the process, its image, the store and the path, at
   most once a minute per process, operation and path.
-- **A refusal is also detection evidence.** Each refusal reaches the detection engine as a
+- **A refusal is also detection evidence.** Each store refusal reaches the detection engine as a
   `KernelRefusal` signal (one per process and store a minute), so a stealer the kernel kept out is
   scored (+40 per guarded store, T1555.003 / T1539 for browsers, T1555 / T1005 for wallets, T1539 /
   T1552.001 for Discord), correlated with a staged archive like a credential read, and contained
@@ -62,15 +74,16 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   and records the incident and contains nothing.
 - `kernel/BruceFilter/build.ps1` builds the driver from the WDK NuGet packages, without the WDK
   installer: compile at `/W4 /WX`, driver code analysis, InfVerif, Inf2Cat, and user-mode tests
-  of the decision code the driver runs (195 checks). A `driver` CI workflow runs it.
+  of the decision code the driver runs (340 checks). A `driver` CI workflow runs it.
 - **A VM lab for the driver** (`kernel/BruceFilter/lab`). `lab.ps1 prepare` signs and stages a
   package with a lab certificate; in a test VM, `testsigning`, `install` and `test` load the
-  driver and run 42 scenarios through it as SYSTEM, from a trusted and an untrusted copy of one
+  driver and run 49 scenarios through it as SYSTEM, from a trusted and an untrusted copy of one
   program: opens, streams, junctions, symlinks, 8.3 and custom short names, opens by file id
   (including the recheck after the open), copies, deletes, links and renames, a shadow copy and
-  SMB loopback, each refusal checked against the exact operation the driver reports. Two more
-  checks confirm `fltmc unload` and `fltmc detach` are refused. Driver Verifier and an
-  end-to-end run with the agent service are one command each.
+  SMB loopback, starting the trusted copy and reaching into a running one, each refusal checked
+  against the exact operation the driver reports. Two more checks confirm `fltmc unload` and
+  `fltmc detach` are refused. Driver Verifier and an end-to-end run with the agent service are
+  one command each.
 
 ### Fixed
 

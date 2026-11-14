@@ -64,3 +64,65 @@ VOID BrucePolicyCommit(_Inout_ BRUCE_POLICY* Live, _In_ const BRUCE_POLICY* Stag
 // too short for the name it claims to hold.
 BOOLEAN BrucePolicyReadLinkTarget(_In_reads_bytes_(Length) const VOID* Buffer, _In_ ULONG Length,
     _Out_ HANDLE* RootDirectory, _Outptr_result_maybenull_ const WCHAR** Name, _Out_ ULONG* NameBytes);
+
+// ------------------------------------------------------------------ process guard
+//
+// Handle callbacks (BruceProcessGuard.c) take away the dangerous access bits of a handle to a
+// process whose image is trusted for a store, unless the process asking is trusted for the
+// same stores. The numbers are the documented access rights, spelled out so the kernel and
+// the user-mode tests agree on them; the tests compare each with the SDK's constant.
+//
+// Taken from a process handle: the ways into a trusted process that never open its files.
+#define BRUCE_PROCESS_CREATE_THREAD   0x0002   // remote thread
+#define BRUCE_PROCESS_VM_OPERATION    0x0008   // VirtualProtectEx, WriteProcessMemory
+#define BRUCE_PROCESS_VM_WRITE        0x0020   // WriteProcessMemory
+#define BRUCE_PROCESS_DUP_HANDLE      0x0040   // DuplicateHandle: the browser's own open file handles
+#define BRUCE_PROCESS_CREATE_PROCESS  0x0080   // parent for a child that inherits its handles
+#define BRUCE_PROCESS_SET_INFORMATION 0x0200   // debug object, token, instrumentation callback
+#define BRUCE_PROCESS_SUSPEND_RESUME  0x0800   // suspend, resume, attach a debugger
+#define BRUCE_PROCESS_STRIP \
+    (BRUCE_PROCESS_CREATE_THREAD | BRUCE_PROCESS_VM_OPERATION | BRUCE_PROCESS_VM_WRITE | \
+     BRUCE_PROCESS_DUP_HANDLE | BRUCE_PROCESS_CREATE_PROCESS | BRUCE_PROCESS_SET_INFORMATION | \
+     BRUCE_PROCESS_SUSPEND_RESUME)
+// Kept: PROCESS_TERMINATE (a hung browser must stay killable), PROCESS_VM_READ and the query
+// rights (monitors, task managers and the agent's memory scan need them, and the documented
+// list of rights a callback may remove does not include VM_READ), SET_QUOTA, SYNCHRONIZE.
+
+#define BRUCE_THREAD_SUSPEND_RESUME      0x0002
+#define BRUCE_THREAD_SET_CONTEXT         0x0010   // APC injection, thread hijack
+#define BRUCE_THREAD_SET_INFORMATION     0x0020
+#define BRUCE_THREAD_DIRECT_IMPERSONATION 0x0200
+#define BRUCE_THREAD_STRIP \
+    (BRUCE_THREAD_SUSPEND_RESUME | BRUCE_THREAD_SET_CONTEXT | BRUCE_THREAD_SET_INFORMATION | \
+     BRUCE_THREAD_DIRECT_IMPERSONATION)
+
+// A request that names no right: the system may resolve these after the callback ran, so
+// they are replaced by the explicit rights that survive (all access minus the stripped ones).
+#define BRUCE_ACCESS_GENERIC_ALL      0x10000000u
+#define BRUCE_ACCESS_GENERIC_WRITE    0x40000000u
+#define BRUCE_ACCESS_MAXIMUM_ALLOWED  0x02000000u
+#define BRUCE_ACCESS_ALL              0x001FFFFFu   // PROCESS_ALL_ACCESS, THREAD_ALL_ACCESS (Vista and later)
+
+// Bit p is set when the image is trusted for fragment p; an image trusted for every fragment
+// has every bit of the live policy's fragments set. Zero: trusted for nothing, not protected.
+ULONGLONG BrucePolicyTrustMask(_In_ const BRUCE_POLICY* Policy, _In_reads_(Chars) const WCHAR* Image, _In_ SIZE_T Chars);
+
+typedef struct _BRUCE_HANDLE_REQUEST {
+    BOOLEAN   IsThread;        // the target is a thread (of the process whose trust is TargetTrust)
+    BOOLEAN   KernelHandle;
+    BOOLEAN   SameProcess;     // the process that gets the handle is the target's own process
+    BOOLEAN   ReceiverExempt;  // System, a protected process, the agent, the target's creator
+    ULONGLONG TargetTrust;     // BrucePolicyTrustMask of the target process's image
+    ULONGLONG ReceiverTrust;   // the same for the process that gets the handle (0 when unknown)
+    ACCESS_MASK Desired;
+} BRUCE_HANDLE_REQUEST;
+
+// The access the handle may have: Desired, less the stripped rights when the target is
+// protected and the receiver is neither the target, exempt, nor trusted for every store the
+// target is trusted for. Never adds a right the caller did not ask for, except that a
+// request for all or maximum access becomes the explicit rights that survive.
+ACCESS_MASK BruceGuardAccess(_In_ const BRUCE_HANDLE_REQUEST* Request);
+
+// FALSE when the request holds none of the rights the guard removes (and no wildcard), so a
+// callback can leave at once without looking anything up. Most handle requests do exactly that.
+BOOLEAN BruceGuardCares(_In_ BOOLEAN IsThread, _In_ ACCESS_MASK Desired);

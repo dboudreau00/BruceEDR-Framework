@@ -7,10 +7,11 @@ them. The agent pushes the policy over a SYSTEM-only filter port and logs every 
 the driver reports back.
 
 **Status.** Built, analysed and unit-tested by `build.ps1` (below), then loaded in two test-signed
-VMs, Windows 10 21H2 (19044) and Windows 11 22H2 (22621): the lab's 42 scenarios and its two
+VMs, Windows 10 21H2 (19044) and Windows 11 22H2 (22621): the lab's 49 scenarios and its two
 unload checks pass (on Windows 10 under Driver Verifier's standard checks), it unloads clean
-under Verifier, and the agent service drives it end to end. It is signed with a lab certificate only, so a production install
-needs a Microsoft-signed build. `detection.kernelBlocking` stays off by default.
+under Verifier with the process guard active, and the agent service drives it end to end. It is signed with a lab
+certificate only, so a production install needs a Microsoft-signed build.
+`detection.kernelBlocking` stays off by default.
 
 ## What it decides
 
@@ -58,6 +59,13 @@ needs a Microsoft-signed build. `detection.kernelBlocking` stays off by default.
   (5 s, doubling to 5 min, until the agent stops). A reloaded driver starts empty with blocking
   off, so each reconnect pushes the current policy and blocking state again, and a second WARN
   says so once if the driver itself is not loaded.
+- **The process guard** ([docs/process-guard.md](docs/process-guard.md)) covers the other way
+  into a trusted program: while blocking is on, a handle to a process whose image is trusted for
+  a store, or to one of its threads, loses the rights to write its memory, create threads,
+  duplicate its handles, set its information, suspend it and set a thread's context, unless the
+  process asking is trusted for the same stores. System, protected processes, the agent and the
+  process that started the trusted program are exempt; without the last, Explorer and Task
+  Scheduler could not start one. Termination, memory reads and queries stay.
 
 The decisions are pure functions in `BruceFilterPolicy.c`, compiled into both the driver and
 `test\PolicyTests.c`, so the tests exercise the code the kernel runs.
@@ -76,7 +84,8 @@ It runs, failing on the first problem:
 
 1. compile with the WDK's kernel-mode settings, `/W4 /WX`, Spectre mitigation on;
 2. code analysis with the WDK's driver plugins and recommended driver rules;
-3. link `x64\<Configuration>\BruceFilter.sys`;
+3. link `x64\<Configuration>\BruceFilter.sys` with `/INTEGRITYCHECK`, which the process guard's
+   callback registrations require (the driver then loads only when signed);
 4. stamp a copy of the INF, check it with InfVerif (`/w` driver isolation from build 25952,
    and `/h` signing requirements), and build `brucefilter.cat` with Inf2Cat;
 5. build and run `test\PolicyTests.c` against the same policy source;
@@ -156,8 +165,10 @@ Changes to these reload live: the agent rebuilds the policy and swaps it in whol
 ## Limits
 
 - **Trust is by image path.** Code injected into a trusted process inherits its access. The
-  guard stops a stealer reading the stores itself; it does not stop one running inside the
-  browser.
+  file guard stops a stealer reading the stores itself; the process guard stops the common ways
+  of getting into a running browser (memory writes, remote threads, handle duplication), but not
+  a stealer that is already running inside it, not one reading its memory, and not one that
+  starts the browser itself and writes into it before it runs.
 - **Programs installed per user cannot be trusted.** Discord (all three builds) and Exodus
   always install per user, as Chrome can: anything running as that user could replace them. With blocking on
   they are refused their own stores unless exempted.
@@ -204,12 +215,17 @@ Loading on normal machines needs attestation or WHQL signing through the Microso
 Center, and a unique altitude from Microsoft: 385201 in the INF is a placeholder. Both are
 external processes the code cannot satisfy on its own.
 
+The process guard registers its handle callbacks at the same placeholder altitude (385201), which also needs
+an allocation, and its image is linked with `/INTEGRITYCHECK`, so every build must be signed to load.
+
 ## Files
 
 | File | Contents |
 |------|----------|
 | `BruceFilter.c` | registration, the create and set-information callbacks, the port |
 | `BruceFilterPolicy.c`, `.h` | the decisions, shared with the tests |
+| `BruceProcessGuard.c`, `.h` | the process guard: process table, handle callbacks, reports |
+| `docs\process-guard.md` | the process guard's threats, design, masks, residuals and VM test plan |
 | `BruceFilter.h` | the wire protocol, mirrored byte for byte by `Driver/MinifilterClient.cs` |
 | `BruceFilter.inf` | Windows 11 24H2 driver-store sections, plus downlevel sections |
 | `build.ps1`, `packages.config`, `Directory.Build.props` | the build without the VS component |

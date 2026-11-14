@@ -354,9 +354,10 @@ changes take effect on restart.
 - **`kernelBlocking: true` refuses guarded stores to everything not trusted for them.** Each
   store's owner is trusted only where an administrator installed it, so per-user installs
   (Discord, Exodus, a per-user Chrome) lose their own stores unless exempted, and helpers such
-  as backup agents need adding. Trust is by image path: code injected into a trusted browser
-  is not stopped. The driver has been tested in lab VMs only and is signed with a lab
-  certificate; production needs a Microsoft-signed build. See the driver README.
+  as backup agents need adding. Trust is by image path; the driver's process guard keeps other
+  programs from writing into a running trusted browser, but not one that starts the browser
+  itself. The driver has been tested in lab VMs only and is signed with a lab certificate;
+  production needs a Microsoft-signed build. See the driver README.
 - **Host isolation can lock you out.** `isolate` blocks all traffic except
   `response.isolationAllowlist`. If that list is empty you will lose any remote session.
   The console makes you confirm. Playbooks require a second explicit opt-in
@@ -406,8 +407,10 @@ See [`kernel/BruceFilter/README.md`](kernel/BruceFilter/README.md) for what the 
 building it with `build.ps1` (WDK NuGet packages, no WDK install), and the VM lab
 ([`kernel/BruceFilter/lab`](kernel/BruceFilter/lab/README.md)) that signs, loads and tests it.
 The agent's service connects through `MinifilterClient`, pushes the guarded stores and the
-programs trusted for them, and logs every refusal the driver reports. If the driver isn't
-installed, kernel enforcement is simply unavailable and user-mode detection continues.
+programs trusted for them, and logs every refusal the driver reports. While blocking is on, the
+driver also keeps other programs from writing into a trusted program, copying its handles or
+hijacking its threads ([process guard](kernel/BruceFilter/docs/process-guard.md)). If the driver
+isn't installed, kernel enforcement is simply unavailable and user-mode detection continues.
 
 ## Repository layout
 

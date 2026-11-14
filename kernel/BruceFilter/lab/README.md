@@ -88,18 +88,21 @@ stays installed until `uninstall -RemoveAgent`.
 ## Results so far
 
 Both VMs ran with BIOS firmware (no Secure Boot) and test signing on. The first runs used the
-first 24 scenarios; the current build ran all 44 rows.
+first 24 scenarios; the current build ran all 51 rows.
 
-| Windows | 24 rows | 24 rows, Driver Verifier | 44 rows (current build) | Agent end to end |
+| Windows | 24 rows | 24 rows, Driver Verifier | 51 rows (current build) | Agent end to end |
 |---------|---------|--------------------------|-------------------------|------------------|
-| 10 Enterprise LTSC 21H2 (19044) | passed | passed, clean unload | passed under Driver Verifier: 39 pass, 3 observed, 2 skipped | passed |
-| 11 Pro 22H2 (22621) | passed | passed | passed: 39 pass, 3 observed, 2 skipped | passed |
+| 10 Enterprise LTSC 21H2 (19044) | passed | passed, clean unload | passed under Driver Verifier: 46 pass, 3 observed, 2 skipped; clean unload after it | passed |
+| 11 Pro 22H2 (22621) | passed | passed | passed: 44 pass, 3 observed, 4 skipped | passed |
 
-The skipped rows are 40 and 41: SYSTEM in a workgroup VM cannot use `\\localhost\C$`. Row 29
-reached the recheck after the open and its cancel in both VMs (`reopen`, rechecked +1), row 38
-showed the filter attaches to a shadow copy's volume, row 42 refused a short name on the folder
-above the store, and rows 43 and 44 showed `fltmc unload` and `fltmc detach` refused while
-blocking is on.
+The skipped rows are 40 and 41 (SYSTEM in a workgroup VM cannot use `\\localhost\C$`), and on
+Windows 11 also 38 and 39 (the shadow copy was not made that run). Row 29 reached the recheck
+after the open and its cancel in both VMs (`reopen`, rechecked +1), row 38 showed the filter
+attaches to a shadow copy's volume, row 42 refused a short name on the folder above the store,
+rows 45 to 47 showed the process guard refusing a program that reaches into a trusted copy it
+did not start (rows 43, 44, 48 and 49 allowed, as designed), and rows 50 and 51 showed
+`fltmc unload` and `fltmc detach` refused while blocking is on. The unload after the run, with
+the process guard's reports sent, was clean under Driver Verifier.
 
 With one read waiting, the harness lost up to a third of the reports in a scenario's burst
 (they count as dropped, and the refusal still stands); with eight it received every one: 22 of
@@ -188,19 +191,33 @@ The IRP paths, in the order the I/O manager issues them:
 | 41 | the trusted copy reads it over SMB loopback | refused: by design | open | the server's open is made by the System process, so no program is trusted through SMB |
 | 42 | gives a folder above the store a short name | refused | rename | the set-information callback decides `FileShortNameInformation` like a rename of that folder: since Windows 10 1903 any caller with DELETE access may set a short name of its choosing |
 
+Rows 43 to 49 test the [process guard](../docs/process-guard.md). Rows 45 to 49 reach into a
+trusted copy the harness starts and keeps running (`probe hold`); the harness is its creator, so
+the probes are not. Their reports are `process` (a process handle) and `thread` (a thread handle).
+
+| # | Scenario | Expected | Report | What it exercises |
+|---|----------|----------|--------|-------------------|
+| 43 | starts the trusted copy | allowed | | `CreateProcess`, as Explorer or Task Scheduler would: the creator is exempt, or it could not resume the new process's first thread |
+| 44 | starts the trusted copy suspended, writes into it, resumes it | allowed: known limit | | the creator keeps full access to what it starts (residual 1 of the process guard) |
+| 45 | writes into the running trusted copy | refused | process | `PROCESS_VM_OPERATION` and `PROCESS_VM_WRITE` taken from the handle |
+| 46 | copies a handle out of it | refused | process | `PROCESS_DUP_HANDLE` taken from the handle |
+| 47 | suspends one of its threads | refused | thread | `THREAD_SUSPEND_RESUME` and `THREAD_SET_CONTEXT` taken from the handle |
+| 48 | the trusted copy writes into it | allowed | | an image trusted for the same stores keeps every right |
+| 49 | writes into it with blocking off | allowed | | the guard acts only while blocking is on |
+
 Two more rows follow the scenarios, run as SYSTEM while blocking is on:
 
 | # | Check | Expected | What it exercises |
 |---|-------|----------|-------------------|
-| 43 | `FilterUnload` (what `fltmc unload` calls) | refused, 0x801F0010 | the unload callback refuses a non-mandatory unload |
-| 44 | `FilterDetach` on the system volume (what `fltmc detach` calls) | refused, 0x801F0010 | the instance-teardown callback refuses a manual detach |
+| 50 | `FilterUnload` (what `fltmc unload` calls) | refused, 0x801F0010 | the unload callback refuses a non-mandatory unload |
+| 51 | `FilterDetach` on the system volume (what `fltmc detach` calls) | refused, 0x801F0010 | the instance-teardown callback refuses a manual detach |
 
 Neither is ever allowed to succeed in a run: that would remove the filter mid-run, and the row
 fails. A mandatory unload (`sc stop BruceFilter`) cannot be refused and is not tried.
 
 Scenarios whose set-up could not be made show SKIP: no 8.3 names on the volume (11, 27, 28), no symlink privilege (10, 33), no junction (9, 32, 34, 37), a traverse
 deny that does not stop a token without the privilege (29 to 31), no SMB loopback (40, 41), no shadow
-copy (38, 39). The `observed` rows are recorded in the report, not judged; their output says what
+copy (38, 39), no trusted copy held (45 to 49). The `observed` rows are recorded in the report, not judged; their output says what
 the OS did.
 
 ### Row 29: the post-create recheck

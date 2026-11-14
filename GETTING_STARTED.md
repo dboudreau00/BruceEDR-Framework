@@ -357,7 +357,7 @@ to every program not trusted for them, and the agent logs each refusal. Built
    .\lab\lab.ps1 prepare                 # on the build machine: x64\lab-package
    .\lab.ps1 testsigning                 # in the VM, then reboot
    .\lab.ps1 install
-   .\lab.ps1 test                        # 42 scenarios and 2 unload checks through the loaded driver
+   .\lab.ps1 test                        # 49 scenarios and 2 unload checks through the loaded driver
    ```
 3. Run the agent **as the service** (section 8): the driver's port admits LocalSystem only.
    It connects on startup, pushes the policy and logs what it guards and whom it trusts.

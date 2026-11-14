@@ -26,10 +26,14 @@ public sealed class KernelRefusalFeed
     /// Submits the refusal unless this process was already reported for this store within the
     /// window. <paramref name="store"/> is null when the driver refused a name it could not resolve;
     /// <paramref name="path"/> and <paramref name="image"/> are drive-letter paths. True when submitted.
+    /// A process guard report is not submitted: it says a process asked a trusted program for wide
+    /// access, which debuggers and task managers do too, not that it reached for a store, and the
+    /// cross-process rule already scores the requests that could inject.
     /// </summary>
     public bool Offer(KernelDenial denial, string? store, string path, string image, DateTime nowUtc)
     {
         if (denial.ProcessId <= 0) return false;
+        if (denial.Operation is KernelOperation.ProcessHandle or KernelOperation.ThreadHandle) return false;
         if (!_throttle.Admit($"{denial.ProcessId}|{store}", nowUtc, out _)) return false;
         _submit(ToSignal(denial, store, path, image, nowUtc));
         return true;

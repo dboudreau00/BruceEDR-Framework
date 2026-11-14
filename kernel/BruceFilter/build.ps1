@@ -93,7 +93,7 @@ if (-not $SkipAnalysis) {
                 # The driver rule set includes MSVC's native rule sets by name.
                 "/analyze:rulesetdirectory", "$wdk\CodeAnalysis;$($msvc.FullName)\CodeAnalysis\Rulesets"
 }
-$compile += (Join-Path $PSScriptRoot "BruceFilter.c"), (Join-Path $PSScriptRoot "BruceFilterPolicy.c")
+$compile += (Join-Path $PSScriptRoot "BruceFilter.c"), (Join-Path $PSScriptRoot "BruceFilterPolicy.c"), (Join-Path $PSScriptRoot "BruceProcessGuard.c")
 Write-Host "-- compile$(if (-not $SkipAnalysis) { ' + driver code analysis' })" -ForegroundColor Cyan
 Invoke-Tool $cl $compile "compile"
 
@@ -102,14 +102,25 @@ $sys = Join-Path $out "BruceFilter.sys"
 $linkArgs = @(
     "/nologo", "/DRIVER", "/SUBSYSTEM:NATIVE,10.00", "/ENTRY:GsDriverEntry", "/NODEFAULTLIB",
     "/OPT:REF", "/OPT:ICF", "/MERGE:_TEXT=.text", "/MERGE:_PAGE=PAGE", "/SECTION:INIT,d", "/RELEASE",
+    # ObRegisterCallbacks and PsSetCreateProcessNotifyRoutineEx return STATUS_ACCESS_DENIED to an
+    # image without IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY, which this sets. The image must then
+    # be signed to load at all (a test-signed lab build with test signing on, in a VM).
+    "/INTEGRITYCHECK",
     "/DEBUG", "/INCREMENTAL:NO", "/MANIFEST:NO", "/osversion:10.0",
     "/IGNORE:4198,4010,4037,4039,4065,4070,4078,4087,4089,4221,4108,4088,4218,4235",
     "/OUT:$sys", "/PDB:$out\BruceFilter.pdb", "/LIBPATH:$kmLib",
     "BufferOverflowFastFailK.lib", "ntoskrnl.lib", "hal.lib", "wmilib.lib", "fltMgr.lib",
-    (Join-Path $out "BruceFilter.obj"), (Join-Path $out "BruceFilterPolicy.obj")
+    (Join-Path $out "BruceFilter.obj"), (Join-Path $out "BruceFilterPolicy.obj"), (Join-Path $out "BruceProcessGuard.obj")
 )
 Write-Host "-- link" -ForegroundColor Cyan
 Invoke-Tool $link $linkArgs "link"
+
+# Filter Verifier charges a Filter Manager call to the driver at the call's return address. A
+# free or release compiled as a tail call (jmp) is charged to no one and reads as a leak at
+# unload, which stops a machine that has no debugger attached. Import thunks are `jmp qword ptr`.
+$tracked = 'FltFreeGenericWorkItem|FltFreeDeferredIoWorkItem|FltFreeCallbackData|FltReleaseContexts?|FltReleaseFileNameInformation|FltObjectDereference|FltClose'
+$tailCalls = & (Join-Path $bin "dumpbin.exe") /nologo /disasm:nobytes $sys | Select-String -Pattern "^\s+[0-9A-F]+: jmp\s+($tracked)\s*$"
+if ($tailCalls) { Fail "a Filter Manager release is compiled as a tail call; Filter Verifier would report a leak:`n$($tailCalls -join "`n")" }
 
 # ---------------------------------------------------------------- 4) INF
 $propsXml = [xml](Get-Content (Join-Path $PSScriptRoot "..\..\Directory.Build.props"))
