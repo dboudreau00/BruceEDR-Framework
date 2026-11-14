@@ -357,6 +357,10 @@ public sealed class ThreatProfile
 /// signatures, MITRE ATT&amp;CK, and public Sigma/YARA rules). Replace or extend
 /// with your own threat-intel feed.
 /// </summary>
+/// <summary>One credential store the minifilter can guard: a name operators use in config,
+/// the directory fragment the driver matches, and the executables that own it.</summary>
+public sealed record KernelGuard(string Name, string Fragment, IReadOnlyList<string> Owners);
+
 public static class IocDatabase
 {
     public static readonly string[] LolBins =
@@ -381,9 +385,9 @@ public static class IocDatabase
     };
 
     /// <summary>
-    /// Paths interesting enough to push to the kernel minifilter. Includes whole profile
-    /// DIRECTORIES, which is right for "watch this area" but far too broad for scoring --
-    /// see <see cref="CredentialArtifacts"/>.
+    /// Paths interesting enough to watch. Includes whole profile DIRECTORIES, which is right
+    /// for "watch this area" but far too broad for scoring -- see <see cref="CredentialArtifacts"/>
+    /// -- and for the kernel, which guards the narrower <see cref="KernelGuards"/>.
     /// </summary>
     public static readonly string[] SensitiveFileFragments =
     {
@@ -394,15 +398,24 @@ public static class IocDatabase
     };
 
     /// <summary>
-    /// What is actually sent to the minifilter. The driver does a case-insensitive
-    /// SUBSTRING search of every IRP_MJ_CREATE path, so a bare artifact name such as
-    /// "local state" or "login data" denied every file anywhere whose path happened to
-    /// contain those words. Only directory prefixes go to the kernel; they are still
-    /// process-agnostic (the skeleton driver has no trusted-pid list), which is why
-    /// kernelBlocking stays off by default.
+    /// The credential stores the minifilter guards while detection.kernelBlocking is on, and
+    /// the programs that own each one. The driver refuses any path containing a store's
+    /// fragment as whole names, so a fragment names the store itself and never the program's
+    /// own folder: \exodus\ also matched Exodus's install directory and would have kept the
+    /// wallet from starting, and \discord\leveldb\ matched nothing Discord writes. An owner is
+    /// trusted only where HKLM App Paths puts it in a folder no standard user can change
+    /// (Driver.KernelPolicy). Discord and Exodus install per user, so with blocking on they
+    /// are refused their own stores unless detection.kernelExemptStores names them.
     /// </summary>
-    public static readonly string[] KernelBlockPrefixes =
-        SensitiveFileFragments.Where(f => f.StartsWith('\\') && f.EndsWith('\\')).ToArray();
+    public static readonly KernelGuard[] KernelGuards =
+    {
+        new("chrome", @"\google\chrome\user data\", new[] { "chrome.exe" }),
+        new("edge", @"\microsoft\edge\user data\", new[] { "msedge.exe" }),
+        new("firefox", @"\mozilla\firefox\profiles\", new[] { "firefox.exe" }),
+        new("electrum", @"\electrum\wallets\", new[] { "electrum.exe" }),
+        new("exodus", @"\exodus\exodus.wallet\", new[] { "exodus.exe" }),
+        new("discord", @"\discord\local storage\leveldb\", new[] { "discord.exe" })
+    };
 
     /// <summary>
     /// The specific secret artifacts whose access is worth scoring.

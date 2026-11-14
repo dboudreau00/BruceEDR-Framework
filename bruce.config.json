@@ -8,6 +8,8 @@
     "memoryScanEngine": "builtin",
     "yaraRulesPath": "rules",
     "kernelBlocking": false,
+    "kernelExemptStores": [],
+    "kernelTrustedImages": [],
 
     "rulesPath": "rules/detection",
     "enableRuleEngine": true,

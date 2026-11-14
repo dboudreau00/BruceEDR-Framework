@@ -54,7 +54,15 @@ public sealed class Composition : IDisposable
     private readonly IocFeedHolder _intelHolder;
     private readonly WatchlistHolder _watchHolder;
     private FileSystemWatcher? _configWatcher;
-    private MinifilterClient? _minifilter;
+    private KernelSupervisor<MinifilterClient>? _kernel;
+    /// <summary>Serialises the kernel part of a reload with a reconnect, so neither pushes a stale policy over the other.</summary>
+    private readonly object _kernelGate = new();
+    /// <summary>The config the driver is to match: set by the build and by every reload, read by a reconnect.</summary>
+    private volatile BruceConfig? _kernelConfig;
+    /// <summary>The stores in the driver's live policy, in its order, to name the store a refusal hit.</summary>
+    private volatile IReadOnlyList<KernelGuard> _kernelStores = Array.Empty<KernelGuard>();
+    private DosDeviceMap _dosDevices = DosDeviceMap.Empty;
+    private readonly KernelDenialThrottle _kernelDenials = new(TimeSpan.FromMinutes(1), 60);
     private ControlServer? _control;
 
     /// <summary>
@@ -414,35 +422,129 @@ public sealed class Composition : IDisposable
         catch (Exception ex) { Log.Error("control server", ex); }
     }
 
-    // Best-effort kernel enforcement. If the BruceFilter driver isn't installed the
-    // connect fails quietly and user-mode detection continues on its own. The client is
-    // retained for the process lifetime so ApplyKernelBlocking can re-send the block
-    // toggle on a config reload; the sensitive-path list below is sent only here.
+    // Best-effort kernel enforcement. If the BruceFilter driver isn't installed, is too old, or
+    // refuses this process (its port admits the LocalSystem service only), the connect fails
+    // with the reason logged and user-mode detection continues on its own. Once connected, the
+    // supervisor holds the link for the process lifetime: a reload re-pushes the policy and the
+    // block toggle through it, and if the driver is unloaded or its port closes it warns and
+    // reconnects, arming the new connection from the current config.
     private void ConnectMinifilter(BruceConfig cfg)
     {
         try
         {
-            var client = new MinifilterClient(Log);
-            if (!client.TryConnect()) { client.Dispose(); return; }
-
-            client.ClearPolicy();
-            foreach (var fragment in IocDatabase.KernelBlockPrefixes)
-                client.AddSensitivePath(fragment);
-            bool blocking = EffectiveKernelBlocking(cfg);
-            client.SetBlocking(blocking);
-            _minifilter = client;
-            // "monitor mode" overstated the non-blocking case: the client only pushes policy
-            // and never reads from the port, so with blocking off the driver reports nothing
-            // to user mode at all -- it is not monitoring anything we can see.
-            Log.Info(blocking
-                ? "kernel enforcement ENABLED (driver denies sensitive-path opens; denials are " +
-                  "logged by the driver only, not surfaced here)"
-                : cfg.Detection.KernelBlocking
-                    ? "minifilter connected, enforcement OFF: detection.kernelBlocking is on, but response.mode is monitor, which never blocks"
-                    : "minifilter connected, enforcement OFF (policy pushed; no kernel telemetry consumed)");
+            _kernelConfig = cfg;
+            var kernel = new KernelSupervisor<MinifilterClient>(
+                () => new MinifilterClient(Log), ArmMinifilter, Log.Warn, Log.Info);
+            _kernel = kernel;
+            if (!kernel.Start()) { _kernel = null; kernel.Dispose(); }
         }
         catch (Exception ex) { Log.Error("minifilter setup", ex); }
     }
+
+    /// <summary>
+    /// Brings a freshly connected driver to the config's state: the reader first, so no refusal
+    /// goes unreported once blocking can start, then the policy, then blocking. False if any
+    /// part was refused, so a reconnect tries again instead of leaving a driver guarding nothing.
+    /// </summary>
+    private bool ArmMinifilter(MinifilterClient client, Action<string> onStopped)
+    {
+        lock (_kernelGate)
+        {
+            var cfg = _kernelConfig ?? Config;
+            _dosDevices = DosDeviceMap.Current();
+            if (!client.StartNotifications(OnKernelDenial, onStopped)) return false;
+            bool pushed = PushKernelPolicy(client, cfg);
+            bool blocking = EffectiveKernelBlocking(cfg);
+            bool set = client.SetBlocking(blocking);
+            if (!pushed || !set)
+            {
+                Log.Info("kernel enforcement: the driver refused part of its setup (" +
+                         (pushed ? "blocking state" : "policy") + ")");
+                return false;
+            }
+            Log.Info(blocking
+                ? "kernel enforcement ENABLED: guarded stores are refused to every program not trusted for them, and each refusal is logged"
+                : cfg.Detection.KernelBlocking
+                    ? "minifilter connected, enforcement OFF: detection.kernelBlocking is on, but response.mode is monitor, which never blocks"
+                    : "minifilter connected, enforcement OFF (detection.kernelBlocking is off)");
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Builds the kernel policy from the config and swaps it into the driver in one step. Nothing
+    /// is committed unless every store went in, so a refusal leaves the previous policy in force
+    /// rather than a partial one whose store numbers no longer line up.
+    /// </summary>
+    private bool PushKernelPolicy(MinifilterClient client, BruceConfig cfg)
+    {
+        var plan = KernelPolicy.Build(cfg.Detection, KernelPolicyEnvironment.Machine);
+        foreach (var note in plan.Notes) Log.Info("kernel policy: " + note);
+
+        if (!client.ClearPolicy() || !plan.Stores.All(s => client.AddSensitivePath(s.Fragment)))
+        {
+            Log.Info("kernel policy NOT updated: the driver refused part of it; the previous policy stays in force");
+            return false;
+        }
+        var accepted = new List<string>();
+        foreach (var image in plan.Trusted)
+        {
+            string scope = image.StoreIndex < 0 ? "every store" : plan.Stores[image.StoreIndex].Name;
+            if (client.AddTrustedImage(image.NtPath, image.StoreIndex)) accepted.Add($"{image.Path} for {scope}");
+            else Log.Info($"kernel policy: the driver refused {image.Path} as trusted; it stays untrusted");
+        }
+        if (!client.CommitPolicy())
+        {
+            Log.Info("kernel policy NOT updated: the commit was refused; the previous policy stays in force");
+            return false;
+        }
+        SetKernelStores(plan.Stores);
+        Log.Info($"kernel policy: {plan.Stores.Count} store(s) guarded ({string.Join(", ", plan.Stores.Select(s => s.Name))}); " +
+                 (accepted.Count == 0 ? "no trusted programs" : $"trusted: {string.Join("; ", accepted)}"));
+        return true;
+    }
+
+    internal void SetKernelStores(IReadOnlyList<KernelGuard> stores) => _kernelStores = stores;
+
+    /// <summary>One driver refusal as an ACTION event, once a minute at most per process, operation and path.</summary>
+    private void OnKernelDenial(KernelDenial denial)
+    {
+        string path = _dosDevices.ToDos(denial.Path);
+        string image = _dosDevices.ToDos(denial.Image);
+        var stores = _kernelStores;
+        string? storeName = denial.StoreIndex >= 0 && denial.StoreIndex < stores.Count
+            ? stores[denial.StoreIndex].Name
+            : null;
+        if (!_kernelDenials.Admit($"{denial.ProcessId}|{(int)denial.Operation}|{path}", DateTime.UtcNow, out int held)) return;
+
+        string store = storeName ?? "a name it could not resolve";
+        string operation = denial.Operation switch
+        {
+            KernelOperation.Rename => "rename",
+            KernelOperation.Link => "hard link",
+            _ => "open"
+        };
+        string process = image.Length > 0 ? Path.GetFileName(image) : "";
+        Log.Action(new BruceEvent
+        {
+            Pid = denial.ProcessId,
+            Process = process,
+            Image = image,
+            Trigger = "Kernel refused " + operation,
+            Reasons = new[] { "guarded store: " + store, "path: " + path },
+            Message = $"kernel refused {operation} of {path} ({store}) to pid {denial.ProcessId} " +
+                      (process.Length > 0 ? process : "(image unknown)") +
+                      (denial.Operation == KernelOperation.Reopen ? ", after the file system had opened it" : "") +
+                      (held > 0 ? $"; {held} other refusal(s) in the last minute were not logged one by one" : "")
+        });
+    }
+
+    private static bool KernelPolicyChanged(DetectionConfig a, DetectionConfig b) =>
+        !a.KernelExemptStores.SequenceEqual(b.KernelExemptStores, StringComparer.OrdinalIgnoreCase) ||
+        a.KernelTrustedImages.Length != b.KernelTrustedImages.Length ||
+        a.KernelTrustedImages.Zip(b.KernelTrustedImages).Any(p =>
+            !string.Equals(p.First.Image, p.Second.Image, StringComparison.OrdinalIgnoreCase) ||
+            !p.First.Stores.SequenceEqual(p.Second.Stores, StringComparer.OrdinalIgnoreCase));
 
     private static CompositeSink BuildSink(TelemetryConfig t, Logger log, IEventSink? extra,
         RingBufferSink events, out AuditLogSink? audit)
@@ -533,11 +635,18 @@ public sealed class Composition : IDisposable
                     ? "response.allowPlaybookIsolation ENABLED live: playbook IsolateHost actions will now run"
                     : "response.allowPlaybookIsolation disabled live: playbook IsolateHost actions are skipped");
             _allowPlaybookIsolation = next.Response.AllowPlaybookIsolation;
-            // The block toggle is the one minifilter setting that reloads live: the client is
-            // held in _minifilter for the process lifetime, so the new value is a single
-            // message to the driver. The sensitive-path policy around it is still startup-only.
-            if (EffectiveKernelBlocking(next) != EffectiveKernelBlocking(Config))
-                ApplyKernelBlocking(EffectiveKernelBlocking(next));
+            // The minifilter settings reload live through the supervisor's current client: a
+            // changed exemption or trusted image rebuilds the policy and swaps it in whole,
+            // then the block toggle is a single message. _kernelConfig is replaced under the
+            // same gate, so a reconnect arms the driver from this config, not the one before.
+            lock (_kernelGate)
+            {
+                if (KernelPolicyChanged(Config.Detection, next.Detection) && _kernel?.Current is { Connected: true } kernel)
+                    PushKernelPolicy(kernel, next);
+                if (EffectiveKernelBlocking(next) != EffectiveKernelBlocking(Config))
+                    ApplyKernelBlocking(EffectiveKernelBlocking(next));
+                _kernelConfig = next;
+            }
 
             _verifier.UpdateAllowlist(next.Allowlist);
             Host.ApplyDetectionConfig(
@@ -592,28 +701,30 @@ public sealed class Composition : IDisposable
 
     /// <summary>
     /// Pushes a changed detection.kernelBlocking value to the already-connected minifilter.
-    /// Only the toggle travels: the sensitive-path list was sent once at connect time and is
-    /// not re-sent here, so a reload cannot change WHICH paths the driver guards.
     /// If the driver was never connected the log says the setting was not applied, rather
     /// than implying kernel enforcement changed when no driver exists to enforce it.
-    /// WARNING, unchanged by this: kernelBlocking:true makes the skeleton driver deny EVERY
-    /// open of a sensitive path, from any process, trusted or not -- it is not
-    /// process-selective. Enabling it on a reload has that effect immediately.
+    /// Enabling it takes effect at once: every guarded store is refused to every program not
+    /// trusted for it, and a store with nothing trusted is refused to its own owner too.
     /// </summary>
     private void ApplyKernelBlocking(bool enabled)
     {
-        var mf = _minifilter;
+        var mf = _kernel?.Current;
         if (mf is null || !mf.Connected)
         {
-            Log.Info($"detection.kernelBlocking={(enabled ? "true" : "false")} not applied: minifilter not connected");
+            Log.Info($"detection.kernelBlocking={(enabled ? "true" : "false")} not applied: minifilter not connected" +
+                     (_kernel is null ? "" : "; the agent applies it when it reconnects"));
             return;
         }
         try
         {
-            mf.SetBlocking(enabled);
+            if (!mf.SetBlocking(enabled))
+            {
+                Log.Info($"detection.kernelBlocking={(enabled ? "true" : "false")} not applied: the driver refused the change");
+                return;
+            }
             Log.Info(enabled
-                ? "kernel enforcement ENABLED live: the driver now denies ALL opens of sensitive paths, from any process"
-                : "kernel enforcement switched live to monitor mode");
+                ? "kernel enforcement ENABLED live: guarded stores are now refused to every program not trusted for them"
+                : "kernel enforcement switched off live");
         }
         catch (Exception ex) { Log.Error("kernel blocking reload", ex); }
     }
@@ -623,7 +734,8 @@ public sealed class Composition : IDisposable
     /// composition is built, so <see cref="Apply"/> can say plainly what a reload did not do.
     /// The list is maintained by hand against <see cref="Build"/>; anything genuinely
     /// hot-reloaded (thresholds, autoKill, allowlist, rules, indicator feeds, API Studio
-    /// safety policy, detection.kernelBlocking, telemetry.enableMetrics, the isolation
+    /// safety policy, detection.kernelBlocking, detection.kernelExemptStores,
+    /// detection.kernelTrustedImages, telemetry.enableMetrics, the isolation
     /// allowlist, response.mode, response.allowPlaybookIsolation and triage output path) is
     /// deliberately absent.
     /// </summary>
@@ -641,8 +753,8 @@ public sealed class Composition : IDisposable
         var od = old.Detection; var nd = next.Detection;
         Text("detection.memoryScanEngine", od.MemoryScanEngine, nd.MemoryScanEngine);
         Text("detection.yaraRulesPath", od.YaraRulesPath, nd.YaraRulesPath);
-        // detection.kernelBlocking is deliberately NOT listed: Apply pushes it to the
-        // connected minifilter, so it does take effect on reload.
+        // detection.kernelBlocking, kernelExemptStores and kernelTrustedImages are deliberately
+        // NOT listed: Apply pushes them to the connected minifilter, so they take effect on reload.
         Flag("detection.enableExtendedMonitors", od.EnableExtendedMonitors, nd.EnableExtendedMonitors);
         Flag("detection.enableBeaconDetection", od.EnableBeaconDetection, nd.EnableBeaconDetection);
         Number("detection.beaconMinConnections", od.BeaconMinConnections, nd.BeaconMinConnections);
@@ -747,7 +859,14 @@ public sealed class Composition : IDisposable
     {
         try { _configWatcher?.Dispose(); } catch { }
         try { _control?.Dispose(); } catch { }
-        try { _minifilter?.Dispose(); } catch { }
+        try { _kernel?.Dispose(); } catch { }
+        try
+        {
+            // The reader has stopped, so this count is final.
+            int held = _kernelDenials.TakeHeld();
+            if (held > 0) Log.Info($"kernel: {held} refusal(s) after the last one logged were not logged one by one");
+        }
+        catch { }
         try { Host.Dispose(); } catch { }
         try { _sink.Dispose(); } catch { }
         try { Vault?.Dispose(); } catch { }

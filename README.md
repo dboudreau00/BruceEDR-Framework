@@ -351,9 +351,12 @@ changes take effect on restart.
   CRL/OCSP during `WinVerifyTrust`. Fine for offline labs; for production set it `true`,
   or pin signer thumbprints and set `allowSubjectMatch: false` so a renamed subject cannot
   inherit trust.
-- **`kernelBlocking: true` is aggressive.** The skeleton driver denies *any* open of a sensitive
-  path while blocking is on, including legitimate apps. Leave it off until the trusted-PID
-  allowlist extension (see the driver README) is added.
+- **`kernelBlocking: true` refuses guarded stores to everything not trusted for them.** Each
+  store's owner is trusted only where an administrator installed it, so per-user installs
+  (Discord, Exodus, a per-user Chrome) lose their own stores unless exempted, and helpers such
+  as backup agents need adding. Trust is by image path: code injected into a trusted browser
+  is not stopped. The driver has been tested in lab VMs only and is signed with a lab
+  certificate; production needs a Microsoft-signed build. See the driver README.
 - **Host isolation can lock you out.** `isolate` blocks all traffic except
   `response.isolationAllowlist`. If that list is empty you will lose any remote session.
   The console makes you confirm. Playbooks require a second explicit opt-in
@@ -394,14 +397,17 @@ changes take effect on restart.
   driver attestation-signed by Microsoft. The watchdog + service recovery raise the bar, but an
   admin attacker can still kill both.
 - **Production driver signing** needs attestation/WHQL or EV signing via the Partner Center plus
-  a Microsoft-assigned altitude. The driver builds and runs in a test-signed lab as-is.
+  a Microsoft-assigned altitude. The driver builds and passes its checks with `build.ps1`;
+  loading it takes a test-signed lab.
 
 ## Kernel minifilter
 
-See [`kernel/BruceFilter/README.md`](kernel/BruceFilter/README.md) for building with the WDK,
-lab test-signing, and loading. The agent connects via `MinifilterClient` and pushes policy; if
-the driver isn't installed, kernel enforcement is simply unavailable and user-mode detection
-continues.
+See [`kernel/BruceFilter/README.md`](kernel/BruceFilter/README.md) for what the driver decides,
+building it with `build.ps1` (WDK NuGet packages, no WDK install), and the VM lab
+([`kernel/BruceFilter/lab`](kernel/BruceFilter/lab/README.md)) that signs, loads and tests it.
+The agent's service connects through `MinifilterClient`, pushes the guarded stores and the
+programs trusted for them, and logs every refusal the driver reports. If the driver isn't
+installed, kernel enforcement is simply unavailable and user-mode detection continues.
 
 ## Repository layout
 

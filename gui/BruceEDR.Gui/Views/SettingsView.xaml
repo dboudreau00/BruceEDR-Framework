@@ -270,7 +270,7 @@
                         <Grid>
                             <StackPanel>
                                 <TextBlock Text="Block access via the minifilter driver" Style="{StaticResource Text.Body}"/>
-                                <TextBlock Text="Only with the signed BruceFilter driver installed and a trusted-pid allowlist configured; otherwise it can block legitimate apps."
+                                <TextBlock Text="Needs the signed BruceFilter driver. Refuses browser and wallet stores to any program not trusted for them, which can include an app installed per user."
                                            Style="{StaticResource Caption}" Foreground="{StaticResource Brush.Watch}"/>
                             </StackPanel>
                             <ToggleButton Style="{StaticResource Switch}" HorizontalAlignment="Right" VerticalAlignment="Top"

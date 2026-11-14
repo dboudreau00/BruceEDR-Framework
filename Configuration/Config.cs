@@ -26,6 +26,15 @@ public sealed class BruceConfig
         Detection.ScoreDecayIntervalSeconds = Math.Max(10, Detection.ScoreDecayIntervalSeconds);
         Detection.BeaconMinConnections = Math.Clamp(Detection.BeaconMinConnections, 3, 512);
         Detection.MaxTrackedProcesses = Math.Clamp(Detection.MaxTrackedProcesses, 128, 262144);
+        // "null" in the file would otherwise reach the policy builder as a null array.
+        Detection.KernelExemptStores ??= Array.Empty<string>();
+        Detection.KernelTrustedImages = (Detection.KernelTrustedImages ?? Array.Empty<KernelTrustedImageConfig>())
+            .Where(t => t is not null).ToArray();
+        foreach (var t in Detection.KernelTrustedImages)
+        {
+            t.Image ??= "";
+            t.Stores ??= Array.Empty<string>();
+        }
 
         Service.HeartbeatIntervalSeconds = Math.Max(1, Service.HeartbeatIntervalSeconds);
         if (!string.IsNullOrWhiteSpace(Service.HeartbeatPath) && !Path.IsPathRooted(Service.HeartbeatPath))
@@ -62,6 +71,21 @@ public sealed class DetectionConfig
     public string MemoryScanEngine { get; set; } = "builtin";   // "builtin" | "yara"
     public string YaraRulesPath { get; set; } = "rules";
     public bool KernelBlocking { get; set; } = false;           // enforce via minifilter if installed
+
+    /// <summary>
+    /// Stores the minifilter leaves unguarded, by name (chrome, edge, firefox, electrum,
+    /// exodus, discord). A program installed per user cannot be trusted by its path, so with
+    /// blocking on it is refused its own store; exempting the store keeps it working. Every
+    /// store not named here is guarded, including any a later version adds.
+    /// </summary>
+    public string[] KernelExemptStores { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Programs the minifilter lets into guarded stores beside each store's owner, such as a
+    /// backup agent. An image is refused unless only administrators can change it and the
+    /// folders above it.
+    /// </summary>
+    public KernelTrustedImageConfig[] KernelTrustedImages { get; set; } = Array.Empty<KernelTrustedImageConfig>();
 
     // --- v2 -----------------------------------------------------------------
 
@@ -106,6 +130,15 @@ public sealed class DetectionConfig
 
     /// <summary>Hard cap on tracked process profiles, so telemetry floods cannot exhaust memory.</summary>
     public int MaxTrackedProcesses { get; set; } = 16384;
+}
+
+/// <summary>One detection.kernelTrustedImages entry.</summary>
+public sealed class KernelTrustedImageConfig
+{
+    /// <summary>Full path of the executable, e.g. C:\Program Files\Vendor\agent.exe.</summary>
+    public string Image { get; set; } = "";
+    /// <summary>Store names it may open; empty means every guarded store.</summary>
+    public string[] Stores { get; set; } = Array.Empty<string>();
 }
 
 /// <summary>

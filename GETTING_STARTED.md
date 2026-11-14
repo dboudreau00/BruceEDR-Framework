@@ -31,7 +31,7 @@ moves files to quarantine**. Do **not** run it on a machine you care about.
 | **Visual Studio 2022 17.8+** with the **".NET desktop development"** workload | building the solution |
 | .NET 8 SDK | included with that VS workload (or install standalone for CLI) |
 | Local **Administrator** rights | ETW kernel session, process access, service control |
-| *(optional)* **Windows Driver Kit (WDK)** matching your VS | building the kernel minifilter (section 9) |
+| *(optional)* the **C++ x64 tools** in VS 2022 + `nuget.exe` | building the kernel minifilter (section 9) |
 
 Nothing extra is needed for the default build. YARA and the kernel driver are
 opt-in (sections 7 and 9).
@@ -339,29 +339,34 @@ itself (not `dotnet.exe`).
 
 ## 9. Optional: the kernel minifilter (advanced, lab only)
 
-Real inline prevention. Built **separately** with the WDK.
+Real inline prevention: with blocking on, the driver refuses browser profiles and wallets
+to every program not trusted for them, and the agent logs each refusal. Built
+**separately**; full steps in `kernel\BruceFilter\README.md`.
 
-1. Install the **WDK** matching your VS 2022.
-2. In VS: **New Project -> "Filter Driver: Filesystem Mini-Filter"**. Add
-   `kernel\BruceFilter\BruceFilter.c`, `.h`, and `.inf` to it. Build **x64 /
-   Release** to produce `BruceFilter.sys`.
-3. In the VM, enable test signing and reboot:
+1. Restore the WDK NuGet packages and build (no WDK install needed):
    ```
-   bcdedit /set testsigning on
+   cd kernel\BruceFilter
+   nuget restore packages.config -PackagesDirectory packages
+   .\build.ps1
    ```
-   Then install + load (see full steps in `kernel\BruceFilter\README.md`):
+   That compiles, runs the driver code analysis, checks the INF, builds the catalog and
+   runs the policy tests, producing `x64\Release\BruceFilter.sys`.
+2. Stage a signed lab package, copy it into a test VM (Secure Boot off), and run the lab there
+   from an elevated Windows PowerShell (see `kernel\BruceFilter\lab\README.md`):
    ```
-   RUNDLL32.EXE SETUPAPI.DLL,InstallHinfSection DefaultInstall 128 .\BruceFilter.inf
-   fltmc load BruceFilter
+   .\lab\lab.ps1 prepare                 # on the build machine: x64\lab-package
+   .\lab.ps1 testsigning                 # in the VM, then reboot
+   .\lab.ps1 install
+   .\lab.ps1 test                        # 42 scenarios and 2 unload checks through the loaded driver
    ```
-4. The agent's `MinifilterClient` auto-connects to `\BruceFilterPort` and pushes
-   policy on startup.
+3. Run the agent **as the service** (section 8): the driver's port admits LocalSystem only.
+   It connects on startup, pushes the policy and logs what it guards and whom it trusts.
 
-> Keep `"kernelBlocking": false` unless you've extended the driver with a
-> trusted-PID allowlist (per the driver README) - with it `true`, the skeleton
-> denies **every** process access to sensitive paths, including legitimate apps.
-> Production loading (no test signing) requires attestation/EV signing + a
-> Microsoft-assigned altitude.
+> `"kernelBlocking": true` refuses a store to every program not trusted for it. Each
+> store's owner is trusted when it is installed where only administrators can change it,
+> so a program installed per user (Discord, Exodus, a per-user Chrome) is refused its own
+> store unless you list it in `detection.kernelExemptStores`. Production loading (no test
+> signing) requires attestation/EV signing + a Microsoft-assigned altitude.
 
 ---
 
@@ -381,6 +386,9 @@ Key settings:
   weeks of accumulated low-value hits. Contained processes never decay.
 - `detection.enableExtendedMonitors` - the DNS / AMSI / registry / process-access ETW
   sessions. Turn off if one of them misbehaves on your build; the agent keeps running.
+- `detection.kernelBlocking` - enforce through the minifilter, if installed (section 9).
+  Off by default. `detection.kernelExemptStores` leaves stores unguarded by name;
+  `detection.kernelTrustedImages` lets more programs in, such as a backup agent.
 - `allowlist.publishers` / `thumbprints` - signed apps to de-prioritise (e.g. your
   legitimate RMM tools); pin exact SHA-1 thumbprints for strongest trust.
 - `intel.feedPath` - drop hash/domain/IP/CIDR indicator files in here (see

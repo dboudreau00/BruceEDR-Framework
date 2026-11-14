@@ -74,6 +74,20 @@ public sealed class Logger
         Emit(new BruceEvent { Level = "ACTION", Category = "response", Message = message });
     }
 
+    /// <summary>An action with its subject attached, such as a refusal the kernel driver made.</summary>
+    public void Action(BruceEvent detail)
+    {
+        WriteLine(ConsoleColor.Cyan, "    -> " + detail.Message);
+        Emit(detail with { Level = "ACTION", Category = "response" });
+    }
+
+    /// <summary>A system warning: something the agent relies on has stopped working and an operator should look.</summary>
+    public void Warn(string message)
+    {
+        WriteLine(ConsoleColor.Yellow, "[WARN] " + message, always: true);
+        Emit(new BruceEvent { Level = "WARN", Category = "system", Message = message });
+    }
+
     public void Error(string context, Exception ex)
     {
         string message = $"{context}: {ex.GetType().Name}: {ex.Message}";

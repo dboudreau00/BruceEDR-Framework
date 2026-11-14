@@ -4,13 +4,37 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 
 ## [Unreleased]
 
+### Changed - read before upgrading
+
+- **The driver and the agent speak protocol 2.** The agent refuses an older `BruceFilter.sys`
+  (logged, enforcement unavailable) rather than switch on a driver that denies every process.
+  Build and install the driver from this release.
+- **The agent connects only as the service.** The driver's port now admits LocalSystem alone;
+  the console run as an administrator logs that it was refused.
+- **The kernel guards six named stores** (`chrome`, `edge`, `firefox`, `electrum`, `exodus`,
+  `discord`), each by the store's own folder. `\exodus\` matched Exodus's install directory and
+  would have kept the wallet from starting; it is now `\exodus\exodus.wallet\`. `\discord\leveldb\`
+  matched nothing Discord writes; it is now `\discord\local storage\leveldb\`.
+
 ### Added
 
+- **Trusted programs.** Each store's owner is trusted for that store when HKLM App Paths or its
+  machine-wide install folder (Edge registers no App Paths key on some builds) places it where
+  only SYSTEM, Administrators or TrustedInstaller can change the file or the folders above it.
+  `detection.kernelTrustedImages` adds programs, for chosen stores or all of them, under the
+  same rule; `detection.kernelExemptStores` leaves stores unguarded. Both reload live,
+  and the log names every store left with nothing trusted.
 - **Renames and hard links** onto a guarded store are refused, and so is renaming the store's
   folder or a folder above it.
+- **The agent notices when the driver goes away.** If BruceFilter is unloaded, detached or its
+  port closes, the agent logs a WARN system event that kernel enforcement is off and why, then
+  reconnects (5 s, doubling to 5 min) and pushes the policy and blocking state again, instead
+  of going quiet.
 - **While blocking is on, `fltmc unload` and `fltmc detach` are refused** (`STATUS_FLT_DO_NOT_DETACH`).
   A service stop still unloads it, and an administrator can still switch blocking off as SYSTEM;
   `lab.ps1 uninstall` now resets the driver first.
+- **Every refusal is an event**: ACTION, with the process, its image, the store and the path, at
+  most once a minute per process, operation and path.
 - `kernel/BruceFilter/build.ps1` builds the driver from the WDK NuGet packages, without the WDK
   installer: compile at `/W4 /WX`, driver code analysis, InfVerif, Inf2Cat, and user-mode tests
   of the decision code the driver runs (195 checks). A `driver` CI workflow runs it.
@@ -46,6 +70,10 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - **Blocking was off for a moment on every policy change** (found in review). A commit copied the
   whole staged policy, whose blocking flag is off, over the live one and then switched the flag
   back, while every open read that flag without a lock. A commit no longer writes it.
+- **Refusal reports were lost in bursts.** The driver drops a report that finds no read waiting,
+  and the agent and the lab harness kept one. Both keep eight now: in the lab VMs the harness
+  received every report (22 of 22 under Driver Verifier, 28 of 28 on Windows 11) where up to a
+  third had been lost.
 
 ## [3.3.0] - 2026-11-14
 
