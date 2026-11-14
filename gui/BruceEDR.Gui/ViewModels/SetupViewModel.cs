@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using BruceEDR.Configuration;
+using BruceEDR.Detection;
 
 namespace BruceEDR.Gui.ViewModels;
 
@@ -92,6 +93,7 @@ public sealed class SetupViewModel : ViewModelBase
 
     private void DescribeRules(DetectionConfig d)
     {
+        Rules = null;
         if (!d.EnableRuleEngine)
         {
             RulesSummary = "Rule packs are turned off in the config; only built-in detections will run.";
@@ -101,10 +103,21 @@ public sealed class SetupViewModel : ViewModelBase
         string dir = Path.IsPathRooted(d.RulesPath) ? d.RulesPath : Path.Combine(AppContext.BaseDirectory, d.RulesPath);
         int packs = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.json", SearchOption.AllDirectories).Length : 0;
         RulesMissing = packs == 0;
+        if (packs > 0)
+        {
+            try { Rules = RuleEngine.LoadDirectory(dir); }
+            catch { Rules = null; }
+        }
+        int rules = Rules?.Rules.Count ?? 0;
         RulesSummary = packs == 0
             ? $"No detection rule packs were found in {dir}. Only built-in detections will run."
-            : $"{packs} detection rule pack{(packs == 1 ? "" : "s")} found.";
+            : rules > 0
+                ? $"{rules} detection rules in {packs} pack{(packs == 1 ? "" : "s")}."
+                : $"{packs} detection rule pack{(packs == 1 ? "" : "s")} found.";
     }
+
+    /// <summary>Rules as the engine would load them, for the coverage view before going live.</summary>
+    public RuleSet? Rules { get; private set; }
 
     /// <summary>
     /// The one place enforce mode is confirmed, from set-up and from Settings alike.

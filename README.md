@@ -28,11 +28,19 @@ your machine actually talks to.**
 <table>
 <tr>
 <td width="50%"><img src="docs/network-map.png" alt="Network map: observed destinations plotted offline, hover-linked to the destination list" /></td>
-<td width="50%"><img src="docs/watchlist.png" alt="Watchlist — operator-authored detections that contain on sight" /></td>
+<td width="50%"><img src="docs/coverage.png" alt="Coverage: every catalogued ATT&CK technique, coloured by what the rules cover and what this host has shown" /></td>
 </tr>
 <tr>
 <td align="center"><b>Network map</b>: where this host is talking, resolved entirely offline</td>
-<td align="center"><b>Watchlist</b> — your own detections, armed without a restart</td>
+<td align="center"><b>Coverage</b>: the ATT&amp;CK matrix, gaps included</td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/watchlist.png" alt="Watchlist: operator-authored detections that contain on sight" /></td>
+<td></td>
+</tr>
+<tr>
+<td align="center"><b>Watchlist</b>: your own detections, armed without a restart</td>
+<td></td>
 </tr>
 </table>
 

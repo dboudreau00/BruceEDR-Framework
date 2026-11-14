@@ -88,6 +88,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex) { AppLog.Error("initial config load", ex); }
 
         StartCommand = new RelayCommand(StartFromSetup, () => !IsLive && !_stopping && !_starting && Setup.CanStart);
+        SetCoverageModeCommand = new RelayCommandP(p => CoverageMode = p as string == "list" ? "list" : "matrix");
         StopCommand = new RelayCommand(StopEngine, () => IsLive);
         OpenSetupCommand = new RelayCommand(() => { Setup.Load(); IsSetupOpen = true; }, () => !IsLive);
         ReviewSettingsCommand = new RelayCommand(ReviewSettings);
@@ -124,6 +125,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); ToastVisible = false; };
 
+        // Coverage is a property of the rules, so it is shown before anything goes live.
+        ApplyRuleCoverage(Setup.Rules, 0);
+        MergeTechniques(null);
         PublishTimeline(force: true);
     }
 
@@ -441,6 +445,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ICommand StopCommand { get; }
     public ICommand OpenSetupCommand { get; }
     public ICommand ReviewSettingsCommand { get; }
+    public ICommand SetCoverageModeCommand { get; }
 
     private void EndSelected()
     {
@@ -945,11 +950,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex) { AppLog.Error("highlight endpoint", ex); }
     }
 
-    private void MergeTechniques(BruceHost host)
+    private void MergeTechniques(BruceHost? host)
     {
         try
         {
-            var observed = host.ObservedTechniques();
+            var observed = host?.ObservedTechniques() ?? new Dictionary<string, int>();
             var covered = _ruleCoverage;
 
             var ids = new SortedSet<string>(covered.Keys, StringComparer.OrdinalIgnoreCase);
@@ -974,8 +979,38 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             foreach (var t in rows) Techniques.Add(t);
             CoveredTechniqueCount = covered.Count;
             ObservedTechniqueCount = rows.Count(t => t.Observed > 0);
+            BuildMatrix(covered, observed);
         }
         catch (Exception ex) { AppLog.Error("merge techniques", ex); }
+    }
+
+    /// <summary>
+    /// Every catalogued technique by tactic, so gaps show as plainly as coverage. Observed
+    /// techniques the catalogue does not know still get a column rather than vanishing.
+    /// </summary>
+    private void BuildMatrix(IReadOnlyDictionary<string, int> covered, IReadOnlyDictionary<string, int> observed)
+    {
+        var byTactic = AttackCatalog.ByTactic();
+        var columns = new List<TacticColumn>();
+        foreach (var tactic in AttackCatalog.Tactics)
+        {
+            if (!byTactic.TryGetValue(tactic, out var list) || list.Count == 0) continue;
+            columns.Add(new TacticColumn(tactic, list
+                .Select(t => new MatrixCell(t.Id, t.Name, t.Url,
+                    covered.TryGetValue(t.Id, out var r) ? r : 0,
+                    observed.TryGetValue(t.Id, out var o) ? o : 0))
+                .ToArray()));
+        }
+        var unknown = covered.Keys.Concat(observed.Keys)
+            .Where(id => !AttackCatalog.IsKnown(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(id => new MatrixCell(id.ToUpperInvariant(), "(not in the bundled catalogue)", AttackCatalog.Lookup(id).Url,
+                covered.TryGetValue(id, out var r) ? r : 0, observed.TryGetValue(id, out var o) ? o : 0))
+            .ToArray();
+        if (unknown.Length > 0) columns.Add(new TacticColumn("Other", unknown));
+        TacticColumns = columns;
+        CatalogTechniqueCount = columns.Sum(c => c.Cells.Count);
+        CoveragePercent = CatalogTechniqueCount == 0 ? 0 : 100.0 * columns.Sum(c => c.Covered) / CatalogTechniqueCount;
     }
 
     private void PublishTimeline(bool force)
@@ -1055,6 +1090,29 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     private int _plaintextCount;
     public int PlaintextCount { get => _plaintextCount; private set => Set(ref _plaintextCount, value); }
+
+    // ---- coverage matrix ----
+    private IReadOnlyList<TacticColumn> _tacticColumns = Array.Empty<TacticColumn>();
+    public IReadOnlyList<TacticColumn> TacticColumns { get => _tacticColumns; private set => Set(ref _tacticColumns, value); }
+
+    private int _catalogTechniqueCount;
+    public int CatalogTechniqueCount { get => _catalogTechniqueCount; private set => Set(ref _catalogTechniqueCount, value); }
+
+    private double _coveragePercent;
+    public double CoveragePercent
+    {
+        get => _coveragePercent;
+        private set { if (Set(ref _coveragePercent, value)) OnPropertyChanged(nameof(CoveragePercentRounded)); }
+    }
+    public int CoveragePercentRounded => (int)Math.Round(_coveragePercent);
+
+    private string _coverageMode = "matrix";
+    public string CoverageMode
+    {
+        get => _coverageMode;
+        set { if (Set(ref _coverageMode, value)) OnPropertyChanged(nameof(IsMatrixMode)); }
+    }
+    public bool IsMatrixMode => _coverageMode == "matrix";
 
     // ---- toast ----
     private string _toastText = "";

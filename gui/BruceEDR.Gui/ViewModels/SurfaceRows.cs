@@ -146,3 +146,52 @@ public sealed class TechniqueRow
         Observed = observed;
     }
 }
+
+/// <summary>One technique cell in the ATT&amp;CK coverage matrix.</summary>
+public sealed class MatrixCell
+{
+    public string Id { get; }
+    public string Name { get; }
+    public string ShortName { get; }
+    public string Url { get; }
+    public int Rules { get; }
+    public int Observed { get; }
+
+    /// <summary>observed | covered | gap</summary>
+    public string State => Observed > 0 ? "observed" : Rules > 0 ? "covered" : "gap";
+
+    /// <summary>Fill strength for covered cells: more rules, stronger tint.</summary>
+    public double Strength => Observed > 0 ? 1 : Rules == 0 ? 0 : 0.35 + 0.65 * Math.Min(Rules, 4) / 4.0;
+
+    public string Tooltip => $"{Id}  {Name}" + Environment.NewLine
+                           + (Observed > 0 ? $"Seen on {Observed} process(es), {Rules} rule(s)"
+                           : Rules > 0 ? $"{Rules} rule(s)" : "No rule covers this technique");
+
+    public MatrixCell(string id, string name, string url, int rules, int observed)
+    {
+        Id = id;
+        Name = name;
+        int colon = name.IndexOf(": ", StringComparison.Ordinal);
+        ShortName = colon > 0 ? name[(colon + 2)..] : name;
+        Url = url;
+        Rules = rules;
+        Observed = observed;
+    }
+}
+
+/// <summary>One tactic column of the coverage matrix.</summary>
+public sealed class TacticColumn
+{
+    public string Name { get; }
+    public IReadOnlyList<MatrixCell> Cells { get; }
+    public int Covered => Cells.Count(c => c.Rules > 0);
+    public int Active => Cells.Count(c => c.Observed > 0);
+    public double Percent => Cells.Count == 0 ? 0 : 100.0 * Covered / Cells.Count;
+    public string Summary => $"{Covered}/{Cells.Count}";
+
+    public TacticColumn(string name, IReadOnlyList<MatrixCell> cells)
+    {
+        Name = name;
+        Cells = cells;
+    }
+}
