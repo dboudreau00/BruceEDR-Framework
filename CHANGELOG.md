@@ -52,6 +52,13 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   `lab.ps1 uninstall` now resets the driver first.
 - **Every refusal is an event**: ACTION, with the process, its image, the store and the path, at
   most once a minute per process, operation and path.
+- **A refusal is also detection evidence.** Each refusal reaches the detection engine as a
+  `KernelRefusal` signal (one per process and store a minute), so a stealer the kernel kept out is
+  scored (+40 per guarded store, T1555.003 / T1539 for browsers, T1555 / T1005 for wallets, T1539 /
+  T1552.001 for Discord), correlated with a staged archive like a credential read, and contained
+  by the playbook in enforce mode. It is never excused by process name: the kernel judged the
+  image path. A refusal for a name the driver could not resolve scores +10. Monitor mode scores
+  and records the incident and contains nothing.
 - `kernel/BruceFilter/build.ps1` builds the driver from the WDK NuGet packages, without the WDK
   installer: compile at `/W4 /WX`, driver code analysis, InfVerif, Inf2Cat, and user-mode tests
   of the decision code the driver runs (195 checks). A `driver` CI workflow runs it.

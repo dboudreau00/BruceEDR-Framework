@@ -63,6 +63,7 @@ public sealed class Composition : IDisposable
     private volatile IReadOnlyList<KernelGuard> _kernelStores = Array.Empty<KernelGuard>();
     private DosDeviceMap _dosDevices = DosDeviceMap.Empty;
     private readonly KernelDenialThrottle _kernelDenials = new(TimeSpan.FromMinutes(1), 60);
+    private readonly KernelRefusalFeed _kernelRefusals;
     private ControlServer? _control;
 
     /// <summary>
@@ -89,6 +90,7 @@ public sealed class Composition : IDisposable
         _sink = sink;
         _scanner = scanner;
         Host = host;
+        _kernelRefusals = new KernelRefusalFeed(host.Submit);
         Surface = surface;
         Vault = vault;
         Events = events;
@@ -521,8 +523,13 @@ public sealed class Composition : IDisposable
 
     internal void SetKernelStores(IReadOnlyList<KernelGuard> stores) => _kernelStores = stores;
 
-    /// <summary>One driver refusal as an ACTION event, once a minute at most per process, operation and path.</summary>
-    private void OnKernelDenial(KernelDenial denial)
+    /// <summary>
+    /// One driver refusal, twice over: a signal for the detection engine (see
+    /// <see cref="KernelRefusalFeed"/>), and an ACTION event, once a minute at most per process,
+    /// operation and path. The signal comes first so the event throttle cannot hide a refusal
+    /// from the engine.
+    /// </summary>
+    internal void OnKernelDenial(KernelDenial denial)
     {
         string path = _dosDevices.ToDos(denial.Path);
         string image = _dosDevices.ToDos(denial.Image);
@@ -530,6 +537,7 @@ public sealed class Composition : IDisposable
         string? storeName = denial.StoreIndex >= 0 && denial.StoreIndex < stores.Count
             ? stores[denial.StoreIndex].Name
             : null;
+        _kernelRefusals.Offer(denial, storeName, path, image, DateTime.UtcNow);
         if (!_kernelDenials.Admit($"{denial.ProcessId}|{(int)denial.Operation}|{path}", DateTime.UtcNow, out int held)) return;
 
         string store = storeName ?? "a name it could not resolve";

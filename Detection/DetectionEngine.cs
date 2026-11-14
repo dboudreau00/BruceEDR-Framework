@@ -288,6 +288,7 @@ public sealed class DetectionEngine
             case SignalKind.ProcessAccess:  RuleProcessAccess(p, s, targetName); break;
             case SignalKind.ScriptContent:  RuleScript(p, s);       break;
             case SignalKind.NamedPipe:      RuleNamedPipe(p, s);    break;
+            case SignalKind.KernelRefusal:  RuleKernelRefusal(p, s); break;
         }
 
         EvaluateWatchlist(p, s.TimestampUtc);
@@ -484,6 +485,46 @@ public sealed class DetectionEngine
                 Score(p, 25, "Archive staged shortly after reading secrets", "builtin-collect-then-stage",
                       Tech("T1005", "T1074.001"), s.TimestampUtc);
         }
+    }
+
+    /// <summary>
+    /// The kernel judged this process by its image path and refused it a guarded store, so there
+    /// is no owner-by-name exemption here: a copy of chrome.exe in a user folder is refused and
+    /// scored. Once per process and store, so a sweep that is refused a thousand times scores as
+    /// one refusal. Nothing was read, hence a little less than a file access the rule packs score
+    /// at 45. A refusal for a name the driver could not resolve names no store: it scores low and
+    /// does not start the collect-then-stage window.
+    /// </summary>
+    private void RuleKernelRefusal(ThreatProfile p, Signal s)
+    {
+        var (operation, store) = KernelRefusalDetail.Parse(s.Detail);
+        store = Trim(store.Trim(), 40);
+        string what = operation switch
+        {
+            "rename" => "rename",
+            "link" => "hard link",
+            "reopen" => "open by id",
+            _ => "open"
+        };
+        if (store.Length == 0)
+        {
+            if (p.FiredOnce.Add("kernel-refusal:unresolved"))
+                Score(p, 10, $"Kernel refused {what} of a name it could not resolve",
+                      "builtin-kernel-refusal", Tech("T1555"), s.TimestampUtc);
+            return;
+        }
+        if (!p.FiredOnce.Add("kernel-refusal:" + store)) return;
+
+        p.CredentialAccessUtc = s.TimestampUtc;
+        string[] techniques = store.ToLowerInvariant() switch
+        {
+            "chrome" or "edge" or "firefox" => Tech("T1555.003", "T1539"),
+            "electrum" or "exodus" => Tech("T1555", "T1005"),
+            "discord" => Tech("T1539", "T1552.001"),
+            _ => Tech("T1555")
+        };
+        Score(p, 40, $"Kernel refused {what} of the {store} credential store",
+              "builtin-kernel-refusal", techniques, s.TimestampUtc);
     }
 
     private void RuleNetwork(ThreatProfile p, Signal s)

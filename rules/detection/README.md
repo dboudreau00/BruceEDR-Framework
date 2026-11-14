@@ -91,7 +91,7 @@ may be true).
 
 | Field | Available on |
 | --- | --- |
-| `kind` | every signal (`ProcessStart`, `FileCreate`, `NetworkConnect`, `DnsQuery`, `RegistryWrite`, `ProcessAccess`, `ScriptContent`, `NamedPipe`, `ImageLoad`, `ProcessStop`) |
+| `kind` | every signal (`ProcessStart`, `FileCreate`, `NetworkConnect`, `DnsQuery`, `RegistryWrite`, `ProcessAccess`, `ScriptContent`, `NamedPipe`, `ImageLoad`, `ProcessStop`, `KernelRefusal`) |
 | `pid`, `parentPid`, `targetPid` | every signal |
 | `processName`, `imagePath`, `commandLine` | process-attributed signals |
 | `filePath`, `fileName`, `fileExtension` | `FileCreate`, `ImageLoad` |
@@ -114,6 +114,12 @@ cover files, registry keys, pipes and domains at once.
 > traces and tests, and the builtin named-pipe C2 heuristic is dead on a running agent.
 > A rule written against `pipeName` will validate and replay, but never fire live until a
 > pipe monitor exists. Prefer `NetworkConnect`/`DnsQuery` for C2 on a live host.
+>
+> **`KernelRefusal`** is the minifilter refusing a process a guarded credential store. `filePath` is
+> the path it was refused, `processName` and `imagePath` name the requester, and `detail` is
+> `operation:store`, for example `open:chrome` (operation: open, reopen, rename or link; the store is
+> empty when the driver refused a name it could not resolve). The builtin rule already scores it,
+> so a pack rule is for tuning, not for detecting.
 >
 > **`detail` on `ProcessAccess`** is `open-process:<target image>:<rights>` (or
 > `open-thread:` / `terminate:`). The target image name is resolved by the engine, so

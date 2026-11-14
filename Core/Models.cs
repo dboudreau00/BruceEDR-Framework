@@ -22,7 +22,26 @@ public enum SignalKind
     /// <summary>Script/macro content surfaced by AMSI before execution.</summary>
     ScriptContent,
     /// <summary>A named pipe was created or connected to (C2 / lateral movement).</summary>
-    NamedPipe
+    NamedPipe,
+    /// <summary>The BruceFilter minifilter refused a process a guarded credential store (<see cref="KernelRefusalDetail"/>).</summary>
+    KernelRefusal
+}
+
+/// <summary>
+/// The <see cref="Signal.Detail"/> of a <see cref="SignalKind.KernelRefusal"/> signal:
+/// <c>operation:store</c>, for example <c>open:chrome</c>. The operation is open, reopen, rename
+/// or link; the store is a <see cref="KernelGuard.Name"/>, or empty when the driver refused a
+/// name it could not resolve.
+/// </summary>
+public static class KernelRefusalDetail
+{
+    public static string Format(string operation, string? store) => operation + ":" + store;
+
+    public static (string Operation, string Store) Parse(string? detail)
+    {
+        int colon = detail?.IndexOf(':') ?? -1;
+        return colon < 0 ? ("open", "") : (detail![..colon], detail[(colon + 1)..]);
+    }
 }
 
 /// <summary>A single piece of telemetry emitted by any monitor.</summary>
