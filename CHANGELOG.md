@@ -170,6 +170,8 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   file say when the file does not exist yet instead of doing nothing; removing the assistant key
   says so when the key is still there; the save message names kernel blocking among the settings
   that apply live.
+- The desktop app says "Event copied." or that the clipboard is busy, as the other copy commands
+  do, and shows refusals ("Could not...", "Actions are off...") in the error style.
 
 ## [3.3.0] - 2026-11-14
 

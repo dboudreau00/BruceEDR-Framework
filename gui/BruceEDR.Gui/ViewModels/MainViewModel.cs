@@ -668,8 +668,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private void CopyEvent(EventRow? row)
     {
         if (row is null) return;
-        try { Clipboard.SetText(row.ToClipboardLine()); }
-        catch (Exception ex) { AppLog.Error("copy event", ex); }
+        try { Clipboard.SetText(row.ToClipboardLine()); LastMessage = "Event copied."; }
+        catch (Exception ex) { AppLog.Error("copy event", ex); LastMessage = "Clipboard is busy. Try again."; }
     }
 
     private static void OpenUrl(string? url)
@@ -1449,7 +1449,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             if (!Set(ref _lastMessage, value) || string.IsNullOrEmpty(value)) return;
             ToastText = value;
             ToastIsError = value.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
-                        || value.Contains("failed", StringComparison.OrdinalIgnoreCase);
+                        || value.Contains("failed", StringComparison.OrdinalIgnoreCase)
+                        || value.StartsWith("Could not", StringComparison.OrdinalIgnoreCase)
+                        || value.Contains("no longer exists", StringComparison.OrdinalIgnoreCase)
+                        || value.StartsWith("Clipboard is busy", StringComparison.OrdinalIgnoreCase)
+                        || value.StartsWith("Actions are off", StringComparison.OrdinalIgnoreCase);
             ToastVisible = true;
             _toastTimer.Stop();
             _toastTimer.Start();
