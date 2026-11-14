@@ -172,6 +172,8 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   that apply live.
 - The desktop app says "Event copied." or that the clipboard is busy, as the other copy commands
   do, and shows refusals ("Could not...", "Actions are off...") in the error style.
+- **Deleting an incident or clearing the history** no longer crashes on a storage error, and no
+  longer empties the list as if it had worked: it says the delete failed and keeps the list.
 
 ## [3.3.0] - 2026-11-14
 

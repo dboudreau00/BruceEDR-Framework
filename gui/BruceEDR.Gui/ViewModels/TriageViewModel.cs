@@ -306,7 +306,14 @@ public sealed class TriageViewModel : ViewModelBase
     private void Delete(IncidentItem item)
     {
         if (IsSceneOpen && ReferenceEquals(SceneIncident, item)) Back();
-        _store.DeleteIncident(item.Key);
+        try { _store.DeleteIncident(item.Key); }
+        catch (Exception ex)
+        {
+            AppLog.Error("triage delete", ex);
+            MessageBox.Show("The incident could not be deleted: " + ex.Message, "Delete incident",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
         Incidents.Remove(item);
         if (ReferenceEquals(_selected, item)) SelectedIncident = Incidents.FirstOrDefault();
         OnPropertyChanged(nameof(HasIncidents));
@@ -319,7 +326,14 @@ public sealed class TriageViewModel : ViewModelBase
             "Clear incident history", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
         if (answer != MessageBoxResult.Yes) return;
         if (IsSceneOpen) Back();
-        _store.Clear();
+        try { _store.Clear(); }
+        catch (Exception ex)
+        {
+            AppLog.Error("triage clear", ex);
+            MessageBox.Show("The history could not be cleared: " + ex.Message, "Clear incident history",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
         Incidents.Clear();
         _dirty.Clear();
         SelectedIncident = null;
