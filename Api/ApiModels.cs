@@ -547,3 +547,16 @@ public sealed record ApiSafetyPolicy
         return h;
     }
 }
+
+/// <summary>Outcome of <see cref="ApiClient.StreamLinesAsync"/>. Error text never carries request headers.</summary>
+public sealed record ApiStreamResult
+{
+    public bool Ok { get; init; }
+    public int Status { get; init; }
+    public string Error { get; init; } = "";
+    /// <summary>Up to 16 KB of a non-2xx body, for the provider's own error message.</summary>
+    public string ErrorBody { get; init; } = "";
+
+    public static ApiStreamResult Failed(string error, int status = 0, string body = "")
+        => new() { Ok = false, Status = status, Error = error, ErrorBody = body };
+}

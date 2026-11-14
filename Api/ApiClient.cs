@@ -881,6 +881,84 @@ public sealed class ApiClient : IApiClient
         return message;
     }
 
+    /// <summary>
+    /// Sends one request and hands each line of a 2xx response body to <paramref name="onLine"/>
+    /// as it arrives (server-sent events). Same policy, DNS pinning and certificate validation as
+    /// <see cref="SendAsync"/>; redirects are refused, not followed, so credentials never move
+    /// to another origin. <paramref name="onLine"/> returns false to stop reading.
+    /// </summary>
+    public async Task<ApiStreamResult> StreamLinesAsync(string method, Uri uri, IReadOnlyList<ApiKeyValue> headers,
+        string? jsonBody, Func<string, bool> onLine, TimeSpan timeout, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        ArgumentNullException.ThrowIfNull(onLine);
+        if (_disposed) return ApiStreamResult.Failed("client has been disposed");
+        if (!TryNormalizeMethod(method, out var verb, out var error)) return ApiStreamResult.Failed(error);
+        if (!IsSupportedScheme(uri.Scheme)) return ApiStreamResult.Failed($"unsupported scheme '{uri.Scheme}'");
+        var refusal = _policy.Refuse(verb, uri);
+        if (refusal is not null) return ApiStreamResult.Failed(refusal);
+        if (!ValidateHeaders(headers ?? Array.Empty<ApiKeyValue>(), out error)) return ApiStreamResult.Failed(error);
+
+        await ThrottleAsync(ct).ConfigureAwait(false);
+
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        using var handler = CreateHandler(new TlsCapture(), _policy);
+        using var http = new HttpClient(handler, disposeHandler: false) { Timeout = Timeout.InfiniteTimeSpan };
+        try
+        {
+            using var request = new HttpRequestMessage(new HttpMethod(verb), uri);
+            if (jsonBody is not null)
+                request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+            foreach (var h in headers ?? Array.Empty<ApiKeyValue>())
+            {
+                if (ContentHeaders.Contains(h.Name))
+                {
+                    if (request.Content is null) continue;
+                    request.Content.Headers.Remove(h.Name);
+                    request.Content.Headers.TryAddWithoutValidation(h.Name, h.Value);
+                }
+                else request.Headers.TryAddWithoutValidation(h.Name, h.Value);
+            }
+
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token)
+                                            .ConfigureAwait(false);
+            int status = (int)response.StatusCode;
+            if (IsRedirect(status))
+                return ApiStreamResult.Failed($"HTTP {status}: the server redirected and redirects are not followed", status);
+            if (status < 200 || status > 299)
+            {
+                var (text, _, _) = await ReadBodyAsync(response, 16 * 1024, linked.Token).ConfigureAwait(false);
+                return ApiStreamResult.Failed($"HTTP {status}", status, text);
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(linked.Token).ConfigureAwait(false);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            long read = 0;
+            string? line;
+            while ((line = await reader.ReadLineAsync(linked.Token).ConfigureAwait(false)) is not null)
+            {
+                read += line.Length + 1;
+                if (read > _policy.MaxResponseBytes)
+                    return ApiStreamResult.Failed("response exceeded the size cap", status);
+                if (!onLine(line)) break;
+            }
+            return new ApiStreamResult { Ok = true, Status = status };
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            return ApiStreamResult.Failed($"timed out after {timeout.TotalSeconds:F0} s");
+        }
+        catch (OperationCanceledException)
+        {
+            return ApiStreamResult.Failed("cancelled");
+        }
+        catch (HttpRequestException ex)
+        {
+            return ApiStreamResult.Failed(ex.InnerException is null ? ex.Message : ex.Message + " (" + ex.InnerException.Message + ")");
+        }
+    }
+
     private static SocketsHttpHandler CreateHandler(TlsCapture capture, ApiSafetyPolicy policy)
     {
         var handler = new SocketsHttpHandler
