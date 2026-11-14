@@ -2,6 +2,15 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Analyst Suspend, Resume and End now check the process name before acting.** Automatic
+  containment already refused a pid that had been reused; the analyst path (desktop app,
+  console and control API) acted on the bare pid. A row that outlived its process could end
+  whatever had taken the pid since. Host-level tests cover it against a real child process.
+
 ## [3.2.0] - 2026-10-08
 
 BruceEDR no longer goes live by accident. Double-clicking the agent used to start a live

@@ -691,9 +691,11 @@ public sealed class BruceHost : IDisposable
 
         var tcs = ac.Result;
         int pid = ac.Pid;
+        // A row can outlive its process: the pid may already belong to something else.
+        string expected = _engine.SnapshotOne(pid)?.ProcessName ?? "";
         bool scheduled = EnqueueResponse(() =>
         {
-            var r = ResponseManager.KillProcess(pid);
+            var r = ResponseManager.KillProcess(pid, expected);
             // If the follow-up cannot be queued the engine's Terminated flag stays unset,
             // but the analyst still gets the real outcome instead of a 10s timeout.
             if (!TryPost(new KillDoneCommand { Pid = pid, Result = tcs, Outcome = r }))
@@ -925,7 +927,7 @@ public sealed class BruceHost : IDisposable
                 // it -- the analyst got a running process that silently could not reach the
                 // network, which looks exactly like the app being broken.
                 var snap = _engine.SnapshotOne(pid);
-                var r = ResponseManager.ResumeProcess(pid);
+                var r = ResponseManager.ResumeProcess(pid, snap?.ProcessName ?? "");
                 if (r.Ok) _engine.SetSuspendedByAnalyst(pid, false);
 
                 if (!string.IsNullOrEmpty(snap?.ImagePath))
@@ -950,7 +952,7 @@ public sealed class BruceHost : IDisposable
                 var snap = _engine.SnapshotOne(pid);
                 if (snap is not null && snap.SuspendedByAnalyst)
                     return ActionResult.Success($"pid {pid} already suspended");
-                var r = ResponseManager.SuspendProcess(pid);
+                var r = ResponseManager.SuspendProcess(pid, snap?.ProcessName ?? "");
                 if (r.Ok) _engine.SetSuspendedByAnalyst(pid, true);
                 return r;
             }

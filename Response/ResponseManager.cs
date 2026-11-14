@@ -87,6 +87,13 @@ public sealed class ResponseManager
         return identity ?? KillProcess(pid);
     }
 
+    /// <summary>Resume with the same identity check as <see cref="SuspendProcess(int, string)"/>.</summary>
+    public static ActionResult ResumeProcess(int pid, string expectedName)
+    {
+        var identity = CheckIdentity(pid, expectedName);
+        return identity ?? ResumeProcess(pid);
+    }
+
     /// <summary>
     /// Null when the live process at <paramref name="pid"/> matches <paramref name="expectedName"/>
     /// (or no name was known, or the name could not be read -- a protected process denies
