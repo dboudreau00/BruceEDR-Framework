@@ -256,7 +256,13 @@ public sealed class AnalystConsole
     private void RenderSurface(string arg)
     {
         int pid = 0;
-        if (!string.IsNullOrWhiteSpace(arg)) int.TryParse(arg.Trim(), out pid);
+        if (!string.IsNullOrWhiteSpace(arg))
+        {
+            var token = arg.Trim();
+            if (token.StartsWith("pid:", StringComparison.OrdinalIgnoreCase)) token = token[4..].Trim();
+            if (!int.TryParse(token, out pid) || pid <= 0)
+                throw new ConsoleInputException($"'{arg.Trim()}' is not a valid pid.");
+        }
 
         var endpoints = _host.SurfaceEndpoints(pid);
         if (endpoints.Count == 0)
@@ -288,10 +294,14 @@ public sealed class AnalystConsole
         switch (sub)
         {
             case "restore" when parts.Length >= 3:
-                _log.Raw(vault.Restore(parts[1], Path.GetFullPath(parts[2]), out var rerr)
-                    ? $"  restored {parts[1]} -> {parts[2]}"
+            {
+                string targetPath = parts[2].Trim().Trim('"');
+                if (targetPath.Length == 0) { _log.Raw("  restore failed: destination path is empty."); return; }
+                _log.Raw(vault.Restore(parts[1], Path.GetFullPath(targetPath), out var rerr)
+                    ? $"  restored {parts[1]} -> {targetPath}"
                     : "  restore failed: " + rerr);
                 return;
+            }
             case "purge" when parts.Length >= 2:
                 _log.Raw(vault.Purge(parts[1], out var perr) ? $"  purged {parts[1]}" : "  purge failed: " + perr);
                 return;

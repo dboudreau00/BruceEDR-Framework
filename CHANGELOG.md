@@ -174,6 +174,8 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   do, and shows refusals ("Could not...", "Actions are off...") in the error style.
 - **Deleting an incident or clearing the history** no longer crashes on a storage error, and no
   longer empties the list as if it had worked: it says the delete failed and keeps the list.
+- The console's `surface` takes `surface pid:1234` as its help says, and rejects an invalid pid
+  instead of listing every endpoint; `vault restore` accepts a quoted destination path.
 
 ## [3.3.0] - 2026-11-14
 
