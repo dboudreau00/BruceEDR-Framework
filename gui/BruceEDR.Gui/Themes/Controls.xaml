@@ -121,6 +121,40 @@
         </Setter>
     </Style>
 
+    <!-- A chip that stays on or off, for filters that combine -->
+    <Style x:Key="Chip.Toggle" TargetType="ToggleButton">
+        <Setter Property="FontFamily" Value="{StaticResource Font.Ui}"/>
+        <Setter Property="FontSize" Value="11.5"/>
+        <Setter Property="FontWeight" Value="Medium"/>
+        <Setter Property="Padding" Value="10,4.5"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Background" Value="{StaticResource Brush.InkRaised}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource Brush.Line}"/>
+        <Setter Property="Foreground" Value="{StaticResource Brush.Mist}"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Ring}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                            CornerRadius="{StaticResource Radius.Chip}" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource Brush.PanelHover}"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                            <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                            <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ============================ State badge ============================ -->
     <!-- Dim fill + state-coloured text; colours assigned per-severity by the view. -->
     <Style x:Key="Badge" TargetType="Border">
@@ -758,6 +792,63 @@
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
         <Setter Property="Foreground" Value="{StaticResource Brush.Mist}"/>
+    </Style>
+
+    <!-- ============================ Scrub slider ============================ -->
+    <!-- A thin track that fills to the thumb, for moving through time. -->
+    <Style x:Key="Scrub.Fill" TargetType="RepeatButton">
+        <Setter Property="IsTabStop" Value="False"/>
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RepeatButton">
+                    <Border Height="4" CornerRadius="2" Background="{StaticResource Brush.Accent}" VerticalAlignment="Center"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style x:Key="Scrub.Thumb" TargetType="Thumb">
+        <Setter Property="Width" Value="14"/>
+        <Setter Property="Height" Value="14"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Thumb">
+                    <Grid>
+                        <Ellipse Width="26" Height="26" Fill="{StaticResource Brush.AccentDim}" Opacity="0.0" x:Name="halo"/>
+                        <Ellipse Width="14" Height="14" Fill="{StaticResource Brush.Paper}" Stroke="{StaticResource Brush.Accent}" StrokeThickness="2.5"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="halo" Property="Opacity" Value="1"/></Trigger>
+                        <Trigger Property="IsDragging" Value="True"><Setter TargetName="halo" Property="Opacity" Value="1"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style x:Key="Scrub" TargetType="Slider">
+        <Setter Property="Height" Value="26"/>
+        <Setter Property="Focusable" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Slider">
+                    <Grid Background="Transparent">
+                        <Border Height="4" CornerRadius="2" Background="{StaticResource Brush.Line}" VerticalAlignment="Center"/>
+                        <Track x:Name="PART_Track">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="Slider.DecreaseLarge" Style="{StaticResource Scrub.Fill}"/>
+                            </Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="Slider.IncreaseLarge" Style="{StaticResource Scroll.Page}"/>
+                            </Track.IncreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Style="{StaticResource Scrub.Thumb}"/>
+                            </Track.Thumb>
+                        </Track>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <!-- ============================ View entrance ============================ -->

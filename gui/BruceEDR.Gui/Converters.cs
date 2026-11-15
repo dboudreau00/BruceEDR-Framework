@@ -4,6 +4,33 @@ using BruceEDR.Gui.ViewModels;
 
 namespace BruceEDR.Gui;
 
+/// <summary>True becomes Collapsed and False becomes Visible: the empty-state twin of BooleanToVisibilityConverter.</summary>
+public sealed class NotToVisibilityConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is true ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
+/// <summary>A level name (threat, watch, safe, ember, drop, deleted, renamed, created, accent) as a brush; <see cref="Dim"/> gives the translucent fill that sits behind text of that colour.</summary>
+public sealed class LevelBrushConverter : IValueConverter
+{
+    public bool Dim { get; set; }
+
+    public object Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
+    {
+        var c = Views.LevelColors.Of(value as string ?? "info");
+        var brush = new System.Windows.Media.SolidColorBrush(Dim ? System.Windows.Media.Color.FromArgb(0x2E, c.R, c.G, c.B) : c);
+        brush.Freeze();
+        return brush;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
 /// <summary>
 /// "Is this value equal to the parameter" — drives the selected state of filter chips
 /// (EventFilter == "WARN" etc.) without a dedicated bool per chip.

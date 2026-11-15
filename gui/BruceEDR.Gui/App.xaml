@@ -9,7 +9,10 @@
                 <ResourceDictionary Source="Themes/Controls.xaml"/>
             </ResourceDictionary.MergedDictionaries>
             <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+            <local:NotToVisibilityConverter x:Key="NotToVis"/>
             <local:EqualsConverter x:Key="Equals"/>
+            <local:LevelBrushConverter x:Key="LevelBrush"/>
+            <local:LevelBrushConverter x:Key="LevelDim" Dim="True"/>
             <local:ChipSelectedConverter x:Key="ChipSelected"/>
             <local:TacticSummaryConverter x:Key="TacticSummary"/>
             <local:TacticProgressConverter x:Key="TacticProgress"/>
