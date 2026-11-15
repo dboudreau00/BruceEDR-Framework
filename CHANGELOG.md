@@ -2,7 +2,7 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [3.4.1] - 2026-11-14
 
 The desktop app now shows what a run did, not only what it scored: a process map and a file map
 you can read at a glance, Insights charts, and every run saved so it can be opened again. A
