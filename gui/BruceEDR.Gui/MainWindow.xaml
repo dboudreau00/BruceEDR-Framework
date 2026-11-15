@@ -11,7 +11,7 @@
         TextOptions.TextFormattingMode="Ideal"
         UseLayoutRounding="True">
 
-    <!-- F5 refresh, Ctrl+1..8 jump to a view -->
+    <!-- F5 refresh, Ctrl+1..9 and Ctrl+0 jump to a view in sidebar order, Ctrl+, opens Settings -->
     <Window.InputBindings>
         <KeyBinding Key="F5" Command="{Binding RefreshCommand}"/>
         <KeyBinding Key="D1" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="0"/>
@@ -22,6 +22,9 @@
         <KeyBinding Key="D6" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="5"/>
         <KeyBinding Key="D7" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="6"/>
         <KeyBinding Key="D8" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="7"/>
+        <KeyBinding Key="D9" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="8"/>
+        <KeyBinding Key="D0" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="9"/>
+        <KeyBinding Key="OemComma" Modifiers="Control" Command="{Binding SelectTabCommand}" CommandParameter="10"/>
     </Window.InputBindings>
 
     <Window.Resources>
@@ -92,35 +95,54 @@
         <TabControl Grid.Row="0" Style="{StaticResource Nav.Rail}"
                     IsEnabled="{Binding TabsEnabled}"
                     SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
+            <!-- INVESTIGATE: what happened, step by step -->
             <TabItem Header="Incident triage" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+1"
-                     v:Nav.Icon="&#xE945;" v:Nav.Flag="AI">
+                     v:Nav.Section="INVESTIGATE" v:Nav.Icon="&#xE945;" v:Nav.Flag="AI">
                 <v:TriageView DataContext="{Binding Triage}"/>
             </TabItem>
-            <TabItem Header="Dashboard" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+2"
-                     v:Nav.Icon="&#xE80F;" v:Nav.Badge="{Binding FlaggedCount}" v:Nav.BadgeLevel="{Binding DashboardBadgeLevel}">
+            <TabItem Header="Process map" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+2"
+                     v:Nav.Icon="&#xE8CE;" v:Nav.Badge="{Binding ProcessMapBadge}" v:Nav.BadgeLevel="watch">
+                <v:ProcessMapView DataContext="{Binding ProcessMap}"/>
+            </TabItem>
+            <TabItem Header="File map" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+3"
+                     v:Nav.Icon="&#xE8A5;" v:Nav.Badge="{Binding FileMapBadge}" v:Nav.BadgeLevel="threat">
+                <v:FileMapView DataContext="{Binding FileMap}"/>
+            </TabItem>
+
+            <!-- MONITOR: how things look right now -->
+            <TabItem Header="Dashboard" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+4"
+                     v:Nav.Section="MONITOR" v:Nav.Icon="&#xE80F;" v:Nav.Badge="{Binding FlaggedCount}" v:Nav.BadgeLevel="{Binding DashboardBadgeLevel}">
                 <v:DashboardView/>
             </TabItem>
-            <TabItem Header="Live events" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+3"
+            <TabItem Header="Live events" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+5"
                      v:Nav.Icon="&#xE81C;" v:Nav.Badge="{Binding UnreadAlerts}" v:Nav.BadgeLevel="{Binding UnreadLevel}">
                 <v:EventsView/>
             </TabItem>
-            <TabItem Header="API surface" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+4"
-                     v:Nav.Icon="&#xE71B;" v:Nav.Badge="{Binding BeaconCount}" v:Nav.BadgeLevel="watch">
+            <TabItem Header="Insights" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+6"
+                     v:Nav.Icon="&#xE9D2;">
+                <v:InsightsView DataContext="{Binding Insights}"/>
+            </TabItem>
+
+            <!-- NETWORK -->
+            <TabItem Header="API surface" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+7"
+                     v:Nav.Section="NETWORK" v:Nav.Icon="&#xE71B;" v:Nav.Badge="{Binding BeaconCount}" v:Nav.BadgeLevel="watch">
                 <v:SurfaceView/>
             </TabItem>
-            <TabItem Header="Network map" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+5"
+            <TabItem Header="Network map" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+8"
                      v:Nav.Icon="&#xE909;">
                 <v:MapView/>
             </TabItem>
-            <TabItem Header="Watchlist" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+6"
-                     v:Nav.Icon="&#xE7B3;" v:Nav.Badge="{Binding WatchlistEditor.ArmedCount}">
+
+            <!-- CONFIGURE -->
+            <TabItem Header="Watchlist" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+9"
+                     v:Nav.Section="CONFIGURE" v:Nav.Icon="&#xE7B3;" v:Nav.Badge="{Binding WatchlistEditor.ArmedCount}">
                 <v:WatchlistView DataContext="{Binding WatchlistEditor}"/>
             </TabItem>
-            <TabItem Header="Coverage" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+7"
+            <TabItem Header="Coverage" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+0"
                      v:Nav.Icon="&#xE8A9;">
                 <v:CoverageView/>
             </TabItem>
-            <TabItem Header="Settings" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+8"
+            <TabItem Header="Settings" Style="{StaticResource Nav.Item}" ToolTip="Ctrl+,"
                      v:Nav.Icon="&#xE713;">
                 <v:SettingsView DataContext="{Binding Settings}"/>
             </TabItem>

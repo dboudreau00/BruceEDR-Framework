@@ -20,7 +20,9 @@ public partial class MainWindow : Window
         DataContext = _vm;
 
         RestorePlacement();
-        _vm.SelectedTabIndex = Math.Clamp(_ui.LastTabIndex, 0, MainViewModel.TabCount - 1);
+        _vm.SelectedTabIndex = _ui.TabLayout == MainViewModel.TabLayoutVersion
+            ? Math.Clamp(_ui.LastTabIndex, 0, MainViewModel.TabCount - 1)
+            : MainViewModel.DashboardTabIndex;
         _vm.Settings.AttachUiState(_ui);
 
         Loaded += (_, _) =>
@@ -129,6 +131,7 @@ public partial class MainWindow : Window
             }
             _ui.WindowMaximized = WindowState == WindowState.Maximized;
             _ui.LastTabIndex = _vm.SelectedTabIndex;
+            _ui.TabLayout = MainViewModel.TabLayoutVersion;
             _ui.Save();
         }
         catch (Exception ex) { AppLog.Error("save placement", ex); }

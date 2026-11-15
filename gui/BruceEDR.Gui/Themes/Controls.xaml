@@ -429,6 +429,11 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
+                    <StackPanel>
+                    <TextBlock x:Name="section" Margin="24,14,10,5" IsHitTestVisible="False"
+                               Text="{Binding Path=(v:Nav.Section), RelativeSource={RelativeSource TemplatedParent}}"
+                               FontFamily="{StaticResource Font.Ui}" FontSize="9.5" FontWeight="Bold"
+                               Foreground="{StaticResource Brush.Faint}"/>
                     <Border x:Name="bd" Background="Transparent" CornerRadius="6" Margin="10,1.5">
                         <Grid>
                             <Border x:Name="bar" Width="3" Height="18" CornerRadius="0,2,2,0"
@@ -470,7 +475,11 @@
                             </Grid>
                         </Grid>
                     </Border>
+                    </StackPanel>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="v:Nav.Section" Value="">
+                            <Setter TargetName="section" Property="Visibility" Value="Collapsed"/>
+                        </Trigger>
                         <Trigger Property="v:Nav.Badge" Value="0">
                             <Setter TargetName="badge" Property="Visibility" Value="Collapsed"/>
                         </Trigger>

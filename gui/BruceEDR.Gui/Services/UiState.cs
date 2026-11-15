@@ -19,6 +19,8 @@ public sealed class UiState
     public double WindowHeight { get; set; }
     public bool WindowMaximized { get; set; }
     public int LastTabIndex { get; set; }
+    /// <summary>Which sidebar order <see cref="LastTabIndex"/> was saved under; an older order is ignored, not misread.</summary>
+    public int TabLayout { get; set; }
     public bool MinimizeToTray { get; set; } = true;
 
     /// <summary>Incident triage assistant. The API key is not here: it is DPAPI-encrypted in its own file.</summary>

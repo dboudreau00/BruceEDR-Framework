@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
+using BruceEDR.Activity;
 using BruceEDR.Analysis;
 using BruceEDR.Api;
 using BruceEDR.Assistant;
@@ -67,6 +68,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// <summary>Recorded detections, replayed as a scene and explained by the configured model.</summary>
     public TriageViewModel Triage { get; }
     public AssistantSettings Assistant { get; }
+    /// <summary>Where the process map, the file map and Insights get their data: this session, a saved one, or a trace.</summary>
+    public ActivityHub Activity { get; }
+    public ProcessMapViewModel ProcessMap { get; }
+    public FileMapViewModel FileMap { get; }
+    public InsightsViewModel Insights { get; }
 
     /// <summary>Raised for tray balloons: (title, message). Fired on containment and monitor loss.</summary>
     public event Action<string, string>? AlertRaised;
@@ -86,6 +92,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         Assistant = new AssistantSettings(ui, CreateKeyStore());
         Triage = new TriageViewModel(CreateTriageStore(), Assistant);
         Settings.AttachAssistant(Assistant);
+        Activity = new ActivityHub();
+        ProcessMap = new ProcessMapViewModel(Activity);
+        FileMap = new FileMapViewModel(Activity);
+        Insights = new InsightsViewModel(Activity);
+        Activity.ShowProcess = ShowProcessOnMap;
+        Activity.ShowFilesOf = ShowFilesOfProcess;
         // Settings and the watchlist edit the config file, so they work before an engine
         // exists. Opening the window builds nothing and monitors nothing.
         try
@@ -198,6 +210,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             running = await Task.Run(() =>
             {
                 built = Composition.Build(_configPath, sink);
+                built.SessionDirectory = AppPaths.SessionRoot;
                 return built.Host.Start();
             });
         }
@@ -216,6 +229,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             _composition = built!;
             _host = _composition.Host;
+            Activity.AttachLive(_composition.Activity);
             var comp = _composition;
             _detection = () => comp.Config.Detection;
             IsLive = true;
@@ -334,6 +348,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
             _replay = session;
             _host = session.Host;
+            Activity.AttachLive(session.Activity);
             _detection = () => session.Config.Detection;
             ReplayName = pick.Title;
             IsReplay = true;
@@ -490,7 +505,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             // Nothing can be saved over a broken file; Settings still offers "Open config file".
             IsSetupOpen = false;
-            SelectedTabIndex = TabCount - 1;
+            SelectedTabIndex = SettingsTabIndex;
             return;
         }
         if (!IsLive)
@@ -509,7 +524,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             catch (Exception ex) { AppLog.Error("settings reload", ex); }
         }
         IsSetupOpen = false;
-        SelectedTabIndex = TabCount - 1;
+        SelectedTabIndex = SettingsTabIndex;
     }
 
     /// <summary>
@@ -525,6 +540,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _stopping = true;
         try { _timer?.Stop(); } catch (Exception ex) { AppLog.Error("timer stop", ex); }
         _timer = null;
+        Activity.Freeze();   // the run's picture stays on the maps and charts until the next one starts
         _composition = null;
         _replay = null;
         _host = null;
@@ -588,6 +604,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ICommand StopCommand { get; }
     public ICommand OpenSetupCommand { get; }
     public ICommand ReviewSettingsCommand { get; }
+    /// <summary>Leaves set-up for the process map, with the newest saved run open, to look at an earlier run without starting anything.</summary>
     public ICommand StartReplayCommand { get; }
     public ICommand SetCoverageModeCommand { get; }
 
@@ -871,6 +888,37 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ? "\"" + s.Replace("\"", "\"\"") + "\""
             : s;
 
+    // -------------------------------------------------------------- activity views
+    /// <summary>Lays the engine's scores over the process tree, keeps the sidebar badges current, and refreshes the views that are on screen.</summary>
+    private void FeedActivity(IReadOnlyList<ProfileSnapshot> snaps)
+    {
+        var model = _composition?.Activity ?? _replay?.Activity;
+        if (model is null) return;
+        try
+        {
+            model.ApplyProfiles(snaps, ContainAt);
+            var counts = model.Counters;
+            ProcessMapBadge = counts.Flagged;
+            FileMapBadge = counts.Melted;
+        }
+        catch (Exception ex) { AppLog.Error("activity scores", ex); }
+        _ = Activity.RefreshAsync(IsActivityTab(SelectedTabIndex));
+    }
+
+    /// <summary>Jumps to the process map with this process (a node id) selected.</summary>
+    private void ShowProcessOnMap(int processId)
+    {
+        SelectedTabIndex = ProcessMapTabIndex;
+        ProcessMap.Select(processId);
+    }
+
+    /// <summary>Jumps to the file map showing only what this process (a node id) did to files.</summary>
+    private void ShowFilesOfProcess(int processId)
+    {
+        SelectedTabIndex = FileMapTabIndex;
+        FileMap.SetFocus(processId);
+    }
+
     // -------------------------------------------------------------- refresh
     private async Task RefreshAsync()
     {
@@ -894,6 +942,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             }
             MergeThreats(snaps);
             CaptureIncidents(snaps);
+            FeedActivity(snaps);
 
             IReadOnlyList<SurfaceEndpoint> endpoints;
             try { endpoints = await Task.Run(() => host.SurfaceEndpoints()); }
@@ -1282,9 +1331,23 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public int ContainAt { get => _containAt; private set => Set(ref _containAt, value); }
 
     // ---- nav badges ----
+    // The sidebar, top to bottom. Saved tab positions from before this order are ignored (TabLayoutVersion).
     public const int TriageTabIndex = 0;
-    public const int DashboardTabIndex = 1;
-    public const int EventsTabIndex = 2;
+    public const int ProcessMapTabIndex = 1;
+    public const int FileMapTabIndex = 2;
+    public const int DashboardTabIndex = 3;
+    public const int EventsTabIndex = 4;
+    public const int InsightsTabIndex = 5;
+    public const int SettingsTabIndex = 10;
+    public const int TabLayoutVersion = 2;
+
+    private static bool IsActivityTab(int i) => i is ProcessMapTabIndex or FileMapTabIndex or InsightsTabIndex;
+
+    private int _processMapBadge, _fileMapBadge;
+    /// <summary>Processes the engine has scored, on the process map's sidebar entry.</summary>
+    public int ProcessMapBadge { get => _processMapBadge; private set => Set(ref _processMapBadge, value); }
+    /// <summary>Programs that removed themselves, on the file map's sidebar entry.</summary>
+    public int FileMapBadge { get => _fileMapBadge; private set => Set(ref _fileMapBadge, value); }
 
     private int _unreadAlerts;
     /// <summary>Warn and quarantine events that arrived while the feed was not on screen.</summary>
@@ -1572,7 +1635,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public bool HasHoveredMarker => _hoveredMarker is not null;
 
     /// <summary>Number of nav items, so shortcut clamping and saved state agree with the XAML.</summary>
-    public const int TabCount = 8;
+    public const int TabCount = 11;
 
     private int _selectedTabIndex;
     public int SelectedTabIndex
@@ -1582,6 +1645,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             if (!Set(ref _selectedTabIndex, value)) return;
             if (value == EventsTabIndex) { UnreadAlerts = 0; UnreadLevel = "watch"; }
+            if (IsActivityTab(value)) _ = Activity.RefreshAsync(true);
         }
     }
 

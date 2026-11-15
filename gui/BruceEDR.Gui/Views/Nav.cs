@@ -22,6 +22,12 @@ public static class Nav
     public static string GetFlag(DependencyObject o) => (string)o.GetValue(FlagProperty);
     public static void SetFlag(DependencyObject o, string v) => o.SetValue(FlagProperty, v);
 
+    /// <summary>Small heading shown above this item: the first item of each sidebar group sets it.</summary>
+    public static readonly DependencyProperty SectionProperty = DependencyProperty.RegisterAttached(
+        "Section", typeof(string), typeof(Nav), new PropertyMetadata(""));
+    public static string GetSection(DependencyObject o) => (string)o.GetValue(SectionProperty);
+    public static void SetSection(DependencyObject o, string v) => o.SetValue(SectionProperty, v);
+
     /// <summary>threat | watch | neutral: the badge colour.</summary>
     public static readonly DependencyProperty BadgeLevelProperty = DependencyProperty.RegisterAttached(
         "BadgeLevel", typeof(string), typeof(Nav), new PropertyMetadata("neutral"));
