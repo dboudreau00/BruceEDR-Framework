@@ -1,0 +1,321 @@
+<UserControl x:Class="BruceEDR.Gui.Views.ProcessMapView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:BruceEDR.Gui.Views"
+             x:Name="Root"
+             Style="{StaticResource View.Root}">
+    <UserControl.RenderTransform>
+        <TranslateTransform/>
+    </UserControl.RenderTransform>
+    <UserControl.Resources>
+        <!-- A choice among a few: violet when it is the active one. Tag is its key. -->
+        <Style x:Key="FilterChip" TargetType="Button" BasedOn="{StaticResource Chip}">
+            <Setter Property="Command" Value="{Binding SetFilterCommand}"/>
+            <Setter Property="CommandParameter" Value="{Binding Tag, RelativeSource={RelativeSource Self}}"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Style.Triggers>
+                <DataTrigger Value="True">
+                    <DataTrigger.Binding>
+                        <MultiBinding Converter="{StaticResource ChipSelected}">
+                            <Binding Path="FilterKey"/>
+                            <Binding Path="Tag" RelativeSource="{RelativeSource Self}"/>
+                        </MultiBinding>
+                    </DataTrigger.Binding>
+                    <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="LayoutChip" TargetType="Button" BasedOn="{StaticResource Chip}">
+            <Setter Property="Command" Value="{Binding SetLayoutCommand}"/>
+            <Setter Property="CommandParameter" Value="{Binding Tag, RelativeSource={RelativeSource Self}}"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Style.Triggers>
+                <DataTrigger Value="True">
+                    <DataTrigger.Binding>
+                        <MultiBinding Converter="{StaticResource ChipSelected}">
+                            <Binding Path="LayoutKey"/>
+                            <Binding Path="Tag" RelativeSource="{RelativeSource Self}"/>
+                        </MultiBinding>
+                    </DataTrigger.Binding>
+                    <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="Section" TargetType="TextBlock" BasedOn="{StaticResource Text.Label}">
+            <Setter Property="Margin" Value="0,16,0,6"/>
+        </Style>
+        <Style x:Key="Readout" TargetType="TextBox">
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Mist}"/>
+            <Setter Property="SelectionBrush" Value="{StaticResource Brush.AccentDim}"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="22,20,22,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,14">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Process map" Style="{StaticResource Text.Display}"/>
+                <Border Style="{StaticResource Pill}" Margin="12,4,0,0" Visibility="{Binding HasData, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding Summary}" Style="{StaticResource Pill.Text}"/>
+                </Border>
+            </StackPanel>
+            <TextBlock Text="Who started what. Anything flagged, or that made or removed a file, is lit up." Style="{StaticResource Text.Body}"
+                       Foreground="{StaticResource Brush.Faint}" Margin="0,4,0,0"/>
+        </StackPanel>
+
+        <v:SourceBar Grid.Row="1" DataContext="{Binding Hub}" Margin="0,0,0,12"/>
+
+        <!-- Toolbar -->
+        <Grid Grid.Row="2" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                <TextBlock Text="SHOW" Style="{StaticResource Text.Label}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <Button Content="Flagged" Tag="Flagged" Style="{StaticResource FilterChip}" ToolTip="What the engine scored, what made or removed a file, and the lineage around them"/>
+                <Button Content="Running" Tag="Live" Style="{StaticResource FilterChip}" ToolTip="Processes that have not ended"/>
+                <Button Content="Everything" Tag="All" Style="{StaticResource FilterChip}" ToolTip="Every process seen. Busy branches start folded."/>
+                <Border Width="1" Height="18" Background="{StaticResource Brush.Line}" Margin="8,0,14,0"/>
+                <TextBlock Text="LAYOUT" Style="{StaticResource Text.Label}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <Button Content="Outline" Tag="outline" Style="{StaticResource LayoutChip}" ToolTip="One row per process, indented under its parent. Stays readable however deep the chain."/>
+                <Button Content="Flow" Tag="flow" Style="{StaticResource LayoutChip}" ToolTip="Left to right, like an org chart"/>
+                <Button Content="Radial" Tag="radial" Style="{StaticResource LayoutChip}" ToolTip="A mind map, with this computer in the middle"/>
+            </StackPanel>
+
+            <TextBox Grid.Column="2" Style="{StaticResource Input.Search}" Width="250" Height="30" HorizontalAlignment="Right"
+                     Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
+                     ToolTip="A name, part of a command line or path, or a pid"/>
+        </Grid>
+
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="344"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- The map -->
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0" ClipToBounds="True">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                    <v:MapCanvas x:Name="Map" Root="{Binding Root}" Shape="{Binding Shape}"
+                                 SelectedKey="{Binding SelectedKey, Mode=TwoWay}"/>
+
+                    <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Orientation="Horizontal" Margin="12">
+                        <Button Content="Fit" Style="{StaticResource Btn.Subtle}" Command="{Binding FitCommand}"
+                                ToolTip="Show the whole map (F). Scroll to zoom, drag to move, double-click a process to fold it." Margin="0,0,6,0"/>
+                        <Button Content="Unfold all" Style="{StaticResource Btn.Subtle}" Command="{Binding ExpandAllCommand}" Margin="0,0,6,0"/>
+                        <Button Content="Fold all" Style="{StaticResource Btn.Subtle}" Command="{Binding CollapseAllCommand}"/>
+                    </StackPanel>
+
+                    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="14,12,0,0" Padding="12,7" CornerRadius="8"
+                            Background="{StaticResource Brush.WatchDim}" BorderBrush="#4DF2B33D" BorderThickness="1"
+                            Visibility="{Binding HasNote, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding Note}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Watch}" FontSize="11.5"/>
+                    </Border>
+
+                    <!-- Nothing yet -->
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="440"
+                                Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVis}}">
+                        <Border Width="64" Height="64" CornerRadius="32" Background="{StaticResource Brush.AccentDim}" BorderBrush="{StaticResource Brush.AccentLine}" BorderThickness="1" HorizontalAlignment="Center">
+                            <TextBlock Text="&#xE8CE;" Style="{StaticResource Icon}" FontSize="26" Foreground="{StaticResource Brush.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="No processes to draw yet" Style="{StaticResource Text.Title}" HorizontalAlignment="Center" Margin="0,18,0,6"/>
+                        <TextBlock Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Center">
+                            Start monitoring, or replay a recorded attack from the set-up screen, and the tree builds here as programs start. You can also open the process tree of an earlier run.
+                        </TextBlock>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,18,0,0">
+                            <Button Content="Open an earlier session..." Style="{StaticResource Btn.Primary}" Command="{Binding Hub.OpenFileCommand}" Margin="0,0,8,0"/>
+                            <Button Content="Go to set-up" Style="{StaticResource Btn.Subtle}" Command="{Binding DataContext.OpenSetupCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+
+                    <v:MapKey Grid.Row="1" Items="{Binding Legend}"/>
+
+                    <!-- Time scrubber: its own row under the map, so it never covers the nodes -->
+                    <Border Grid.Row="2" Padding="16,9" Background="#F00B0E18" BorderBrush="{StaticResource Brush.Line}" BorderThickness="0,1,0,0"
+                            Visibility="{Binding CanScrub, Converter={StaticResource BoolToVis}}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Style="{StaticResource Btn.Icon}" Command="{Binding PlayCommand}" Width="32" Height="28" Margin="0,0,10,0"
+                                    ToolTip="Watch the tree grow, from the start to now">
+                                <TextBlock FontSize="11">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                                            <Setter Property="Text" Value="&#xE768;"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                                                    <Setter Property="Text" Value="&#xE769;"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Button>
+                            <Slider Grid.Column="1" Style="{StaticResource Scrub}" Minimum="0" Maximum="1000" Value="{Binding ScrubValue, Mode=TwoWay}"
+                                    ToolTip="Move through time to see the tree as it was"/>
+                            <TextBlock Grid.Column="2" Text="{Binding ScrubLabel}" Style="{StaticResource Text.Data}" Foreground="{StaticResource Brush.Mist}"
+                                       VerticalAlignment="Center" Margin="14,0,0,0" MinWidth="130" TextAlignment="Right"/>
+                            <Button Grid.Column="3" Content="Now" Style="{StaticResource Btn.Subtle}" Command="{Binding NowCommand}" Margin="10,0,0,0" Padding="10,4"/>
+                        </Grid>
+                    </Border>
+
+                </Grid>
+            </Border>
+
+            <!-- Detail -->
+            <Border Grid.Column="1" Style="{StaticResource Card}" Margin="14,0,0,0" Padding="0">
+                <Grid>
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="26,0"
+                                Visibility="{Binding HasSelection, Converter={StaticResource NotToVis}}">
+                        <TextBlock Text="Pick a process" Style="{StaticResource Text.Title}" HorizontalAlignment="Center"/>
+                        <TextBlock Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Faint}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0">
+                            Click a process to see its command line, when it ran, why it was flagged and what it did. Double-click one to fold or unfold what it started.
+                        </TextBlock>
+                    </StackPanel>
+
+                    <Grid Visibility="{Binding HasSelection, Converter={StaticResource BoolToVis}}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" DataContext="{Binding Selected}">
+                            <StackPanel Margin="20,18,20,20">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" Style="{StaticResource Text.Title}" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding Subtitle}" Style="{StaticResource Text.Data}" Foreground="{StaticResource Brush.Mist}" Margin="0,3,0,0"/>
+                                        <Border Margin="0,10,0,0" HorizontalAlignment="Left" CornerRadius="10" Padding="9,2" BorderThickness="1"
+                                                Background="{Binding Level, Converter={StaticResource LevelDim}}"
+                                                BorderBrush="{Binding Level, Converter={StaticResource LevelBrush}}"
+                                                Visibility="{Binding HasScore, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="{Binding State}" Style="{StaticResource Pill.Text}" Foreground="{Binding Level, Converter={StaticResource LevelBrush}}"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Visibility="{Binding HasScore, Converter={StaticResource BoolToVis}}" HorizontalAlignment="Right">
+                                        <TextBlock Text="{Binding Score}" FontFamily="{StaticResource Font.Data}" FontSize="30" FontWeight="SemiBold" HorizontalAlignment="Right"
+                                                   Foreground="{Binding Level, Converter={StaticResource LevelBrush}}"/>
+                                        <TextBlock Text="SCORE" Style="{StaticResource Text.Label}" HorizontalAlignment="Right"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="WHEN" Style="{StaticResource Section}"/>
+                                <TextBlock Text="{Binding Timing}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" TextWrapping="Wrap"/>
+
+                                <TextBlock Text="LINEAGE" Style="{StaticResource Section}"/>
+                                <TextBlock Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" TextWrapping="Wrap">
+                                    <Run Text="Started by "/><Run Text="{Binding Parent, Mode=OneWay}" Foreground="{StaticResource Brush.Paper}"/>
+                                </TextBlock>
+                                <TextBlock Text="{Binding Children}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" Margin="0,3,0,0"/>
+
+                                <StackPanel Visibility="{Binding HasImage, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="PROGRAM" Style="{StaticResource Section}"/>
+                                    <TextBox Text="{Binding Image, Mode=OneWay}" Style="{StaticResource Readout}"/>
+                                </StackPanel>
+
+                                <StackPanel Visibility="{Binding HasCommandLine, Converter={StaticResource BoolToVis}}">
+                                    <Grid Margin="0,16,0,6">
+                                        <TextBlock Text="COMMAND LINE" Style="{StaticResource Text.Label}"/>
+                                        <Button Content="Copy" Style="{StaticResource Btn.Subtle}" Padding="8,2" FontSize="10.5" HorizontalAlignment="Right"
+                                                Command="{Binding DataContext.CopyCommandLineCommand, ElementName=Root}"/>
+                                    </Grid>
+                                    <Border Background="{StaticResource Brush.InkRaised}" BorderBrush="{StaticResource Brush.Line}" BorderThickness="1" CornerRadius="6" Padding="10,8">
+                                        <TextBox Text="{Binding CommandLine, Mode=OneWay}" Style="{StaticResource Readout}"/>
+                                    </Border>
+                                </StackPanel>
+
+                                <StackPanel Visibility="{Binding HasReasons, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="WHY IT IS FLAGGED" Style="{StaticResource Section}"/>
+                                    <ItemsControl ItemsSource="{Binding Reasons}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,0,0,5">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="14"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Ellipse Width="5" Height="5" Fill="{StaticResource Brush.Watch}" VerticalAlignment="Top" Margin="0,6,0,0" HorizontalAlignment="Left"/>
+                                                    <TextBlock Grid.Column="1" Text="{Binding}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" TextWrapping="Wrap"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+
+                                <StackPanel Visibility="{Binding HasTechniques, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="ATT&amp;CK" Style="{StaticResource Section}"/>
+                                    <ItemsControl ItemsSource="{Binding Techniques}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Style="{StaticResource Pill}" Margin="0,0,6,6"><TextBlock Text="{Binding}" Style="{StaticResource Pill.Text}"/></Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+
+                                <StackPanel Visibility="{Binding HasActivity, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="WHAT IT DID" Style="{StaticResource Section}"/>
+                                    <ItemsControl ItemsSource="{Binding Activity}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,0,0,8">
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto"/>
+                                                        <RowDefinition Height="Auto"/>
+                                                    </Grid.RowDefinitions>
+                                                    <TextBlock Text="{Binding Label}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}"/>
+                                                    <TextBlock Text="{Binding Value}" Style="{StaticResource Text.Data}" HorizontalAlignment="Right"/>
+                                                    <ProgressBar Grid.Row="1" Style="{StaticResource Meter}" Maximum="1" Value="{Binding Fraction, Mode=OneWay}" Height="4" Margin="0,4,0,0"
+                                                                 Foreground="{Binding Level, Converter={StaticResource LevelBrush}}"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+
+                                <StackPanel Visibility="{Binding HasFiles, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="FILES" Style="{StaticResource Section}"/>
+                                    <TextBlock Text="{Binding Files}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" TextWrapping="Wrap"/>
+                                    <Button Content="Show these files on the file map" Style="{StaticResource Btn.Subtle}" Margin="0,10,0,0" HorizontalAlignment="Left"
+                                            Command="{Binding DataContext.ShowFilesCommand, ElementName=Root}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>
