@@ -24,7 +24,19 @@ public enum SignalKind
     /// <summary>A named pipe was created or connected to (C2 / lateral movement).</summary>
     NamedPipe,
     /// <summary>The BruceFilter minifilter refused a process a guarded credential store (<see cref="KernelRefusalDetail"/>).</summary>
-    KernelRefusal
+    KernelRefusal,
+    /// <summary>
+    /// A file was deleted. <see cref="Signal.FilePath"/> is the file; <see cref="Signal.Detail"/> is
+    /// <c>delete</c>, or <c>on-close</c> when it was opened delete-on-close (how a program removes
+    /// itself once it ends). Pid 0 when the folder watcher saw it and cannot say who did it.
+    /// </summary>
+    FileDelete,
+    /// <summary>
+    /// A file was renamed or moved. <see cref="Signal.FilePath"/> is the old path and
+    /// <see cref="Signal.Detail"/> the new one, or null when the monitor cannot see it (the kernel
+    /// rename event names only the old file).
+    /// </summary>
+    FileRename
 }
 
 /// <summary>

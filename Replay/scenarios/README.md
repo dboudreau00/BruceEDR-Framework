@@ -63,17 +63,17 @@ maps to a property of `Core/Models.cs :: Signal`, in camelCase:
 
 | Field | Type | Used by |
 | --- | --- | --- |
-| `kind` | one of `ProcessStart`, `ProcessStop`, `ImageLoad`, `FileCreate`, `NetworkConnect`, `MemoryMatch`, `RegistryWrite`, `DnsQuery`, `ProcessAccess`, `ScriptContent`, `NamedPipe`, `KernelRefusal` | required |
+| `kind` | one of `ProcessStart`, `ProcessStop`, `ImageLoad`, `FileCreate`, `FileDelete`, `FileRename`, `NetworkConnect`, `MemoryMatch`, `RegistryWrite`, `DnsQuery`, `ProcessAccess`, `ScriptContent`, `NamedPipe`, `KernelRefusal` | required |
 | `pid`, `parentPid` | int | all |
 | `processName`, `imagePath`, `commandLine` | string | all |
-| `filePath` | string | `FileCreate`, `ImageLoad` |
+| `filePath` | string | `FileCreate`, `FileDelete`, `FileRename` (the old path), `ImageLoad` |
 | `remoteAddress`, `remotePort` | string, int | `NetworkConnect` |
 | `targetPid`, `desiredAccess` | int, uint (number or `"0x1410"`) | `ProcessAccess` |
 | `registryKey`, `registryValue` | string | `RegistryWrite` |
 | `domain` | string | `DnsQuery` |
 | `scriptText` | string | `ScriptContent` |
 | `pipeName` | string | `NamedPipe` |
-| `user`, `detail` | string | all; `detail` is `operation:store` (`open:chrome`) on `KernelRefusal` |
+| `user`, `detail` | string | all; `detail` is `operation:store` (`open:chrome`) on `KernelRefusal`, `create` or `open` on `FileCreate` (a trace from before it existed counts every one as a creation), `delete` or `on-close` on `FileDelete`, and the new path on `FileRename` |
 | `timestampUtc` | ISO 8601 | overrides the `start + at` value; only needed to reproduce a clock skew deliberately |
 
 Field names are matched case-insensitively; the writer always emits camelCase.

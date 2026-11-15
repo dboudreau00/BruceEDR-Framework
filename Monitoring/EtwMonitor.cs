@@ -26,6 +26,7 @@ public sealed class EtwMonitor : IDisposable
     private volatile bool _disposed;
     private int _restarts;
     private const int MaxRestarts = 5;
+    private readonly FileNameCache _fileNames = new();
 
     public EtwMonitor(Action<Signal> emit, Logger log)
     {
@@ -80,13 +81,39 @@ public sealed class EtwMonitor : IDisposable
                 TimestampUtc = d.TimeStamp.ToUniversalTime()
             }));
 
-            k.FileIOCreate += d => Guard(() => _emit(new Signal
+            k.FileIOCreate += d => Guard(() =>
             {
-                Kind = SignalKind.FileCreate,
-                Pid = d.ProcessID,
-                FilePath = d.FileName,
-                TimestampUtc = d.TimeStamp.ToUniversalTime()
-            }));
+                var at = d.TimeStamp.ToUniversalTime();
+                _fileNames.Put(d.FileObject, d.FileName);
+                _emit(new Signal
+                {
+                    Kind = SignalKind.FileCreate,
+                    Pid = d.ProcessID,
+                    FilePath = d.FileName,
+                    Detail = FileEvents.CreateDetail((int)d.CreateDisposition),
+                    TimestampUtc = at
+                });
+                // A program that removes itself opens its own file delete-on-close, so the removal
+                // is known at the open, before any delete event exists.
+                if (FileEvents.IsDeleteOnClose((uint)d.CreateOptions))
+                    _emit(new Signal
+                    {
+                        Kind = SignalKind.FileDelete,
+                        Pid = d.ProcessID,
+                        FilePath = d.FileName,
+                        Detail = "on-close",
+                        TimestampUtc = at
+                    });
+            });
+
+            // The delete and rename events name the file object; the name is what the open said, and
+            // TraceEvent's own lookup is empty for a file it never saw opened.
+            k.FileIODelete += d => Guard(() => EmitFileChange(SignalKind.FileDelete, d.ProcessID,
+                string.IsNullOrEmpty(d.FileName) ? _fileNames.Get(d.FileObject) : d.FileName, "delete", d.TimeStamp));
+
+            // The kernel's rename event carries no new name, so only the old one is known here.
+            k.FileIORename += d => Guard(() => EmitFileChange(SignalKind.FileRename, d.ProcessID,
+                string.IsNullOrEmpty(d.FileName) ? _fileNames.Get(d.FileObject) : d.FileName, null, d.TimeStamp));
 
             k.TcpIpConnect += d => Guard(() => _emit(new Signal
             {
@@ -117,6 +144,19 @@ public sealed class EtwMonitor : IDisposable
             try { session?.Dispose(); } catch { }
             throw;   // let the host fall back to WMI
         }
+    }
+
+    private void EmitFileChange(SignalKind kind, int pid, string? path, string? detail, DateTime stamp)
+    {
+        if (string.IsNullOrEmpty(path)) return;   // nothing to show for a file nobody named
+        _emit(new Signal
+        {
+            Kind = kind,
+            Pid = pid,
+            FilePath = path,
+            Detail = detail,
+            TimestampUtc = stamp.ToUniversalTime()
+        });
     }
 
     private void PumpEvents()

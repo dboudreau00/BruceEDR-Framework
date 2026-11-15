@@ -91,10 +91,10 @@ may be true).
 
 | Field | Available on |
 | --- | --- |
-| `kind` | every signal (`ProcessStart`, `FileCreate`, `NetworkConnect`, `DnsQuery`, `RegistryWrite`, `ProcessAccess`, `ScriptContent`, `NamedPipe`, `ImageLoad`, `ProcessStop`, `KernelRefusal`) |
+| `kind` | every signal (`ProcessStart`, `FileCreate`, `NetworkConnect`, `DnsQuery`, `RegistryWrite`, `ProcessAccess`, `ScriptContent`, `NamedPipe`, `ImageLoad`, `ProcessStop`, `KernelRefusal`, `FileDelete`, `FileRename`) |
 | `pid`, `parentPid`, `targetPid` | every signal |
 | `processName`, `imagePath`, `commandLine` | process-attributed signals |
-| `filePath`, `fileName`, `fileExtension` | `FileCreate`, `ImageLoad` |
+| `filePath`, `fileName`, `fileExtension` | `FileCreate`, `FileDelete`, `FileRename`, `ImageLoad` |
 | `remoteAddress`, `remotePort` | `NetworkConnect` |
 | `domain` | `DnsQuery` |
 | `registryKey`, `registryValue` | `RegistryWrite` |

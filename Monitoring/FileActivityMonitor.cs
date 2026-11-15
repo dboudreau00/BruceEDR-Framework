@@ -39,6 +39,8 @@ public sealed class FileActivityMonitor : IDisposable
                 };
                 w.Created += OnChanged;
                 w.Renamed += OnChanged;
+                w.Deleted += OnDeleted;
+                w.Renamed += OnRenamed;
                 w.Error += OnError;
                 _watchers.Add(w);
             }
@@ -74,6 +76,29 @@ public sealed class FileActivityMonitor : IDisposable
         {
             _log.Error("file event", ex);
         }
+    }
+
+    // The watcher cannot say which process deleted or renamed a file, so these carry Pid 0 and the
+    // engine ignores them; the activity views take them as the fallback when the kernel monitor
+    // is not running, and drop them when it reported the same change with a process.
+    private void OnDeleted(object sender, FileSystemEventArgs e)
+    {
+        try
+        {
+            if (!FileEvents.IsWatched(e.FullPath)) return;
+            _emit(new Signal { Kind = SignalKind.FileDelete, Pid = 0, FilePath = e.FullPath, Detail = "delete" });
+        }
+        catch (Exception ex) { _log.Error("file delete event", ex); }
+    }
+
+    private void OnRenamed(object sender, RenamedEventArgs e)
+    {
+        try
+        {
+            if (!FileEvents.IsWatched(e.OldFullPath) && !FileEvents.IsWatched(e.FullPath)) return;
+            _emit(new Signal { Kind = SignalKind.FileRename, Pid = 0, FilePath = e.OldFullPath, Detail = e.FullPath });
+        }
+        catch (Exception ex) { _log.Error("file rename event", ex); }
     }
 
     private void OnError(object sender, ErrorEventArgs e)
