@@ -33,6 +33,14 @@ your machine actually talks to.**
 
 <table>
 <tr>
+<td width="50%"><img src="docs/process-map.png" alt="Process map: a replayed dropper chain as an outline, the flagged payload lit up, with its command line and the reasons it scored" /></td>
+<td width="50%"><img src="docs/file-map.png" alt="File map: files grouped by what happened, two programs that deleted themselves after they ran shown in orange" /></td>
+</tr>
+<tr>
+<td align="center"><b>Process map</b>: who started what, scored, with a slider back through time</td>
+<td align="center"><b>File map</b>: what was made, renamed and deleted, and the programs that melted</td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/network-map.png" alt="Network map: observed destinations plotted offline, hover-linked to the destination list" /></td>
 <td width="50%"><img src="docs/coverage.png" alt="Coverage: every catalogued ATT&CK technique, coloured by what the rules cover and what this host has shown" /></td>
 </tr>
@@ -89,8 +97,10 @@ tool that overstates itself is worse than one that admits its edges.
 | **Control plane** | Localhost-only REST API (`/status`, `/profiles`, `/surface`, `/metrics`, `/rules`, `/attack`, `/events`) with bearer auth, off by default, read-only by default. |
 | **Replay** | Record or hand-write a JSON-Lines signal trace and replay it through a real engine on a simulated clock — deterministic detection tests in milliseconds, no malware required. |
 | **Incident triage** | Every detection is kept in a library and can be played back as a scene on a mind map, step by step, with a model explaining each step in plain English for the reader you pick (Teacher, SOC analyst, Network security engineer, Executive, Mom). Answers are cached per detection and reader. The library and playback work offline; the explanations need a Claude, Gemini, Grok or OpenAI key, added at the bottom of Settings. |
+| **Process map and file map** | Two mind maps of a run. The process map shows who started what, with anything flagged lit up and a time slider that grows the tree back from the start. The file map shows what was made, run, renamed and deleted, and finds the programs that **delete themselves after they run** (a melt) and shows them dripping. Both lay out as an outline, a left-to-right flow or a radial map; click a node for its command line, its history and who touched it. |
+| **Insights and earlier runs** | Activity over time, a heatmap, process lifetimes, top processes, what became of the files and where connections went. Every run is saved when monitoring stops, and every screen can switch to a saved run, a recorded scenario or a file from another machine. |
 | **Network map** | Plots every observed destination on a world map, grouped by country, hover-linked to the endpoint list, with **plaintext HTTP called out**. Geolocation is **fully offline** — an EDR that asked a third party where an address is would tell them what you are investigating. |
-| **Front-ends** | Console analyst REPL, and a WPF GUI with **incident triage**, dashboard, live event feed, **API surface**, **network map**, **watchlist**, **ATT&CK coverage** and settings — plus tray monitoring, CSV/JSON export and one-click incident reports. |
+| **Front-ends** | Console analyst REPL, and a WPF GUI with **incident triage**, **process map**, **file map**, dashboard, live event feed, **insights**, **API surface**, **network map**, **watchlist**, **ATT&CK coverage** and settings — plus tray monitoring, CSV/JSON export and one-click incident reports. |
 
 ## Quick start
 

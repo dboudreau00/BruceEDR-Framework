@@ -136,6 +136,39 @@ infrastructure you are investigating. It resolves the country an address block i
 *registered* to, at `/16` resolution, so CDNs and anycast land in the wrong place. Read
 `intel/geo/README.md` before drawing any conclusion from a marker.
 
+### Process map, file map and Insights
+
+The sidebar groups the screens: **Investigate** (incident triage, process map, file map),
+**Monitor** (dashboard, live events, insights), **Network** and **Configure**. A number on an
+entry says there is something to look at there. `Ctrl+1` to `Ctrl+0` switch screens in sidebar
+order and `Ctrl+,` opens Settings.
+
+- **Process map** - who started what. Anything flagged, or that made or removed a file, is lit
+  up; the colour says whether the engine would contain it. Pick a layout: **Outline** (one row
+  per process, the default, readable however deep the chain), **Flow** (left to right) or
+  **Radial** (the mind map). Scroll to zoom, drag to move, double-click a process to fold or
+  unfold what it started, `F` or **Fit** to see all of it. The slider under the map scrubs the
+  tree back in time and the play button grows it from the start. Search takes a name, part of a
+  command line or path, or a pid. Click a process for its command line, why it was flagged, what
+  it started and the files it touched.
+- **File map** - what was made, run, renamed and deleted. Group by what happened, by program or
+  by folder. A **melted** file (a program that deleted itself after it ran, or deleted by a
+  program it started) is orange and drips; one that ran and was then deleted by something else
+  is amber. The chips filter by fate, and browser caches and other constant churn are hidden
+  until you ask for them. Click a file for its story: who made it, who ran it, who deleted it.
+- **Insights** - six views of the same run: activity over time, a heatmap, process lifetimes,
+  top processes (by files, network or score), what became of the files, and where connections
+  went.
+- **Earlier runs** - every run is saved when monitoring stops, to
+  `%ProgramData%BruceEDRsessions` for the agent and `%LOCALAPPDATA%BruceEDRsessions` for the
+  app (`telemetry.saveSessions`, `telemetry.sessionsPath`, `telemetry.sessionsKept`). The
+  source picker at the top of each screen switches between the live run, a saved run, a
+  recorded scenario and a file from another machine; **Earlier runs** on the set-up screen opens
+  one without starting anything. Saved runs hold command lines and paths and are locked to SYSTEM,
+  Administrators and the account that made them.
+- **Try it without malware:** replay `melted-dropper` from the set-up screen. It is a
+  synthesised dropper that deletes itself, and nothing on your machine is touched.
+
 ### Analyst conveniences
 
 - **Incident detail** — the selected process shows its ATT&CK technique chips,
@@ -153,7 +186,7 @@ infrastructure you are investigating. It resolves the country an address block i
 - **Tray icon** — minimizing keeps monitoring from the notification area and
   containments raise a balloon alert (toggle in Settings → Interface).
 - **Quality of life** — window size/position and last tab persist, `F5`
-  refreshes, `Ctrl+1…5` switch views.
+  refreshes, `Ctrl+1…0` switch views and `Ctrl+,` opens Settings.
 
 The app opens on a **set-up screen** and monitors nothing until you press **Start
 monitoring**. **Stop monitoring** in the status bar returns to set-up, and offers to resume
@@ -406,6 +439,9 @@ Key settings:
   cut off your own remote session.
 - `telemetry.format` - `native`, `ecs`, `ocsf` or `cef`. Pick the one your SIEM parses.
 - `telemetry.syslog` / `webhook` - set `enabled` + endpoint to forward to a SIEM.
+- `telemetry.saveSessions` (default `true`), `telemetry.sessionsPath` (default
+  `%ProgramData%BruceEDRsessions`) and `telemetry.sessionsKept` (default `30`) - save each
+  run when monitoring stops so it can be opened in the process map, file map and Insights.
 - `api.control.enabled` - the localhost REST control plane. Off by default, and
   read-only unless you also set `allowActions`.
 - `api.studio.allowedHosts` - API Studio sends nothing until a host is listed here.

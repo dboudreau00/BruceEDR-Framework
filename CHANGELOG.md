@@ -2,6 +2,62 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+The desktop app now shows what a run did, not only what it scored: a process map and a file map
+you can read at a glance, Insights charts, and every run saved so it can be opened again. A
+program that deletes itself after it ran (a melt) is found and shown.
+
+### Added
+
+- **Process map.** Who started what, as a mind map you can pan, zoom and fold. Anything flagged,
+  or that made or removed a file, is lit up. Three layouts: **Outline** (one row per process,
+  indented under its parent, readable however deep the chain), **Flow** (left to right) and
+  **Radial** (the mind map). A time slider scrubs the tree back to how it looked, with a play
+  button; search takes a name, a command line, a path or a pid. Click a process for its command
+  line, why it was flagged, what it started and the files it touched.
+- **File map.** What was made, run, renamed and deleted, grouped by what happened to it, by program
+  or by folder. Melted files drip, files that ran and were then deleted are marked, and a file's
+  detail lists who made it, who ran it and who deleted it, with the times. Browser caches and
+  other constant churn start hidden.
+- **Insights.** Six views of the same run: activity over time, a heatmap by kind of activity,
+  process lifetimes, top processes (by files, network or score), what became of the files and
+  what kinds there were, and where connections went.
+- **Earlier runs.** Each run is saved when monitoring stops (`telemetry.saveSessions`, on by
+  default; `telemetry.sessionsPath`; `telemetry.sessionsKept`, default 30). Every screen has a
+  source picker for the live run, a saved one, or a file from another machine, and replaying a
+  recorded scenario fills the same screens. The files hold command lines and paths, so the folder
+  is locked to SYSTEM, Administrators and the account that ran the agent.
+- **Delete and rename telemetry.** Two new signal kinds, `FileDelete` and `FileRename`, from the
+  kernel file provider (delete, rename, and a file opened delete-on-close) and from the folder
+  watcher. The activity model turns them into melts: a program that deleted its own file, a
+  file deleted by a program it started, and one that ran and was deleted by anything within ten
+  minutes. No shipped rule scores the new kinds yet, so a melt is shown, not blocked; a rule can
+  match on them (`kind`, `filePath`). Checked live in a Windows 11 22H2 lab VM: a copy of a
+  program run from Temp and deleted by a `cmd.exe` it started was found as a melt, with its
+  creator, runner and deleter named, and renames, deletes and a delete-on-close file all
+  appeared with their paths. Windows 10 was not run.
+- The kernel's file-open events now say when the open is of a directory (`detail` `dir`). The
+  activity model ignores those, so folders a program lists are not listed as files. A temp file
+  one process makes and removes within two seconds, of a kind nobody runs or reads, starts hidden
+  as churn, as does the probe file PowerShell writes at every start.
+- **`melted-dropper` replay scenario**: a script on a mounted disk image drops a payload, which
+  calls out and drops a second program that persists, reads the browser's logins, stages an
+  archive, renames the user's documents and uploads; the payload is then removed by a
+  `cmd.exe` it started, a third program deletes itself on close, and an installer is deleted
+  after it ran. Synthesised, with documentation-only addresses.
+- A grouped sidebar (Investigate, Monitor, Network, Configure) with section headings and a
+  count on each entry that has something to look at. `Ctrl+1` to `Ctrl+0` switch screens and
+  `Ctrl+,` opens Settings.
+
+### Changed
+
+- The set-up screen has an **Earlier runs** button, so a saved run can be opened without
+  starting anything.
+- Search boxes showed no text while typing (the text area had no height left in a 30 px box);
+  fixed for every search box in the app.
+- Chart axes step in whole numbers, and the donut legend has room between its entries.
+
 ## [3.4.0] - 2026-11-14
 
 The kernel minifilter, finished: trusted programs, renames and links, a process guard that keeps
