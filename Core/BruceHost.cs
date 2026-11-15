@@ -46,6 +46,13 @@ public sealed class BruceHostOptions
 
     /// <summary>Why a pid must not be suspended or killed, or null when it may be. Null uses <see cref="ContainmentGuard.Refusal(int)"/>.</summary>
     public Func<int, string?>? RefuseContainment { get; init; }
+
+    /// <summary>
+    /// Sees every signal, on the owner thread, just before the engine does. For read-only consumers
+    /// such as the activity views: it must be quick, must not throw to the host (an exception is
+    /// logged once and the observer carries on), and must not change what the engine sees.
+    /// </summary>
+    public Action<Signal>? SignalObserver { get; init; }
 }
 
 /// <summary>
@@ -609,6 +616,22 @@ public sealed class BruceHost : IDisposable
         catch (Exception ex) { _log.Error("owner loop terminated", ex); }
     }
 
+    private bool _observerFailed;
+
+    private void Observe(Signal s)
+    {
+        var observer = _options.SignalObserver;
+        if (observer is null) return;
+        try { observer(s); }
+        catch (Exception ex)
+        {
+            // One line, not one per signal: a broken observer would otherwise drown the log.
+            if (_observerFailed) return;
+            _observerFailed = true;
+            _log.Error("signal observer failed; it keeps being called, and further failures are not logged", ex);
+        }
+    }
+
     private void DispatchSafe(Command cmd)
     {
         try { Dispatch(cmd); }
@@ -623,6 +646,7 @@ public sealed class BruceHost : IDisposable
             {
                 Interlocked.Increment(ref _signalsProcessed);
                 Metrics.IncSignals();
+                Observe(sc.Signal);
                 long startTicks = System.Diagnostics.Stopwatch.GetTimestamp();
                 foreach (var verdict in _engine.Ingest(sc.Signal))
                     OnVerdict(verdict);
