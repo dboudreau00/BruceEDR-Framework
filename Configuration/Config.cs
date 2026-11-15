@@ -311,6 +311,19 @@ public sealed class TelemetryConfig
 
     /// <summary>Serve Prometheus metrics from the control API's /metrics route.</summary>
     public bool EnableMetrics { get; set; } = true;
+
+    /// <summary>
+    /// Save the process tree and file history of each run when monitoring stops, so it can be opened
+    /// later in the process map, the file map and Insights. The files hold command lines and paths,
+    /// so the folder is locked to SYSTEM, Administrators and the account that ran the agent.
+    /// </summary>
+    public bool SaveSessions { get; set; } = true;
+
+    /// <summary>Where sessions go. Empty uses <c>%ProgramData%\BruceEDR\sessions</c> (the desktop app keeps its own under <c>%LOCALAPPDATA%\BruceEDR</c>).</summary>
+    public string SessionsPath { get; set; } = "";
+
+    /// <summary>How many sessions to keep; older ones are deleted on each save.</summary>
+    public int SessionsKept { get; set; } = 30;
 }
 
 public sealed class SyslogConfig

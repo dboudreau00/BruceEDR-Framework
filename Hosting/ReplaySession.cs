@@ -1,3 +1,4 @@
+using BruceEDR.Activity;
 using BruceEDR.Api;
 using BruceEDR.Configuration;
 using BruceEDR.Core;
@@ -35,6 +36,8 @@ public sealed class ReplaySession : IDisposable
     private int _disposed;
 
     public BruceHost Host { get; }
+    /// <summary>What the replay did, for the process map, the file map and Insights: they fill in as the trace plays.</summary>
+    public ActivityModel Activity { get; }
     public BruceConfig Config { get; }
     public TraceScenario Scenario { get; }
     public RuleSet Rules { get; }
@@ -47,10 +50,11 @@ public sealed class ReplaySession : IDisposable
     public static double SpeedFor(TimeSpan duration)
         => Math.Clamp(duration.TotalSeconds / TargetSeconds, 1, MaxSpeed);
 
-    private ReplaySession(BruceHost host, BruceConfig cfg, TraceScenario scenario, RuleSet rules, IocFeed intel,
+    private ReplaySession(BruceHost host, ActivityModel activity, BruceConfig cfg, TraceScenario scenario, RuleSet rules, IocFeed intel,
         IClock clock, Func<TimeSpan, CancellationToken, Task> delay)
     {
         Host = host;
+        Activity = activity;
         Config = cfg;
         Scenario = scenario;
         Rules = rules;
@@ -105,8 +109,11 @@ public sealed class ReplaySession : IDisposable
         };
         var engine = new DetectionEngine(Composition.BuildEngineOptions(cfg, autoKill: false), _ => false, deps);
         var response = new ResponseManager(log, new AuthenticodeVerifier(cfg.Allowlist));
+        // Names come from the trace, like the engine's: the pids are fiction, so nothing on this machine is looked up.
+        var activity = new ActivityModel(new ActivityModelOptions { Name = scenario.Name, ResolveName = pid => names.TryGetValue(pid, out var n) ? n : null });
         var host = new BruceHost(engine, response, new NullScanner(), log, new BruceHostOptions
         {
+            SignalObserver = activity.Observe,
             AutoKill = false,
             MonitorOnly = true,
             StartMonitors = false,
@@ -121,7 +128,7 @@ public sealed class ReplaySession : IDisposable
         log.Info($"replay: '{scenario.Name}', {scenario.Events.Count} signals over " +
                  $"{scenario.Duration.TotalSeconds:F0} s at {SpeedFor(scenario.Duration):F1}x. " +
                  "Nothing on this machine is monitored or touched.");
-        return new ReplaySession(host, cfg, scenario, rules, intel, c,
+        return new ReplaySession(host, activity, cfg, scenario, rules, intel, c,
             delay ?? ((t, ct) => Task.Delay(t, ct)));
     }
 

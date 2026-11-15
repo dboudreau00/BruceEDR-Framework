@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Hosting;
+using BruceEDR.Activity;
 using BruceEDR.Analysis;
 using BruceEDR.Api;
 using BruceEDR.Configuration;
@@ -38,6 +39,20 @@ public sealed class Composition : IDisposable
     public AuditLogSink? Audit { get; private set; }
     /// <summary>Observed network/API surface, shared with the engine.</summary>
     public ApiSurfaceInventory Surface { get; }
+    /// <summary>The process tree and file histories the activity views draw. Fed by the host, read-only to detection.</summary>
+    public ActivityModel Activity { get; }
+    /// <summary>
+    /// Where <see cref="Dispose"/> saves this run's session. Null, the default, saves nothing, so a test or
+    /// a replay that builds a composition leaves no files behind. The agent and the console set it to
+    /// <see cref="ConfiguredSessionDirectory"/>; the desktop app points it at its own folder.
+    /// </summary>
+    public string? SessionDirectory { get; set; }
+
+    /// <summary>The folder <c>telemetry.sessionsPath</c> names, or the default under ProgramData; null when <c>telemetry.saveSessions</c> is off.</summary>
+    public string? ConfiguredSessionDirectory => !Config.Telemetry.SaveSessions ? null
+        : string.IsNullOrWhiteSpace(Config.Telemetry.SessionsPath)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "BruceEDR", "sessions")
+            : ResolvePath(Config.Telemetry.SessionsPath);
     /// <summary>Encrypted quarantine store, or null when the operator disabled it.</summary>
     public QuarantineVault? Vault { get; }
     /// <summary>Most recent events, for the GUI feed and the control API.</summary>
@@ -80,9 +95,10 @@ public sealed class Composition : IDisposable
         AuthenticodeVerifier verifier, CompositeSink sink, IMemoryScanner scanner, BruceHost host,
         ApiSurfaceInventory surface, QuarantineVault? vault, RingBufferSink events,
         NetworkIsolation isolation, RuleEngineHolder ruleHolder, IocFeedHolder intelHolder,
-        WatchlistHolder watchHolder, ApiSafetyPolicy apiPolicy)
+        WatchlistHolder watchHolder, ApiSafetyPolicy apiPolicy, ActivityModel activity)
     {
         _configPath = configPath;
+        Activity = activity;
         Config = config;
         _allowPlaybookIsolation = config.Response.AllowPlaybookIsolation;
         Log = log;
@@ -186,6 +202,12 @@ public sealed class Composition : IDisposable
         var playbook = LoadPlaybook(cfg.Response, log);
         var safeProcesses = LoadSafeProcesses(cfg.Response, log);
 
+        var activity = new ActivityModel(new ActivityModelOptions
+        {
+            NormalizePath = new DevicePaths().ToDos,
+            ResolveName = EngineDependencies.DefaultResolveProcessName
+        });
+
         var hostOptions = new BruceHostOptions
         {
             AutoKill = cfg.Detection.AutoKill,
@@ -195,14 +217,15 @@ public sealed class Composition : IDisposable
             Surface = cfg.Api.EnableSurfaceInventory ? surface : null,
             Playbook = playbook,
             Metrics = new BruceMetrics(clock),
-            RefuseContainment = pid => ContainmentGuard.Refusal(pid, safeProcesses)
+            RefuseContainment = pid => ContainmentGuard.Refusal(pid, safeProcesses),
+            SignalObserver = activity.Observe
         };
         var host = new BruceHost(engine, response, scanner, log, hostOptions);
 
         var apiPolicy = BuildApiPolicy(cfg.Api.Studio);
 
         var comp = new Composition(configPath, cfg, log, verifier, sink, scanner, host,
-            surface, vault, events, isolation, ruleHolder, intelHolder, watchHolder, apiPolicy)
+            surface, vault, events, isolation, ruleHolder, intelHolder, watchHolder, apiPolicy, activity)
         {
             Rules = ruleSet,
             Intel = feed,
@@ -888,8 +911,30 @@ public sealed class Composition : IDisposable
         }
     }
 
+    /// <summary>
+    /// Saves this run's process tree and file history to <see cref="SessionDirectory"/>, with the engine's
+    /// scores laid over it. Returns the file, or null when there is nothing to save or nowhere to put it.
+    /// Never throws: a session that cannot be written is a log line, not a failed shutdown.
+    /// </summary>
+    public string? SaveSession()
+    {
+        var dir = SessionDirectory;
+        if (string.IsNullOrWhiteSpace(dir)) return null;
+        try
+        {
+            Activity.ApplyProfiles(Host.ListProfiles(onlyContained: false), Config.Detection.QuarantineThreshold);
+            var snapshot = Activity.Snapshot();
+            if (snapshot.Processes.Count == 0) return null;
+            var path = SessionStore.Save(dir, snapshot, Math.Max(1, Config.Telemetry.SessionsKept));
+            Log.Info($"session saved: {path} ({snapshot.Processes.Count} processes, {snapshot.Files.Count} files)");
+            return path;
+        }
+        catch (Exception ex) { Log.Error("session not saved", ex); return null; }
+    }
+
     public void Dispose()
     {
+        SaveSession();
         try { _configWatcher?.Dispose(); } catch { }
         try { _control?.Dispose(); } catch { }
         try { _kernel?.Dispose(); } catch { }
@@ -1061,6 +1106,7 @@ public sealed class BruceWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _composition = Composition.Build(_options.ConfigPath);
+        _composition.SessionDirectory = _composition.ConfiguredSessionDirectory;
         if (!_composition.Host.Start())
         {
             _composition.Log.Error("startup", new InvalidOperationException("no monitor could start"));

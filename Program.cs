@@ -143,6 +143,7 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) => Shutdown();
 try
 {
     composition = Composition.Build(configPath);
+    composition.SessionDirectory = composition.ConfiguredSessionDirectory;
 
     if (!composition.Host.Start())
     {
