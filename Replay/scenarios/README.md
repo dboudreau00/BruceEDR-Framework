@@ -73,7 +73,7 @@ maps to a property of `Core/Models.cs :: Signal`, in camelCase:
 | `domain` | string | `DnsQuery` |
 | `scriptText` | string | `ScriptContent` |
 | `pipeName` | string | `NamedPipe` |
-| `user`, `detail` | string | all; `detail` is `operation:store` (`open:chrome`) on `KernelRefusal`, `create` or `open` on `FileCreate` (a trace from before it existed counts every one as a creation), `delete` or `on-close` on `FileDelete`, and the new path on `FileRename` |
+| `user`, `detail` | string | all; `detail` is `operation:store` (`open:chrome`) on `KernelRefusal`, `create`, `open` or `dir` (a folder, ignored by the maps) on `FileCreate` (a trace from before it existed counts every one as a creation), `delete` or `on-close` on `FileDelete`, and the new path on `FileRename` |
 | `timestampUtc` | ISO 8601 | overrides the `start + at` value; only needed to reproduce a clock skew deliberately |
 
 Field names are matched case-insensitively; the writer always emits camelCase.

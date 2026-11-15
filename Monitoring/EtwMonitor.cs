@@ -90,7 +90,7 @@ public sealed class EtwMonitor : IDisposable
                     Kind = SignalKind.FileCreate,
                     Pid = d.ProcessID,
                     FilePath = d.FileName,
-                    Detail = FileEvents.CreateDetail((int)d.CreateDisposition),
+                    Detail = FileEvents.CreateDetail((int)d.CreateDisposition, (uint)d.CreateOptions),
                     TimestampUtc = at
                 });
                 // A program that removes itself opens its own file delete-on-close, so the removal

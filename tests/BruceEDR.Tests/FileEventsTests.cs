@@ -49,4 +49,13 @@ public sealed class FileEventsTests
     [InlineData("", false)]
     public void The_folder_watcher_reports_only_the_kinds_of_file_an_intrusion_drops_runs_or_stages(string path, bool watched)
         => Assert.Equal(watched, FileEvents.IsWatched(path));
+
+    [Theory]
+    [InlineData(2, 0x0, "create")]
+    [InlineData(1, 0x0, "open")]
+    [InlineData(1, 0x1, "dir")]      // FILE_DIRECTORY_FILE: a folder being listed
+    [InlineData(2, 0x1021, "dir")]   // a directory made, whatever else the open asked for
+    [InlineData(2, 0x1000, "create")] // delete-on-close is about the file, not a directory
+    public void A_directory_open_is_told_apart_from_a_file_open(int disposition, uint options, string detail)
+        => Assert.Equal(detail, FileEvents.CreateDetail(disposition, options));
 }

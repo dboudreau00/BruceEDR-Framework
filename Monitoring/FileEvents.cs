@@ -20,6 +20,17 @@ public static class FileEvents
 
     public static bool IsDeleteOnClose(uint createOptions) => (createOptions & DeleteOnClose) != 0;
 
+    /// <summary>NT <c>FILE_DIRECTORY_FILE</c>: the open is of a directory, not a file.</summary>
+    public const uint DirectoryFile = 0x0000_0001;
+
+    /// <summary>
+    /// Detail of a <see cref="Core.SignalKind.FileCreate"/> from the kernel, given the open's NT
+    /// disposition and options: <c>dir</c> when it opens or makes a directory (every folder a program
+    /// lists is one, and none of them is a file), else <see cref="CreateDetail(int)"/>.
+    /// </summary>
+    public static string CreateDetail(int disposition, uint createOptions)
+        => (createOptions & DirectoryFile) != 0 ? "dir" : CreateDetail(disposition);
+
     private static readonly HashSet<string> WatchedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".exe", ".dll", ".scr", ".com", ".sys", ".msi", ".jar",
