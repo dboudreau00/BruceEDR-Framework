@@ -310,4 +310,112 @@ public class GuiResourceTests
         Assert.True(unknown.Count == 0,
             "Setup/Settings/Watchlist XAML binds to members that do not exist:\n  " + string.Join("\n  ", unknown.Distinct()));
     }
+
+    /// <summary>
+    /// The path of every {Binding ...} in a XAML text that goes to the DataContext, converters and
+    /// nested markup extensions included: bindings that name an ElementName, Source or RelativeSource
+    /// (other than the page's own DataContext) are left out, and so are named-only bindings.
+    /// </summary>
+    private static IEnumerable<string> DataContextBindingPaths(string xaml)
+    {
+        const string open = "{Binding";
+        for (int at = xaml.IndexOf(open, StringComparison.Ordinal); at >= 0; at = xaml.IndexOf(open, at + 1, StringComparison.Ordinal))
+        {
+            int depth = 0, end = -1;
+            for (int i = at; i < xaml.Length; i++)
+            {
+                if (xaml[i] == '{') depth++;
+                else if (xaml[i] == '}' && --depth == 0) { end = i; break; }
+            }
+            if (end < 0) continue;
+            string body = xaml[(at + open.Length)..end].Trim();
+            if (Regex.IsMatch(body, @"\b(ElementName|Source|RelativeSource)=")) continue;
+            string first = SplitTopLevel(body).FirstOrDefault() ?? "";
+            if (first.StartsWith("Path=", StringComparison.Ordinal)) first = first[5..];
+            if (first.Length == 0 || first.Contains('=') || first.Contains('{')) continue;
+            yield return first.Trim();
+        }
+    }
+
+    private static IEnumerable<string> SplitTopLevel(string s)
+    {
+        int depth = 0, from = 0;
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '{') depth++;
+            else if (s[i] == '}') depth--;
+            else if (s[i] == ',' && depth == 0) { yield return s[from..i].Trim(); from = i + 1; }
+        }
+        yield return s[from..].Trim();
+    }
+
+    [Fact]
+    public void The_Map_And_Insights_Views_Bind_Only_To_Members_That_Exist()
+    {
+        var gui = GuiDirectory();
+        if (gui is null) return;
+
+        var known = PropertiesDeclaredIn(gui,
+            Path.Combine("ViewModels", "ActivityHub.cs"),
+            Path.Combine("ViewModels", "ProcessMapViewModel.cs"),
+            Path.Combine("ViewModels", "FileMapViewModel.cs"),
+            Path.Combine("ViewModels", "InsightsViewModel.cs"),
+            Path.Combine("Views", "MapCanvas.cs"),
+            Path.Combine("..", "..", "Activity", "ActivityTypes.cs"),
+            Path.Combine("..", "..", "Activity", "InsightsData.cs"),
+            Path.Combine("..", "..", "Activity", "SessionStore.cs"));
+        // Positional records (a legend entry, a stat card, a line of a file's story) declare their members in the parameter list.
+        foreach (var file in new[]
+                 {
+                     Path.Combine("Views", "MapCanvas.cs"),
+                     Path.Combine("ViewModels", "ProcessMapViewModel.cs"), Path.Combine("ViewModels", "FileMapViewModel.cs"), Path.Combine("ViewModels", "InsightsViewModel.cs"),
+                     Path.Combine("..", "..", "Activity", "MapBuilders.cs"), Path.Combine("..", "..", "Activity", "ActivityTypes.cs"), Path.Combine("..", "..", "Activity", "InsightsData.cs")
+                 })
+        {
+            string path = Path.Combine(gui, file);
+            if (!File.Exists(path)) continue;
+            foreach (Match record in Regex.Matches(File.ReadAllText(path), @"record\s+(?:struct\s+)?\w+\(([^)]*)\)"))
+                foreach (var parameter in record.Groups[1].Value.Split(','))
+                    known.Add(parameter.Trim().Split(' ').Last());
+        }
+        known.Add("Count");
+        known.Add("Length");
+
+        Assert.Contains("Hub", known);            // sanity: the scrape found the three view models
+        Assert.Contains("Legend", known);
+        Assert.Contains("ScrubValue", known);
+        Assert.Contains("GroupBy", known);
+
+        string[] views = { "ProcessMapView.xaml", "FileMapView.xaml", "InsightsView.xaml", "SourceBar.xaml", "MapKey.xaml" };
+        var unknown = new List<string>();
+        foreach (var name in views)
+        {
+            string path = Path.Combine(gui, "Views", name);
+            Assert.True(File.Exists(path), name + " is missing");
+            var paths = DataContextBindingPaths(File.ReadAllText(path)).ToList();
+            Assert.NotEmpty(paths);
+            foreach (var p in paths)
+                if (p.Split('.').Any(segment => !known.Contains(segment)))
+                    unknown.Add($"{name} -> {p}");
+        }
+
+        Assert.True(unknown.Count == 0,
+            "The map and Insights views bind to members that do not exist (they render blank):\n  " + string.Join("\n  ", unknown.Distinct()));
+    }
+
+    [Fact]
+    public void The_Maps_Offer_Three_Layouts_And_The_Chips_Name_Only_Shapes_That_Exist()
+    {
+        var gui = GuiDirectory();
+        if (gui is null) return;
+
+        var shapes = Enum.GetNames<BruceEDR.Activity.MapShape>().Select(n => n.ToLowerInvariant()).ToHashSet();
+        foreach (var name in new[] { "ProcessMapView.xaml", "FileMapView.xaml" })
+        {
+            string xaml = File.ReadAllText(Path.Combine(gui, "Views", name));
+            var tags = Regex.Matches(xaml, @"<Button\s+Content=""[^""]+""\s+Tag=""([a-z]+)""\s+Style=""\{StaticResource LayoutChip\}""")
+                            .Select(m => m.Groups[1].Value).ToList();
+            Assert.Equal(shapes.OrderBy(s => s), tags.OrderBy(s => s));
+        }
+    }
 }
