@@ -187,7 +187,10 @@
     </Style>
 
     <!-- Search variant: same input with a magnifier glyph baked in -->
+    <!-- WPF hands a TextBox's Padding to its content host itself, so the template must not add it again as a margin:
+         doing both left a 4px viewport in a 30px box and the typed text did not show. -->
     <Style x:Key="Input.Search" TargetType="TextBox" BasedOn="{StaticResource Input}">
+        <Setter Property="Padding" Value="6,5"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TextBox">
@@ -202,8 +205,7 @@
                             <TextBlock Grid.Column="0" Text="&#xE71E;" FontFamily="Segoe MDL2 Assets"
                                        FontSize="12" Foreground="{StaticResource Brush.Faint}"
                                        VerticalAlignment="Center" Margin="10,0,0,0"/>
-                            <ScrollViewer Grid.Column="1" x:Name="PART_ContentHost"
-                                          Margin="{TemplateBinding Padding}"/>
+                            <ScrollViewer Grid.Column="1" x:Name="PART_ContentHost" VerticalAlignment="Center"/>
                         </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
