@@ -1,0 +1,267 @@
+<UserControl x:Class="BruceEDR.Gui.Views.FileMapView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:BruceEDR.Gui.Views"
+             x:Name="Root"
+             Style="{StaticResource View.Root}">
+    <UserControl.RenderTransform>
+        <TranslateTransform/>
+    </UserControl.RenderTransform>
+    <UserControl.Resources>
+        <Style x:Key="GroupChip" TargetType="Button" BasedOn="{StaticResource Chip}">
+            <Setter Property="Command" Value="{Binding SetGroupCommand}"/>
+            <Setter Property="CommandParameter" Value="{Binding Tag, RelativeSource={RelativeSource Self}}"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Style.Triggers>
+                <DataTrigger Value="True">
+                    <DataTrigger.Binding>
+                        <MultiBinding Converter="{StaticResource ChipSelected}">
+                            <Binding Path="GroupKey"/>
+                            <Binding Path="Tag" RelativeSource="{RelativeSource Self}"/>
+                        </MultiBinding>
+                    </DataTrigger.Binding>
+                    <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="LayoutChip" TargetType="Button" BasedOn="{StaticResource Chip}">
+            <Setter Property="Command" Value="{Binding SetLayoutCommand}"/>
+            <Setter Property="CommandParameter" Value="{Binding Tag, RelativeSource={RelativeSource Self}}"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Style.Triggers>
+                <DataTrigger Value="True">
+                    <DataTrigger.Binding>
+                        <MultiBinding Converter="{StaticResource ChipSelected}">
+                            <Binding Path="LayoutKey"/>
+                            <Binding Path="Tag" RelativeSource="{RelativeSource Self}"/>
+                        </MultiBinding>
+                    </DataTrigger.Binding>
+                    <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="Section" TargetType="TextBlock" BasedOn="{StaticResource Text.Label}">
+            <Setter Property="Margin" Value="0,16,0,6"/>
+        </Style>
+        <Style x:Key="Readout" TargetType="TextBox">
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontFamily" Value="{StaticResource Font.Data}"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Mist}"/>
+            <Setter Property="SelectionBrush" Value="{StaticResource Brush.AccentDim}"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="22,20,22,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,14">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="File map" Style="{StaticResource Text.Display}"/>
+                <Border Style="{StaticResource Pill}" Margin="12,4,0,0" Visibility="{Binding HasData, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding Summary}" Style="{StaticResource Pill.Text}"/>
+                </Border>
+            </StackPanel>
+            <TextBlock Text="What was made, run, moved and deleted. A program that removes itself after it runs is said to melt, and drips." Style="{StaticResource Text.Body}"
+                       Foreground="{StaticResource Brush.Faint}" Margin="0,4,0,0"/>
+        </StackPanel>
+
+        <v:SourceBar Grid.Row="1" DataContext="{Binding Hub}" Margin="0,0,0,12"/>
+
+        <!-- What is worth looking at first -->
+        <Border Grid.Row="2" Margin="0,0,0,12" Padding="14,10" CornerRadius="8" Background="{StaticResource Brush.EmberDim}" BorderBrush="#66FF8A3D" BorderThickness="1"
+                Visibility="{Binding HasMelted, Converter={StaticResource BoolToVis}}">
+            <StackPanel Orientation="Horizontal">
+                <Ellipse Width="9" Height="9" Fill="{StaticResource Brush.Ember}" Margin="0,0,10,0"/>
+                <TextBlock Text="{Binding MeltedBanner}" Style="{StaticResource Text.Body}" FontWeight="SemiBold" Foreground="{StaticResource Brush.Ember}" VerticalAlignment="Center"/>
+                <TextBlock Text="  The ones highlighted in orange below. Click one to see who made it, ran it and deleted it." Style="{StaticResource Text.Body}"
+                           Foreground="{StaticResource Brush.Mist}" VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Toolbar -->
+        <Grid Grid.Row="3" Margin="0,0,0,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="GROUP BY" Style="{StaticResource Text.Label}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <Button Content="What happened" Tag="Operation" Style="{StaticResource GroupChip}" ToolTip="Melted, deleted, renamed, created"/>
+                    <Button Content="Program" Tag="Process" Style="{StaticResource GroupChip}" ToolTip="Under the program that ran or changed it"/>
+                    <Button Content="Folder" Tag="Folder" Style="{StaticResource GroupChip}" ToolTip="Under the folder it is in"/>
+                    <Border Width="1" Height="18" Background="{StaticResource Brush.Line}" Margin="8,0,14,0"/>
+                    <TextBlock Text="LAYOUT" Style="{StaticResource Text.Label}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <Button Content="Flow" Tag="flow" Style="{StaticResource LayoutChip}" ToolTip="Left to right, like an org chart"/>
+                    <Button Content="Outline" Tag="outline" Style="{StaticResource LayoutChip}" ToolTip="One row per file, indented under its group. The most compact."/>
+                    <Button Content="Radial" Tag="radial" Style="{StaticResource LayoutChip}" ToolTip="A mind map, with the files of the run in the middle"/>
+                </StackPanel>
+                <TextBox Grid.Column="2" Style="{StaticResource Input.Search}" Width="250" Height="30" HorizontalAlignment="Right"
+                         Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" ToolTip="Part of a path or a file name"/>
+            </Grid>
+
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
+                <TextBlock Text="SHOW" Style="{StaticResource Text.Label}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <ItemsControl ItemsSource="{Binding Chips}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <ToggleButton Style="{StaticResource Chip.Toggle}" Margin="0,0,6,0" IsChecked="{Binding IsOn, Mode=OneWay}"
+                                          Command="{Binding DataContext.ToggleChipCommand, ElementName=Root}" CommandParameter="{Binding}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="7" Height="7" Margin="0,0,8,0" Fill="{Binding Level, Converter={StaticResource LevelBrush}}"/>
+                                    <TextBlock Text="{Binding Title}"/>
+                                    <TextBlock Text="{Binding Count}" FontFamily="{StaticResource Font.Data}" FontSize="10" Foreground="{StaticResource Brush.Faint}" Margin="7,1,0,0"/>
+                                </StackPanel>
+                            </ToggleButton>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Border Width="1" Height="18" Background="{StaticResource Brush.Line}" Margin="4,0,10,0"/>
+                <ToggleButton Content="{Binding NoiseLabel}" Style="{StaticResource Chip.Toggle}" IsChecked="{Binding ShowNoise, Mode=TwoWay}"
+                              ToolTip="Browser caches and other folders that change constantly. Hidden so they do not bury the rest."/>
+                <Border Margin="12,0,0,0" CornerRadius="12" Padding="10,0,4,0" Background="{StaticResource Brush.AccentDim}" BorderBrush="{StaticResource Brush.AccentLine}" BorderThickness="1"
+                        Visibility="{Binding HasFocus, Converter={StaticResource BoolToVis}}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Text.Body}" VerticalAlignment="Center" FontSize="11.5">
+                            <Run Text="Only files touched by "/><Run Text="{Binding FocusName, Mode=OneWay}" FontWeight="SemiBold"/>
+                        </TextBlock>
+                        <Button Content="&#xE711;" Style="{StaticResource Btn.Icon}" Width="24" Height="24" Margin="4,0,0,0" Command="{Binding ClearFocusCommand}" ToolTip="Show all files again" Background="Transparent" BorderThickness="0"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="344"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0" ClipToBounds="True">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                    <v:MapCanvas x:Name="Map" Root="{Binding Root}" Shape="{Binding Shape}"
+                                 SelectedKey="{Binding SelectedKey, Mode=TwoWay}"/>
+
+                    <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Orientation="Horizontal" Margin="12">
+                        <Button Content="Fit" Style="{StaticResource Btn.Subtle}" Command="{Binding FitCommand}"
+                                ToolTip="Show the whole map (F). Scroll to zoom, drag to move, double-click a group to fold it."/>
+                    </StackPanel>
+
+                    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="14,12,0,0" Padding="12,7" CornerRadius="8"
+                            Background="{StaticResource Brush.WatchDim}" BorderBrush="#4DF2B33D" BorderThickness="1"
+                            Visibility="{Binding HasNote, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{Binding Note}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Watch}" FontSize="11.5"/>
+                    </Border>
+
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="440"
+                                Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVis}}">
+                        <Border Width="64" Height="64" CornerRadius="32" Background="{StaticResource Brush.EmberDim}" BorderBrush="#66FF8A3D" BorderThickness="1" HorizontalAlignment="Center">
+                            <TextBlock Text="&#xE8A5;" Style="{StaticResource Icon}" FontSize="26" Foreground="{StaticResource Brush.Ember}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="No file activity yet" Style="{StaticResource Text.Title}" HorizontalAlignment="Center" Margin="0,18,0,6"/>
+                        <TextBlock Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Center">
+                            This fills in as programs make, rename and delete files. A program that runs and then deletes itself shows up here, dripping. You can also open the files of an earlier run.
+                        </TextBlock>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,18,0,0">
+                            <Button Content="Open an earlier session..." Style="{StaticResource Btn.Primary}" Command="{Binding Hub.OpenFileCommand}" Margin="0,0,8,0"/>
+                            <Button Content="Go to set-up" Style="{StaticResource Btn.Subtle}" Command="{Binding DataContext.OpenSetupCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                        </StackPanel>
+                    </StackPanel>
+                    </Grid>
+
+                    <v:MapKey Grid.Row="1" Items="{Binding Legend}"/>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource Card}" Margin="14,0,0,0" Padding="0">
+                <Grid>
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="26,0"
+                                Visibility="{Binding HasSelection, Converter={StaticResource NotToVis}}">
+                        <TextBlock Text="Pick a file" Style="{StaticResource Text.Title}" HorizontalAlignment="Center"/>
+                        <TextBlock Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Faint}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0">
+                            Click a file to see its history: who made it, ran it, renamed it and deleted it, and when.
+                        </TextBlock>
+                    </StackPanel>
+
+                    <Grid Visibility="{Binding HasSelection, Converter={StaticResource BoolToVis}}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" DataContext="{Binding Selected}">
+                            <StackPanel Margin="20,18,20,20">
+                                <TextBlock Text="{Binding Name}" Style="{StaticResource Text.Title}" TextWrapping="Wrap"/>
+                                <Border Margin="0,10,0,0" HorizontalAlignment="Left" CornerRadius="10" Padding="9,2" BorderThickness="1"
+                                        Background="{Binding Level, Converter={StaticResource LevelDim}}"
+                                        BorderBrush="{Binding Level, Converter={StaticResource LevelBrush}}">
+                                    <TextBlock Text="{Binding Fate}" Style="{StaticResource Pill.Text}" Foreground="{Binding Level, Converter={StaticResource LevelBrush}}"/>
+                                </Border>
+
+                                <Border Margin="0,14,0,0" Padding="12,10" CornerRadius="8" Background="{StaticResource Brush.EmberDim}" BorderBrush="#66FF8A3D" BorderThickness="1"
+                                        Visibility="{Binding HasMelt, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding MeltNote}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" Foreground="{StaticResource Brush.Paper}"/>
+                                </Border>
+
+                                <TextBlock Text="PATH" Style="{StaticResource Section}"/>
+                                <TextBox Text="{Binding Path, Mode=OneWay}" Style="{StaticResource Readout}"/>
+
+                                <TextBlock Text="WHAT HAPPENED TO IT" Style="{StaticResource Section}"/>
+                                <ItemsControl ItemsSource="{Binding Story}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,9">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="62"/>
+                                                    <ColumnDefinition Width="16"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Time}" Style="{StaticResource Text.Data}" Foreground="{StaticResource Brush.Faint}" FontSize="11" VerticalAlignment="Top" Margin="0,2,0,0"/>
+                                                <Ellipse Grid.Column="1" Width="7" Height="7" VerticalAlignment="Top" Margin="0,6,0,0" HorizontalAlignment="Left"
+                                                         Fill="{Binding Level, Converter={StaticResource LevelBrush}}"/>
+                                                <TextBlock Grid.Column="2" Text="{Binding Text}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" TextWrapping="Wrap"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <WrapPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                    <Button Style="{StaticResource Btn.Subtle}" Margin="0,0,8,8" Visibility="{Binding HasProcess, Converter={StaticResource BoolToVis}}"
+                                            Command="{Binding DataContext.ShowProcessCommand, ElementName=Root}">
+                                        <TextBlock>
+                                            <Run Text="Show "/><Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold"/><Run Text=" on the process map"/>
+                                        </TextBlock>
+                                    </Button>
+                                    <Button Content="Copy path" Style="{StaticResource Btn.Subtle}" Margin="0,0,0,8" Command="{Binding DataContext.CopyPathCommand, ElementName=Root}"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>
