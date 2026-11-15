@@ -13,6 +13,7 @@ keep `benign-developer-day.jsonl` clean.
 | --- | --- |
 | `infostealer-chain.jsonl` | Maldoc → hidden encoded PowerShell → browser credential stores → zip staged in `%TEMP%` → dynamic-DNS C2 → upload. Expects a quarantine on the PowerShell child and none on Word. |
 | `rat-beacon.jsonl` | Dropped `%APPDATA%` executable loads a RAT core module, opens a control pipe, persists, then beacons twelve times to one host at a ~30 s cadence with jitter. Expects at least a warn. |
+| `melted-dropper.jsonl` | A script on a mounted disk image drops `kb5004.exe` in Temp and runs it; the payload calls out, drops and starts a second program that persists itself, reads the browser's saved logins, stages a zip, renames the user's documents and uploads. `kb5004.exe` is then removed by a `cmd.exe` it started, a third program deletes itself on close, and an ordinary installer is deleted after it ran. Built to show the file map's "melted" files; expects no quarantine on Explorer, Chrome or svchost. |
 | `benign-developer-day.jsonl` | One developer, one morning: git, npm, msbuild, two release archives. Expects **no quarantine for any pid**. This is the false-positive regression guard and it is as load-bearing as the two attack traces. |
 
 ## What replay does and does not prove

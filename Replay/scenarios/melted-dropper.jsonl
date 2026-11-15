@@ -1,0 +1,45 @@
+{"#":"SYNTHESISED, not captured from a live infection. Modelled on public reporting for commodity loaders that arrive as a script on a mounted disk image, drop a payload in %TEMP%, and remove it afterwards."}
+{"#":"The C2 address is 203.0.113.77, inside RFC 5737 TEST-NET-3, and the domain ends in .example: neither can ever resolve to a real host, so this file is safe to ship and can never be mistaken for a live IOC."}
+{"meta":{"name":"melted-dropper","description":"A script from a mounted disk image drops kb5004.exe in Temp and runs it. The payload calls out, drops and starts a second program that persists itself, reads the browser's saved logins, stages a zip, renames the user's documents and uploads. kb5004.exe is then removed by a cmd.exe it started (a melt), a third program deletes itself on close, and an ordinary installer is deleted after it ran.","start":"2026-03-12T09:14:20Z","expect":["no-quarantine:pid=1044","no-quarantine:pid=2210","no-quarantine:pid=800"]}}
+{"at":0,"kind":"ProcessStart","pid":1044,"parentPid":1004,"processName":"explorer.exe","imagePath":"C:\\Windows\\explorer.exe","commandLine":"C:\\Windows\\explorer.exe","user":"CORP\\kdavies","detail":"already running"}
+{"at":0,"kind":"ProcessStart","pid":800,"parentPid":640,"processName":"svchost.exe","imagePath":"C:\\Windows\\System32\\svchost.exe","commandLine":"C:\\Windows\\System32\\svchost.exe -k netsvcs -p","user":"NT AUTHORITY\\SYSTEM"}
+{"at":0,"kind":"ProcessStart","pid":2210,"parentPid":1044,"processName":"chrome.exe","imagePath":"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe","commandLine":"\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\"","user":"CORP\\kdavies"}
+{"at":200,"kind":"ProcessStart","pid":2211,"parentPid":2210,"processName":"chrome.exe","imagePath":"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe","commandLine":"chrome.exe --type=renderer","user":"CORP\\kdavies"}
+{"at":220,"kind":"ProcessStart","pid":2212,"parentPid":2210,"processName":"chrome.exe","imagePath":"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe","commandLine":"chrome.exe --type=gpu-process","user":"CORP\\kdavies"}
+{"at":1000,"kind":"ProcessStart","pid":6000,"parentPid":1044,"processName":"VideoTool_setup.exe","imagePath":"C:\\Users\\kdavies\\Downloads\\VideoTool_setup.exe","commandLine":"\"C:\\Users\\kdavies\\Downloads\\VideoTool_setup.exe\"","user":"CORP\\kdavies","detail":"an ordinary installer the user ran from Downloads"}
+{"at":1500,"kind":"ProcessStart","pid":5100,"parentPid":1044,"processName":"wscript.exe","imagePath":"C:\\Windows\\System32\\wscript.exe","commandLine":"\"C:\\Windows\\System32\\wscript.exe\" \"D:\\invoice\\scan.js\"","user":"CORP\\kdavies","detail":"a .js on a mounted .iso, run by a double-click"}
+{"at":1800,"kind":"FileCreate","pid":5100,"filePath":"C:\\Users\\kdavies\\AppData\\Local\\Temp\\kb5004.exe","detail":"create"}
+{"at":2200,"kind":"ProcessStart","pid":5200,"parentPid":5100,"processName":"kb5004.exe","imagePath":"C:\\Users\\kdavies\\AppData\\Local\\Temp\\kb5004.exe","commandLine":"\"C:\\Users\\kdavies\\AppData\\Local\\Temp\\kb5004.exe\"","user":"CORP\\kdavies"}
+{"at":2400,"kind":"DnsQuery","pid":5200,"processName":"kb5004.exe","domain":"cdn-update.dyn-host.example"}
+{"at":2600,"kind":"NetworkConnect","pid":5200,"processName":"kb5004.exe","remoteAddress":"203.0.113.77","remotePort":443}
+{"at":2900,"kind":"FileCreate","pid":5200,"filePath":"C:\\Users\\kdavies\\AppData\\Roaming\\SysHelper\\syshelper.exe","detail":"create"}
+{"at":3300,"kind":"ProcessStart","pid":5300,"parentPid":5200,"processName":"syshelper.exe","imagePath":"C:\\Users\\kdavies\\AppData\\Roaming\\SysHelper\\syshelper.exe","commandLine":"\"C:\\Users\\kdavies\\AppData\\Roaming\\SysHelper\\syshelper.exe\" --service","user":"CORP\\kdavies"}
+{"at":3600,"kind":"RegistryWrite","pid":5300,"processName":"syshelper.exe","registryKey":"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run","registryValue":"SysHelper","detail":"set-value"}
+{"at":4000,"kind":"FileCreate","pid":5300,"processName":"syshelper.exe","filePath":"C:\\Users\\kdavies\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data","detail":"open"}
+{"at":4200,"kind":"FileCreate","pid":5300,"processName":"syshelper.exe","filePath":"C:\\Users\\kdavies\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies","detail":"open"}
+{"at":4800,"kind":"FileCreate","pid":5300,"processName":"syshelper.exe","filePath":"C:\\Users\\kdavies\\AppData\\Local\\Temp\\cache_8f2.zip","detail":"create"}
+{"at":5200,"kind":"FileDelete","pid":5100,"processName":"wscript.exe","filePath":"D:\\invoice\\scan.js","detail":"delete"}
+{"at":5400,"kind":"ProcessStart","pid":5201,"parentPid":5200,"processName":"cmd.exe","imagePath":"C:\\Windows\\System32\\cmd.exe","commandLine":"cmd.exe /c ping 127.0.0.1 -n 4 >nul & del /f /q \"C:\\Users\\kdavies\\AppData\\Local\\Temp\\kb5004.exe\"","user":"CORP\\kdavies","detail":"waits a few seconds so the payload has exited, then deletes it"}
+{"at":5600,"kind":"ProcessStop","pid":5200,"processName":"kb5004.exe"}
+{"at":6000,"kind":"ProcessStop","pid":5100,"processName":"wscript.exe"}
+{"at":6500,"kind":"FileRename","pid":5300,"processName":"syshelper.exe","filePath":"C:\\Users\\kdavies\\Documents\\budget_Q3.xlsx","detail":"C:\\Users\\kdavies\\Documents\\budget_Q3.xlsx.locked"}
+{"at":6700,"kind":"FileRename","pid":5300,"processName":"syshelper.exe","filePath":"C:\\Users\\kdavies\\Documents\\board_minutes.docx","detail":"C:\\Users\\kdavies\\Documents\\board_minutes.docx.locked"}
+{"at":6900,"kind":"FileRename","pid":5300,"processName":"syshelper.exe","filePath":"C:\\Users\\kdavies\\Documents\\payroll_2026.xlsx","detail":"C:\\Users\\kdavies\\Documents\\payroll_2026.xlsx.locked"}
+{"at":7100,"kind":"FileRename","pid":5300,"processName":"syshelper.exe","filePath":"C:\\Users\\kdavies\\Documents\\contracts.pdf","detail":"C:\\Users\\kdavies\\Documents\\contracts.pdf.locked"}
+{"at":7300,"kind":"FileRename","pid":5300,"processName":"syshelper.exe","filePath":"C:\\Users\\kdavies\\Documents\\passwords.kdbx","detail":"C:\\Users\\kdavies\\Documents\\passwords.kdbx.locked"}
+{"at":7500,"kind":"FileRename","pid":5300,"processName":"syshelper.exe","filePath":"C:\\Users\\kdavies\\Documents\\notes.txt","detail":"C:\\Users\\kdavies\\Documents\\notes.txt.locked"}
+{"at":7600,"kind":"ProcessStop","pid":6000,"processName":"VideoTool_setup.exe"}
+{"at":8000,"kind":"NetworkConnect","pid":5300,"processName":"syshelper.exe","remoteAddress":"203.0.113.77","remotePort":443}
+{"at":8400,"kind":"NetworkConnect","pid":5300,"processName":"syshelper.exe","remoteAddress":"203.0.113.77","remotePort":443}
+{"at":9000,"kind":"FileDelete","pid":5201,"processName":"cmd.exe","filePath":"C:\\Users\\kdavies\\AppData\\Local\\Temp\\kb5004.exe","detail":"delete"}
+{"at":9100,"kind":"ProcessStop","pid":5201,"processName":"cmd.exe"}
+{"at":9500,"kind":"FileDelete","pid":1044,"processName":"explorer.exe","filePath":"C:\\Users\\kdavies\\Downloads\\VideoTool_setup.exe","detail":"delete"}
+{"at":9800,"kind":"FileCreate","pid":5300,"processName":"syshelper.exe","filePath":"C:\\ProgramData\\Intel\\updater.exe","detail":"create"}
+{"at":10000,"kind":"ProcessStart","pid":5400,"parentPid":5300,"processName":"updater.exe","imagePath":"C:\\ProgramData\\Intel\\updater.exe","commandLine":"C:\\ProgramData\\Intel\\updater.exe /run","user":"CORP\\kdavies"}
+{"at":10600,"kind":"FileDelete","pid":5400,"processName":"updater.exe","filePath":"C:\\ProgramData\\Intel\\updater.exe","detail":"on-close"}
+{"at":10800,"kind":"ProcessStop","pid":5400,"processName":"updater.exe"}
+{"at":11500,"kind":"FileDelete","pid":5300,"processName":"syshelper.exe","filePath":"C:\\Users\\kdavies\\AppData\\Local\\Temp\\cache_8f2.zip","detail":"delete"}
+{"at":12000,"kind":"FileCreate","pid":2210,"processName":"chrome.exe","filePath":"C:\\Users\\kdavies\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache\\Cache_Data\\f_0001a2","detail":"create"}
+{"at":12100,"kind":"FileDelete","pid":2210,"processName":"chrome.exe","filePath":"C:\\Users\\kdavies\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache\\Cache_Data\\f_0001a2","detail":"delete"}
+{"at":12300,"kind":"FileCreate","pid":2210,"processName":"chrome.exe","filePath":"C:\\Users\\kdavies\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache\\Cache_Data\\f_0001a3","detail":"create"}
+{"at":12400,"kind":"FileDelete","pid":2210,"processName":"chrome.exe","filePath":"C:\\Users\\kdavies\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache\\Cache_Data\\f_0001a3","detail":"delete"}
