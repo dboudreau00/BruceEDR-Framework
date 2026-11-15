@@ -15,5 +15,7 @@ public static class AppPaths
     }
 
     public static string TriageRoot => Path.Combine(DataRoot, "triage");
+    /// <summary>Process trees and file histories of earlier runs, for the process map, the file map and Insights.</summary>
+    public static string SessionRoot => Path.Combine(DataRoot, "sessions");
     public static string KeyRoot => Path.Combine(DataRoot, "assistant");
 }

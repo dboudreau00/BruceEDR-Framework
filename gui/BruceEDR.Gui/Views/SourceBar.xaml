@@ -1,0 +1,107 @@
+<UserControl x:Class="BruceEDR.Gui.Views.SourceBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root">
+    <!-- DataContext: the ActivityHub. Says which data the screen below is drawing, and lets you change it. -->
+    <StackPanel>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <ToggleButton x:Name="Picker" Grid.Column="0" Style="{StaticResource Chip.Toggle}" Padding="12,6"
+                          ToolTip="Look at this session, a saved one, or a trace file">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE81C;" Style="{StaticResource Icon}" FontSize="12" Margin="0,0,9,0" Foreground="{StaticResource Brush.Accent}"/>
+                    <TextBlock Text="Showing" Style="{StaticResource Text.Label}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding SourceTitle}" Style="{StaticResource Text.Body}" FontWeight="SemiBold" VerticalAlignment="Center" MaxWidth="260" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="&#xE70D;" Style="{StaticResource Icon}" FontSize="9" Margin="10,1,0,0" Foreground="{StaticResource Brush.Faint}"/>
+                </StackPanel>
+            </ToggleButton>
+
+            <TextBlock Grid.Column="1" Text="{Binding SourceDetail}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Faint}"
+                       VerticalAlignment="Center" Margin="14,0,0,0" TextTrimming="CharacterEllipsis"/>
+
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <Button Content="Save this session" Style="{StaticResource Btn.Subtle}" Command="{Binding SaveNowCommand}" Margin="0,0,8,0"
+                        ToolTip="Keep this run so you can open it later. One is also saved each time monitoring stops."/>
+                <Button Content="Back to this session" Style="{StaticResource Btn.Primary}" Command="{Binding UseLiveCommand}"
+                        Visibility="{Binding IsViewing, Converter={StaticResource BoolToVis}}"/>
+            </StackPanel>
+
+            <Popup x:Name="Menu" PlacementTarget="{Binding ElementName=Picker}" Placement="Bottom" VerticalOffset="6"
+                   StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade"
+                   IsOpen="{Binding IsChecked, ElementName=Picker, Mode=TwoWay}">
+                <Border x:Name="MenuBody" Style="{StaticResource Card}" Width="440" Padding="8" Margin="0,0,16,16" Background="{StaticResource Brush.Panel}">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="22" ShadowDepth="4" Opacity="0.55" Color="Black"/>
+                    </Border.Effect>
+                    <StackPanel>
+                        <Button Command="{Binding UseLiveCommand}" Style="{StaticResource Btn.Subtle}" HorizontalContentAlignment="Left" Padding="12,9" Margin="0,0,0,2">
+                            <StackPanel>
+                                <TextBlock Text="This session" Style="{StaticResource Text.Body}" FontWeight="SemiBold"/>
+                                <TextBlock Text="What is being monitored now, or the run that just ended" Style="{StaticResource Text.Label}" FontWeight="Normal" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Button>
+
+                        <TextBlock Text="EARLIER SESSIONS" Style="{StaticResource Text.Label}" Margin="12,12,0,6"/>
+                        <TextBlock Style="{StaticResource Text.Label}" FontWeight="Normal" TextWrapping="Wrap" Margin="12,0,12,10"
+                                   Text="None yet. One is saved each time monitoring stops."
+                                   Visibility="{Binding HasSessions, Converter={StaticResource NotToVis}}"/>
+                        <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding Sessions}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Button Style="{StaticResource Btn.Subtle}" HorizontalContentAlignment="Left" Padding="12,8"
+                                                    Command="{Binding DataContext.OpenSessionCommand, ElementName=Root}"
+                                                    CommandParameter="{Binding}">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Name}" Style="{StaticResource Text.Body}" FontWeight="Medium" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Style="{StaticResource Text.Label}" FontWeight="Normal" Margin="0,3,0,0" TextTrimming="CharacterEllipsis">
+                                                        <Run Text="{Binding SavedText, Mode=OneWay}"/><Run Text="  ·  "/><Run Text="{Binding Summary, Mode=OneWay}"/>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Grid.Column="1" Style="{StaticResource Btn.Icon}" Content="&#xE74D;" Margin="4,0,0,0" Height="auto"
+                                                    ToolTip="Delete this saved session"
+                                                    Command="{Binding DataContext.DeleteSessionCommand, ElementName=Root}"
+                                                    CommandParameter="{Binding}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+
+                        <Border Height="1" Background="{StaticResource Brush.Line}" Margin="0,8"/>
+                        <Button Command="{Binding OpenFileCommand}" Style="{StaticResource Btn.Subtle}" HorizontalContentAlignment="Left" Padding="12,9">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE838;" Style="{StaticResource Icon}" Margin="0,0,10,0" FontSize="13"/>
+                                <TextBlock Text="Open a session or trace file..." Style="{StaticResource Text.Body}"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Border>
+            </Popup>
+        </Grid>
+
+        <!-- Looking at the past: say so, so a calm screen is never mistaken for a calm machine. -->
+        <Border Margin="0,10,0,0" Padding="14,9" CornerRadius="8" Background="{StaticResource Brush.AccentDim}" BorderBrush="{StaticResource Brush.AccentLine}" BorderThickness="1"
+                Visibility="{Binding IsViewing, Converter={StaticResource BoolToVis}}">
+            <TextBlock Style="{StaticResource Text.Body}" TextWrapping="Wrap" Foreground="{StaticResource Brush.Paper}">
+                <Run Text="This is a recording, not what is happening now." FontWeight="SemiBold"/>
+                <Run Text=" Nothing here changes, and filters only change what you see of it." Foreground="{StaticResource Brush.Mist}"/>
+            </TextBlock>
+        </Border>
+        <Border Margin="0,10,0,0" Padding="14,9" CornerRadius="8" Background="{StaticResource Brush.ThreatDim}" BorderBrush="#4DF2555A" BorderThickness="1"
+                Visibility="{Binding HasMessage, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding Message}" Style="{StaticResource Text.Body}" TextWrapping="Wrap" Foreground="{StaticResource Brush.Threat}"/>
+        </Border>
+    </StackPanel>
+</UserControl>
