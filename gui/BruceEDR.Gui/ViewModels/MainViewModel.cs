@@ -115,6 +115,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         StopCommand = new RelayCommand(StopEngine, () => IsLive);
         OpenSetupCommand = new RelayCommand(() => { Setup.Load(); IsSetupOpen = true; }, () => !IsLive);
         ReviewSettingsCommand = new RelayCommand(ReviewSettings);
+        ExploreHistoryCommand = new RelayCommand(ExploreHistory, () => !IsLive);
 
         ReleaseCommand = new RelayCommand(() => Act(p => _host!.Resume(p)), () => HasSelection && IsRunning && !IsReplay);
         SuspendCommand = new RelayCommand(() => Act(p => _host!.Suspend(p)), () => HasSelection && IsRunning && !IsReplay);
@@ -605,6 +606,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ICommand OpenSetupCommand { get; }
     public ICommand ReviewSettingsCommand { get; }
     /// <summary>Leaves set-up for the process map, with the newest saved run open, to look at an earlier run without starting anything.</summary>
+    public ICommand ExploreHistoryCommand { get; }
     public ICommand StartReplayCommand { get; }
     public ICommand SetCoverageModeCommand { get; }
 
@@ -903,6 +905,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex) { AppLog.Error("activity scores", ex); }
         _ = Activity.RefreshAsync(IsActivityTab(SelectedTabIndex));
+    }
+
+    private void ExploreHistory()
+    {
+        Activity.RefreshSessions();
+        IsSetupOpen = false;
+        SelectedTabIndex = ProcessMapTabIndex;
+        // Nothing is running, so open the newest saved run rather than an empty screen.
+        if (!Activity.IsViewing && Activity.Snapshot.IsEmpty && Activity.Sessions.Count > 0)
+            Activity.OpenSession(Activity.Sessions[0]);
     }
 
     /// <summary>Jumps to the process map with this process (a node id) selected.</summary>
