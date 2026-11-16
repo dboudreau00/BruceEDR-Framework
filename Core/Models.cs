@@ -310,6 +310,12 @@ public sealed class ThreatProfile
     public bool PlatformChecked { get; set; }
     /// <summary>Canonical name of the Windows component this process really is (verified by image location), or null.</summary>
     public string? PlatformName { get; set; }
+    /// <summary>True once this process's own ProcessStart was seen, so <see cref="StartedUtc"/> is its real start.</summary>
+    public bool StartSeen { get; set; }
+    /// <summary>Distinct processes this one was scored for opening with rights that change them. Capped.</summary>
+    public readonly HashSet<int> ChangedTargets = new();
+    /// <summary>How many distinct addresses were scored as traffic from a flagged process. Capped.</summary>
+    public int FlaggedEgressScored { get; set; }
     /// <summary>Last time decay was applied, so decay is charged once per interval.</summary>
     public DateTime LastDecayUtc { get; set; }
 

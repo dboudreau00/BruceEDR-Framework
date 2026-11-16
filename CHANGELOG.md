@@ -2,6 +2,20 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Opening another process scores once per target, for three targets at most.** Every event
+  scored 25 points, so an antivirus or a network monitor that opens every process with full
+  rights reached thousands of points in minutes. Duplicating a handle (how browsers and Electron
+  apps run their helpers) no longer counts as injection, except out of LSASS, and a program
+  writing into a copy of itself that it started (`chrome.exe` and its renderers) is not scored.
+  Writing into a child of another image, the way hollowing starts, still is.
+- **Traffic from a flagged process scores once per address, for three addresses at most.** Every
+  connection scored 15 points, so a browser that one false positive had flagged climbed with
+  every page it loaded.
+
 ## [3.4.1] - 2026-11-14
 
 The desktop app now shows what a run did, not only what it scored: a process map and a file map

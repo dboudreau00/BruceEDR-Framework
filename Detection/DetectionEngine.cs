@@ -281,7 +281,7 @@ public sealed class DetectionEngine
             }
             p = GetOrAdd(s.Pid);
         }
-        if (s.Kind == SignalKind.ProcessStart) p.StartedUtc = s.TimestampUtc;
+        if (s.Kind == SignalKind.ProcessStart) { p.StartedUtc = s.TimestampUtc; p.StartSeen = true; }
         if (!string.IsNullOrEmpty(s.ProcessName)) p.ProcessName = s.ProcessName;
         else if (p.ProcessName.Length == 0 && !p.NameLookedUp && s.Kind != SignalKind.ProcessStart)
         {
@@ -568,9 +568,15 @@ public sealed class DetectionEngine
         if (p.ArchiveStagedUtc is { } t && s.TimestampUtc - t <= _window)
             Score(p, 45, $"Outbound to {endpoint} shortly after staging an archive (collect->exfil)",
                   "builtin-exfil-chain", Tech("T1041", "T1567"), s.TimestampUtc);
-        else if (p.Score >= _warn)
+        // Once per address and for a few addresses only. Scored per connection, a browser that one false
+        // positive had flagged climbed 15 points with every page it loaded, into the thousands.
+        else if (p.Score >= _warn && p.FlaggedEgressScored < MaxFlaggedEgress &&
+                 p.FiredOnce.Add("flagged-egress:" + s.RemoteAddress))
+        {
+            p.FlaggedEgressScored++;
             Score(p, 15, $"Outbound to {endpoint} from a flagged process",
                   "builtin-flagged-egress", Tech("T1071.001"), s.TimestampUtc);
+        }
 
         AnalyzeBeacon(p, endpoint, s.TimestampUtc);
     }
@@ -650,18 +656,57 @@ public sealed class DetectionEngine
             Score(p, 60, $"Opened LSASS with memory-access rights (mask 0x{s.DesiredAccess:X})",
                   "builtin-lsass-access", Tech("T1003.001"), s.TimestampUtc);
         }
-        // Any other target counts only for rights that change it. Read masks scored here put
-        // WMI, Defrag and VMware Tools at quarantine on a clean lab VM within minutes.
-        else if (changesTarget)
+        // Any other target counts only for rights that put code or data into it. Read masks scored here
+        // put WMI, Defrag and VMware Tools at quarantine on a clean lab VM within minutes, and handle
+        // duplication alone (how browsers and Electron apps run their helpers) did the same on a workstation.
+        else if (Monitoring.MonitorSupport.CanChangeProcess(s.DesiredAccess))
         {
-            // csrss opens every new process with full rights, svchost and lsass duplicate handles,
-            // conhost asks for MAXIMUM_ALLOWED on its console clients: the system's own plumbing, scored
-            // 25 a target until three targets meant quarantine. Only a verified component is let off, not
-            // a name; a process injected into the component is scored on the injector.
+            // csrss opens every new process with full rights, conhost asks for MAXIMUM_ALLOWED on its
+            // console clients: the system's own plumbing. Only a verified component is let off, not a
+            // name; a process injected into the component is scored on the injector.
             if (PlatformOf(p).Length > 0) return;
+            // A multi-process program setting up a copy of itself (chrome.exe and its renderers). A
+            // parent writing into a child of another image is how hollowing starts, and still scores.
+            if (IsOwnHelper(p, s.TargetPid)) return;
+            // Once per target and for a few targets. Per event, an antivirus or a network monitor
+            // that opens every process with full rights reached thousands of points in minutes.
+            if (p.ChangedTargets.Count >= MaxChangedTargets || p.ChangedTargets.Contains(s.TargetPid)) return;
+            p.ChangedTargets.Add(s.TargetPid);
             Score(p, 25, $"Opened pid {s.TargetPid} with injection-capable rights (mask 0x{s.DesiredAccess:X})",
                   "builtin-cross-process-access", Tech("T1055"), s.TimestampUtc);
         }
+    }
+
+    private const int MaxChangedTargets = 3;
+    private const int MaxFlaggedEgress = 3;
+
+    /// <summary>
+    /// True when <paramref name="targetPid"/> is a process this one started (or one of their children)
+    /// running the same image: a browser, an Electron app or any multi-process program and its helpers.
+    /// The opener must have been running when the helper started, or the pid is a later tenant's.
+    /// </summary>
+    private bool IsOwnHelper(ThreatProfile p, int targetPid)
+    {
+        var tree = _deps.Tree;
+        if (tree is null || targetPid == p.Pid || !OwnsPid(p)) return false;
+        var target = tree.Get(targetPid);
+        if (target is null || !SameImage(p, target)) return false;
+        var chain = new List<ProcessNode>(8) { target };
+        chain.AddRange(tree.Ancestors(targetPid, maxDepth: 8));
+        foreach (var node in chain)
+        {
+            if (node.ParentPid != p.Pid) continue;
+            return !p.StartSeen || p.StartedUtc <= node.StartUtc;
+        }
+        return false;
+    }
+
+    private static bool SameImage(ThreatProfile p, ProcessNode target)
+    {
+        bool bothPaths = Path.IsPathFullyQualified(p.ImagePath) && Path.IsPathFullyQualified(target.ImagePath);
+        return bothPaths
+            ? string.Equals(p.ImagePath, target.ImagePath, StringComparison.OrdinalIgnoreCase)
+            : p.ProcessName.Length > 0 && string.Equals(p.ProcessName, target.Name, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
