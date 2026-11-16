@@ -197,8 +197,8 @@ the probes are not. Their reports are `process` (a process handle) and `thread` 
 
 | # | Scenario | Expected | Report | What it exercises |
 |---|----------|----------|--------|-------------------|
-| 43 | starts the trusted copy | allowed | | `CreateProcess`, as Explorer or Task Scheduler would: the creator is exempt, or it could not resume the new process's first thread |
-| 44 | starts the trusted copy suspended, writes into it, resumes it | allowed: known limit | | the creator keeps full access to what it starts (residual 1 of the process guard) |
+| 43 | starts the trusted copy | allowed | | `CreateProcess`, as Explorer or Task Scheduler would: the creator keeps `THREAD_SUSPEND_RESUME`, or it could not resume the new process's first thread |
+| 44 | starts the trusted copy suspended, writes into it, resumes it | observed (expected: refused, no report) | | the creator loses the write and code rights on what it starts (residual 1 of the process guard); refused only if Windows makes the creator's process handle after the notify routine, which a VM must show before this row is judged |
 | 45 | writes into the running trusted copy | refused | process | `PROCESS_VM_OPERATION` and `PROCESS_VM_WRITE` taken from the handle |
 | 46 | copies a handle out of it | refused | process | `PROCESS_DUP_HANDLE` taken from the handle |
 | 47 | suspends one of its threads | refused | thread | `THREAD_SUSPEND_RESUME` and `THREAD_SET_CONTEXT` taken from the handle |

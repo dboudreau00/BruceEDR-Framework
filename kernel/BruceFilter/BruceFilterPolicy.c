@@ -269,6 +269,10 @@ ACCESS_MASK BruceGuardAccess(_In_ const BRUCE_HANDLE_REQUEST* Request)
     // Trusted for every store the target is trusted for: Chrome's browser and its renderers
     // are one image; Edge, or a backup agent trusted for another store, is not.
     if ((Request->TargetTrust & ~Request->ReceiverTrust) == 0) return desired;
+    // An untrusted creator may start and resume what it created, not write into it: a whole
+    // exemption let any program start its own chrome.exe suspended, inject and resume it.
+    if (Request->ReceiverIsCreator)
+        strip = Request->IsThread ? BRUCE_CREATOR_THREAD_STRIP : BRUCE_CREATOR_PROCESS_STRIP;
 
     if ((desired & (BRUCE_ACCESS_GENERIC_ALL | BRUCE_ACCESS_MAXIMUM_ALLOWED)) != 0)
         desired = (desired & ~(BRUCE_ACCESS_GENERIC_ALL | BRUCE_ACCESS_MAXIMUM_ALLOWED)) | BRUCE_ACCESS_ALL;

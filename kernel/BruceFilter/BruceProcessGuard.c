@@ -4,14 +4,16 @@
 // store, or inject into the browser, and neither makes a file open for the minifilter to see.
 // This closes both while blocking is on: a handle to a process whose image is trusted for a
 // store, or to one of its threads, loses the rights in BRUCE_PROCESS_STRIP and
-// BRUCE_THREAD_STRIP unless the process receiving it is trusted for the same stores, or is
-// the process that created it.
+// BRUCE_THREAD_STRIP unless the process receiving it is trusted for the same stores.
 //
-// The creator is exempt because the thread handle CreateProcess gets back is made after the
-// notify routine has run: stripped, the creator cannot resume the new process's first thread,
-// and Explorer or Task Scheduler cannot start a trusted program at all (the lab saw Task
-// Scheduler fail with access denied). The cost is docs\process-guard.md, residual 1: a
-// program that starts a trusted image itself can write into it.
+// The process that created it loses BRUCE_CREATOR_PROCESS_STRIP and BRUCE_CREATOR_THREAD_STRIP
+// instead, which keep THREAD_SUSPEND_RESUME: the thread handle CreateProcess gets back is made
+// after the notify routine has run, and stripped of resume the creator cannot start the new
+// process's first thread, so Explorer or Task Scheduler could not start a trusted program at
+// all (the lab saw Task Scheduler fail with access denied). It used to keep everything, which
+// let a program start its own chrome.exe suspended, write into it and resume it
+// (docs\process-guard.md, residual 1). Creator strips are not reported: every start of a
+// trusted program by an untrusted one makes them.
 //
 // Every process is tracked, with its image path, from PsSetCreateProcessNotifyRoutineEx (new
 // processes) and one enumeration at load (running ones). The handle callback runs at
@@ -400,7 +402,8 @@ static VOID BruceHandleDecide(_Inout_ POB_PRE_OPERATION_INFORMATION Info)
     request.IsThread = isThread;
     request.KernelHandle = FALSE;
     request.SameProcess = FALSE;
-    request.ReceiverExempt = targetEntry != NULL && targetEntry->Creator == receiver;
+    request.ReceiverExempt = FALSE;
+    request.ReceiverIsCreator = targetEntry != NULL && targetEntry->Creator == receiver;
     request.TargetTrust = targetEntry != NULL ? targetEntry->Trust : 0;
     request.ReceiverTrust = receiverEntry != NULL ? receiverEntry->Trust : 0;
     request.Desired = *desired;
@@ -408,7 +411,10 @@ static VOID BruceHandleDecide(_Inout_ POB_PRE_OPERATION_INFORMATION Info)
     if (granted != *desired)
     {
         *desired = granted;
-        if (targetEntry != NULL) BruceGuardReport(isThread, receiver, targetEntry, receiverEntry);
+        // The creator's own CreateProcess handles ask for all access and lose the creator
+        // strip on every start; a report each time would only be noise.
+        if (targetEntry != NULL && !request.ReceiverIsCreator)
+            BruceGuardReport(isThread, receiver, targetEntry, receiverEntry);
     }
     FltReleasePushLock(&gLock);
 }
