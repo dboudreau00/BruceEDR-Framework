@@ -1,6 +1,7 @@
 using BruceEDR.Core;
 using BruceEDR.Detection;
 using BruceEDR.Monitoring;
+using BruceEDR.Security;
 using Xunit;
 
 namespace BruceEDR.Tests;
@@ -23,12 +24,14 @@ public sealed partial class ScoringNoiseTests
         public readonly DetectionEngine Engine;
         private int _tick;
 
-        public Box()
+        public Box(
+            Func<int, string, ImageStanding>? standing = null)
         {
             Engine = new DetectionEngine(new EngineOptions(), _ => false, new EngineDependencies
             {
                 Tree = new ProcessTree(SystemClock.Instance),
                 ResolveProcessName = pid => pid == Lsass ? "lsass" : "",
+                Standing = standing,
             });
         }
 

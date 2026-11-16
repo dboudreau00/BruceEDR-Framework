@@ -96,6 +96,13 @@ public sealed class EngineDependencies
     public Func<int, string?>? IdentifyPlatform { get; init; }
 
     /// <summary>
+    /// The signature, publisher, location and protection of a process's image (pid 0 for one that has
+    /// exited: judged by its own path alone). Null, the default, knows nothing, so a test or a replay,
+    /// whose pids are not this machine's, scores everything.
+    /// </summary>
+    public Func<int, string, Security.ImageStanding>? Standing { get; init; }
+
+    /// <summary>
     /// The agent's own pid. Its signals are dropped: the triage collector writes csv files into a
     /// staging folder, and the agent's memory holds every IOC string it scans for, so scoring it
     /// only produces incidents about itself. 0, the default, ignores nothing.
@@ -671,6 +678,9 @@ public sealed class DetectionEngine
             // Once per target and for a few targets. Per event, an antivirus or a network monitor
             // that opens every process with full rights reached thousands of points in minutes.
             if (p.ChangedTargets.Count >= MaxChangedTargets || p.ChangedTargets.Contains(s.TargetPid)) return;
+            // Security, monitoring and overlay software opens other processes for a living. Signed and
+            // installed where only administrators write, or run protected: not scored for it.
+            if (StandingOf(p).Installed) return;
             p.ChangedTargets.Add(s.TargetPid);
             Score(p, 25, $"Opened pid {s.TargetPid} with injection-capable rights (mask 0x{s.DesiredAccess:X})",
                   "builtin-cross-process-access", Tech("T1055"), s.TimestampUtc);
@@ -707,6 +717,28 @@ public sealed class DetectionEngine
         return bothPaths
             ? string.Equals(p.ImagePath, target.ImagePath, StringComparison.OrdinalIgnoreCase)
             : p.ProcessName.Length > 0 && string.Equals(p.ProcessName, target.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The image's signature, location and protection, looked up once per process, the first time a rule
+    /// or a verdict needs it, because it reads the file's signature and permissions. An exited process is
+    /// judged by the path its own events gave, never by its pid, which may be another program's by now.
+    /// </summary>
+    private Security.ImageStanding StandingOf(ThreatProfile p)
+    {
+        if (p.Standing is { } known) return known;
+        Security.ImageStanding standing;
+        try
+        {
+            standing = _deps.Standing is null ? Security.ImageStanding.Unknown
+                : _deps.Standing(!p.Exited && OwnsPid(p) ? p.Pid : 0, p.ImagePath);
+        }
+        catch { standing = Security.ImageStanding.Unknown; }
+        p.Standing = standing;
+        // A process that started before the agent never sent the image load that names its file; the
+        // lookup just did. Without it, a path entry in the watchlist could never match the process.
+        if (standing.ImagePath.Length > 0) PromoteImagePath(p, standing.ImagePath);
+        return standing;
     }
 
     /// <summary>
@@ -939,6 +971,10 @@ public sealed class DetectionEngine
 
         var now = _clock.UtcNow;
 
+        // Commercial software is packed and protected as a matter of course, and imports the same APIs.
+        bool wouldScore = analysis.PackerIndicators.Count > 0 || analysis.SuspiciousImports.Count >= 3;
+        if (wouldScore && StandingOf(p).Installed) return results;
+
         if (analysis.PackerIndicators.Count > 0 && p.FiredOnce.Add("pe-packed"))
             Score(p, 20, "Image looks packed or obfuscated: " +
                          string.Join(", ", analysis.PackerIndicators.Take(3)),
@@ -986,6 +1022,7 @@ public sealed class DetectionEngine
         if (p.Exited) return results;
 
         var now = _clock.UtcNow;
+        if (StandingOf(p).Installed) return results;
         Score(p, 20 + 5 * Math.Min(hits.Count, 6), "Memory IOC(s): " + string.Join(", ", hits.Select(DefangMemoryHit)),
               "builtin-memory-ioc", Tech("T1055", "T1005"), now);
         var r = Decide(p, "MemoryScan", now);
@@ -995,7 +1032,13 @@ public sealed class DetectionEngine
 
     private void Score(ThreatProfile p, int points, string reason, string ruleId,
                        IReadOnlyList<string> techniques, DateTime nowUtc)
-        => p.Add(points, reason, ruleId, techniques, nowUtc);
+    {
+        // Nothing adds up for a process Windows runs protected: only Windows and signed security
+        // software can be one, and an antivirus writing into other processes and its own scheduled
+        // tasks is its job. Containment refused them already.
+        if (points > 0 && StandingOf(p).Protected) return;
+        p.Add(points, reason, ruleId, techniques, nowUtc);
+    }
 
     /// <summary>
     /// Adopts the main image's full path from its ImageLoad when the profile only knows a
@@ -1139,6 +1182,9 @@ public sealed class DetectionEngine
 
     private DetectionResult? Decide(ThreatProfile p, string trigger, DateTime nowUtc)
     {
+        // Who signed it, for the analyst, once it is worth a look. Cached, so this costs one lookup.
+        if (p.Score >= _warn) StandingOf(p);
+
         // Authenticode verification is deferred until the score could actually be changed
         // by it. WinVerifyTrust walks a certificate chain and touches the file, and the
         // check used to run on the FIRST signal of EVERY process -- including the vast
@@ -1278,7 +1324,9 @@ public sealed class DetectionEngine
         ContainmentSkipped = p.ContainmentSkipped,
         Generation = p.Generation,
         StartedUtc = p.StartedUtc,
-        Exited = p.Exited
+        Exited = p.Exited,
+        Signature = p.Standing is { } standing && !ReferenceEquals(standing, Security.ImageStanding.Unknown)
+            ? standing.Describe() : ""
     };
 
     /// <summary>

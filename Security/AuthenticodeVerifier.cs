@@ -70,6 +70,24 @@ public sealed class AuthenticodeVerifier
         }
     }
 
+    /// <summary>
+    /// The publisher a valid embedded Authenticode signature names, or null when the file has none, the
+    /// chain does not verify, or the file cannot be read. No allowlist is consulted: this says who signed
+    /// the file, not whether the operator trusts them. Revocation is not checked, which keeps the network
+    /// off the detection path; that is the allowlist check's default too.
+    /// </summary>
+    public static string? PublisherOf(string path)
+    {
+        try
+        {
+            if (!File.Exists(path) || !ChainIsValid(path, checkRevocation: false)) return null;
+            using var cert = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
+            string subject = cert.GetNameInfo(X509NameType.SimpleName, forIssuer: false) ?? "";
+            return subject.Length > 0 ? subject : "an unnamed publisher";
+        }
+        catch { return null; }
+    }
+
     // Keep only hex digits so a pinned thumbprint copied from certmgr (which can carry
     // an invisible U+200E left-to-right mark, spaces, or colon separators) still matches
     // the raw uppercase hex returned by X509Certificate2.Thumbprint.

@@ -15,6 +15,16 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - **Traffic from a flagged process scores once per address, for three addresses at most.** Every
   connection scored 15 points, so a browser that one false positive had flagged climbed with
   every page it loaded.
+- **Who signed a program now counts.** A program with a valid signature from any publisher,
+  installed where only administrators can write, is not scored for opening other processes, for
+  strings in its memory, or for packing and imports in its image. One that is only signed, or
+  only installed there, is scored as before. A process Windows runs protected (PPL) is not
+  scored at all: only Windows and signed security software can be one, and containment already
+  refused it.
+- The Dashboard's **SIGNATURE** line (was TRUST) names the signer: "signed by ...", "unsigned"
+  or "protected process". It said "unsigned" for every program signed by a publisher outside the
+  trusted-publisher list. A process that was running before the agent started now gets its full
+  path from the same lookup, so it can be allowed by path.
 
 ## [3.4.1] - 2026-11-14
 

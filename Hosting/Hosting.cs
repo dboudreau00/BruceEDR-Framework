@@ -185,6 +185,7 @@ public sealed class Composition : IDisposable
             ImageHash = hashes.Sha256,
             AnalyzeImage = cfg.Detection.EnablePeAnalysis ? images.Analyze : null,
             IdentifyPlatform = PlatformImages.Identify,
+            Standing = ImageStanding.Of,
             SelfPid = Environment.ProcessId
         };
 
