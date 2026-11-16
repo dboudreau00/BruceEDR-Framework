@@ -120,6 +120,10 @@ public sealed class Composition : IDisposable
     public static Composition Build(string configPath, IEventSink? extraSink = null)
     {
         var log = new Logger();
+        // The service refuses such a file before getting here (BruceWorker); an interactive or
+        // desktop run is the operator's choice, but should say so.
+        if (ConfigLoader.TrustProblem(configPath) is { } trust)
+            log.Info($"config: WARNING {trust}; anyone who can change it can change this agent's policy");
         var cfg = ConfigLoader.Load(configPath, m => log.Info("config: " + m));
         var clock = SystemClock.Instance;
 
@@ -237,7 +241,7 @@ public sealed class Composition : IDisposable
 
         host.ExtendedAction = comp.RunExtendedAction;
         host.ImageAnalyzer = deps.AnalyzeImage;
-        comp._configWatcher = ConfigLoader.Watch(configPath, comp.Apply, m => log.Info("config: " + m));
+        comp._configWatcher = ConfigLoader.Watch(configPath, comp.ApplyIfTrusted, m => log.Info("config: " + m));
         comp.ConnectMinifilter(cfg);
         comp.StartControlServer(cfg);
 
@@ -669,14 +673,38 @@ public sealed class Composition : IDisposable
         return new MemoryScanner(IocDatabase.MemoryStringIocs);
     }
 
+    /// <summary>
+    /// Checked before every reload (manual or file-watch) when set. The service sets it to
+    /// <see cref="ConfigLoader.TrustProblem"/>: it refused to start on a config a standard user
+    /// could write, and must not accept one later either (an ACL loosened, or a missing file
+    /// created where users may create files). Non-null means refuse and keep the current config.
+    /// </summary>
+    public Func<string, string?>? ConfigTrustCheck { get; set; }
+
     /// <summary>Manual reload trigger (console 'reload'). Keeps the current config on a
     /// parse/read failure instead of failing open to defaults.</summary>
     public void ReloadConfig()
     {
+        if (ConfigTrustCheck?.Invoke(_configPath) is { } problem)
+        {
+            Log.Info($"config: reload refused, {problem}; keeping current config");
+            return;
+        }
         if (ConfigLoader.TryLoad(_configPath, out var next, m => Log.Info("config: " + m)))
             Apply(next);
         else
             Log.Info("config: reload skipped; keeping current config");
+    }
+
+    /// <summary>The file-watch reload: the same trust check as <see cref="ReloadConfig"/>, then <see cref="Apply"/>.</summary>
+    internal void ApplyIfTrusted(BruceConfig next)
+    {
+        if (ConfigTrustCheck?.Invoke(_configPath) is { } problem)
+        {
+            Log.Info($"config: reload refused, {problem}; keeping current config");
+            return;
+        }
+        Apply(next);
     }
 
     /// <summary>Apply the hot-reloadable subset (posture + allowlist + rules + intel).</summary>
@@ -1104,17 +1132,33 @@ public sealed class BruceWorker : BackgroundService
 {
     private readonly WorkerOptions _options;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly Microsoft.Extensions.Logging.ILogger<BruceWorker> _logger;
     private Composition? _composition;
 
-    public BruceWorker(WorkerOptions options, IHostApplicationLifetime lifetime)
+    public BruceWorker(WorkerOptions options, IHostApplicationLifetime lifetime,
+                       Microsoft.Extensions.Logging.ILogger<BruceWorker> logger)
     {
         _options = options;
         _lifetime = lifetime;
+        _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // The service runs as SYSTEM on whatever this file says. One a standard user can write
+        // (or create) would let them disarm it or arm its control plane with their own token,
+        // so refuse to start on it. The Windows Service logger writes this to the event log.
+        if (ConfigLoader.TrustProblem(_options.ConfigPath) is { } trust)
+        {
+            Microsoft.Extensions.Logging.LoggerExtensions.LogCritical(_logger,
+                "BruceEDR refused to start: {Problem}. Move the config under Program Files or ProgramData\\BruceEDR " +
+                "with an admin-only ACL and reinstall.", trust);
+            _lifetime.StopApplication();
+            return;
+        }
+
         _composition = Composition.Build(_options.ConfigPath);
+        _composition.ConfigTrustCheck = p => ConfigLoader.TrustProblem(p);
         _composition.SessionDirectory = _composition.ConfiguredSessionDirectory;
         if (!_composition.Host.Start())
         {
@@ -1173,6 +1217,14 @@ public static class Watchdog
 {
     public static int Run(string configPath)
     {
+        // The watchdog runs as SYSTEM too, and its config names the service it restarts and the
+        // heartbeat it trusts. The service refuses an untrusted config, so restarting it on one
+        // would only loop.
+        if (ConfigLoader.TrustProblem(configPath) is { } trust)
+        {
+            Console.Error.WriteLine($"[watchdog] {trust}; not supervising");
+            return 2;
+        }
         // Not strict: the watchdog's job is to keep the service alive, and a malformed
         // config must not take the watchdog down with it.
         var cfg = ConfigLoader.Load(configPath, strict: false);
@@ -1289,6 +1341,16 @@ public static class ServiceControl
 
         string svc = cfg.Service.ServiceName;
         string fullConfig = Path.GetFullPath(configPath);
+        // The config path is baked into the service and the SYSTEM watchdog task, and the file
+        // is hot-reloaded: it must be as admin-only as the exe (see ConfigLoader.TrustProblem).
+        if (ConfigLoader.TrustProblem(fullConfig) is { } configProblem)
+        {
+            Console.Error.WriteLine(
+                $"Refusing to install: {configProblem}\n" +
+                "A standard user who can change that file controls what the SYSTEM service does. Put it " +
+                @"beside the exe under Program Files (or in an admin-only folder) and pass --config again.");
+            return 1;
+        }
         int rc = 0;
         // Quote the binPath value so the stored ImagePath is quoted (CWE-428). An
         // unquoted "C:\Program Files\...\BruceEDR.exe" lets a local user drop
@@ -1311,11 +1373,16 @@ public static class ServiceControl
     }
 
     /// <summary>
-    /// True when <paramref name="exe"/> lives under a directory tree a standard user
-    /// cannot write to: Program Files (either), or the Windows directory. Anything else
-    /// -- user profiles, Downloads, ProgramData, a repository checkout -- is refused.
+    /// True when <paramref name="exe"/> lives under Program Files (either) or the Windows
+    /// directory AND no account other than SYSTEM, Administrators or TrustedInstaller can
+    /// change it, plant a file beside it or move a folder above it
+    /// (<see cref="KernelPolicy.WriteRiskOfNearest"/>). The prefix alone is not enough: the
+    /// Windows directory has user-writable folders (Temp, Tasks, tracing) and a junction can
+    /// sit under any prefix. Anything else -- user profiles, Downloads, ProgramData, a
+    /// repository checkout -- is refused. <paramref name="writeRisk"/> replaces the ACL check
+    /// (tests); off Windows there are no ACLs and only the prefix is checked.
     /// </summary>
-    internal static bool IsProtectedInstallLocation(string exe, out string why)
+    internal static bool IsProtectedInstallLocation(string exe, out string why, Func<string, string?>? writeRisk = null)
     {
         why = "";
         string full;
@@ -1333,7 +1400,14 @@ public static class ServiceControl
         {
             if (string.IsNullOrEmpty(root)) continue;
             string r = Path.GetFullPath(root).TrimEnd('\\') + "\\";
-            if (full.StartsWith(r, StringComparison.OrdinalIgnoreCase)) return true;
+            if (!full.StartsWith(r, StringComparison.OrdinalIgnoreCase)) continue;
+
+            writeRisk ??= OperatingSystem.IsWindows() ? KernelPolicy.WriteRiskOfNearest : null;
+            if (writeRisk is null) return true;
+            string? risk = SafePaths.FindLink(full) is { } link ? $"{link} is a link" : writeRisk(full);
+            if (risk is null) return true;
+            why = $"{risk}, so a replaced exe would run as SYSTEM";
+            return false;
         }
         why = "standard users can write to that location, so a replaced exe would run as SYSTEM";
         return false;

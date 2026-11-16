@@ -362,6 +362,32 @@ public static class ConfigLoader
     };
 
     /// <summary>
+    /// Null when the config file at <paramref name="path"/> can only be changed (or, if it is
+    /// missing, created) by SYSTEM, Administrators or TrustedInstaller; otherwise why not. The
+    /// file decides the response mode, kernel blocking and its exemptions, the control token and
+    /// its allowed actions, and the rule, feed and safe-process paths, and the service hot-reloads
+    /// it as SYSTEM: a file a standard user can write is a way to disarm or drive the agent.
+    /// Uses <see cref="BruceEDR.Driver.KernelPolicy.WriteRiskOfNearest"/>, the check trusted images
+    /// and safe-process lists already pass. Off Windows there are no ACLs to read and the answer
+    /// is null unless a <paramref name="writeRisk"/> is supplied (tests).
+    /// </summary>
+    public static string? TrustProblem(string path, Func<string, string?>? writeRisk = null)
+    {
+        string full;
+        try { full = Path.GetFullPath(path); }
+        catch (Exception ex) { return $"config path '{path}' is invalid ({ex.Message})"; }
+
+        if (writeRisk is null)
+        {
+            if (!OperatingSystem.IsWindows()) return null;
+            writeRisk = BruceEDR.Driver.KernelPolicy.WriteRiskOfNearest;
+        }
+        if (BruceEDR.Security.SafePaths.FindLink(full) is { } link)
+            return $"config '{full}' is reached through a link ({link})";
+        return writeRisk(full) is { } risk ? $"config '{full}' is not admin-only: {risk}" : null;
+    }
+
+    /// <summary>
     /// Start-up loader. A MISSING file is a first run and yields defaults with a warning.
     /// A file that exists but cannot be parsed is refused when <paramref name="strict"/>
     /// (the default): starting an EDR on factory defaults because the operator's config
