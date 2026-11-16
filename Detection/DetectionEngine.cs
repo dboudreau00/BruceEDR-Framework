@@ -96,6 +96,12 @@ public sealed class EngineDependencies
     public Func<int, string?>? IdentifyPlatform { get; init; }
 
     /// <summary>
+    /// Names the Windows user-session component an image path is (conhost and the like), for a process
+    /// whose events are scored after it exited, when its pid can no longer be looked at. Null names nothing.
+    /// </summary>
+    public Func<string, string?>? IdentifyPlatformImage { get; init; }
+
+    /// <summary>
     /// The signature, publisher, location and protection of a process's image (pid 0 for one that has
     /// exited: judged by its own path alone). Null, the default, knows nothing, so a test or a replay,
     /// whose pids are not this machine's, scores everything.
@@ -744,14 +750,22 @@ public sealed class DetectionEngine
     /// <summary>
     /// The Windows component this process verifiably is, or "". Resolved once per process, the first
     /// time a rule would score it, because the check reads the image's permissions from disk. An exited
-    /// process is never identified: its pid may belong to something else by now.
+    /// process is never identified by its pid, which may belong to something else by now; one of the
+    /// user's own shell programs can still be named from the path its own events gave. Starts and stops
+    /// are handled ahead of other telemetry, so a console host that lived for one command was always
+    /// exited by the time its events were scored, and each one was scored 25 a target.
     /// </summary>
     private string PlatformOf(ThreatProfile p)
     {
         if (!p.PlatformChecked)
         {
             p.PlatformChecked = true;
-            try { p.PlatformName = !p.Exited && OwnsPid(p) ? _deps.IdentifyPlatform?.Invoke(p.Pid) : null; }
+            try
+            {
+                p.PlatformName = !p.Exited && OwnsPid(p) ? _deps.IdentifyPlatform?.Invoke(p.Pid) : null;
+                if (p.PlatformName is null && Path.IsPathFullyQualified(p.ImagePath))
+                    p.PlatformName = _deps.IdentifyPlatformImage?.Invoke(p.ImagePath);
+            }
             catch { p.PlatformName = null; }
         }
         return p.PlatformName ?? "";
@@ -1022,6 +1036,13 @@ public sealed class DetectionEngine
         if (p.Exited) return results;
 
         var now = _clock.UtcNow;
+        // The builtin scan looks for words any program that handles text can hold ("exfil", "keylog",
+        // "stealer", a few API names), and found them in git, grep, a chat client and an AI coding tool
+        // reading this repository. Those alone no longer score: a stealer-specific string or a YARA rule
+        // has to be among the hits, or three of the common words at once.
+        var distinct = hits.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        int common = distinct.Count(h => IocDatabase.CommonMemoryStrings.Contains(h, StringComparer.OrdinalIgnoreCase));
+        if (common == distinct.Count && common < 3) return results;
         if (StandingOf(p).Installed) return results;
         Score(p, 20 + 5 * Math.Min(hits.Count, 6), "Memory IOC(s): " + string.Join(", ", hits.Select(DefangMemoryHit)),
               "builtin-memory-ioc", Tech("T1055", "T1005"), now);

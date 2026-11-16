@@ -96,6 +96,24 @@ public static class PlatformImages
     }
 
     /// <summary>
+    /// The component an image path is, for a process that can no longer be looked at: one of the user's
+    /// own shell programs (conhost and the like) at its own location, whose instance check passes for any
+    /// copy anyway. A console host lives for one command, and its events reach detection after its stop,
+    /// so by then its pid says nothing; its path from its own start still does. Service components need
+    /// their instance checked and are never named from a path.
+    /// </summary>
+    public static string? IdentifyUserSessionImage(string? imagePath)
+    {
+        if (string.IsNullOrEmpty(imagePath)) return null;
+        try
+        {
+            string? name = IdentifyCached(imagePath);
+            return name is not null && UserSession.Contains(name) ? name : null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// The user's own shell programs, which run as the signed-in user: the account tells a real
     /// one from a copy no better than the path does.
     /// </summary>

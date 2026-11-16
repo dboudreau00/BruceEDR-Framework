@@ -526,6 +526,15 @@ public static class IocDatabase
         "setwindowshookex", "getasynckeystate", "keybd_event"
     };
 
+    /// <summary>
+    /// The entries of <see cref="MemoryStringIocs"/> that ordinary programs hold too: plain words any
+    /// text can carry and API names any input or overlay tool imports. Found alone they do not score.
+    /// </summary>
+    public static readonly string[] CommonMemoryStrings =
+    {
+        "grabber", "stealer", "exfil", "keylog", "setwindowshookex", "getasynckeystate", "keybd_event"
+    };
+
     public static readonly string[] SuspiciousModuleFragments =
     { "vnc", "tightvnc", "hvnc", "remcos", "quasar", "asyncrat", "njrat", "meterpreter" };
 }

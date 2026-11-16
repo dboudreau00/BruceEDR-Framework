@@ -446,7 +446,8 @@ public sealed class EnforceFalsePositiveTests
         var box = new Box(rules: false);
         box.Open(900, "x", 1000, 0x20);
         int before = box.Score(900);
-        box.Engine.ApplyMemoryHits(900, new[] { "stealer", "keylog" });
+        // A stealer-specific string among the hits; common words alone no longer score (ScoringNoiseTests).
+        box.Engine.ApplyMemoryHits(900, new[] { "select * from logins", "keylog" });
         Assert.Equal(before + 30, box.Score(900));
     }
 

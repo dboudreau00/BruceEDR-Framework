@@ -25,13 +25,17 @@ public sealed partial class ScoringNoiseTests
         private int _tick;
 
         public Box(
-            Func<int, string, ImageStanding>? standing = null)
+            Func<int, string, ImageStanding>? standing = null,
+            Func<string, string?>? platformImage = null,
+            RuleEngine? rules = null)
         {
             Engine = new DetectionEngine(new EngineOptions(), _ => false, new EngineDependencies
             {
                 Tree = new ProcessTree(SystemClock.Instance),
                 ResolveProcessName = pid => pid == Lsass ? "lsass" : "",
                 Standing = standing,
+                IdentifyPlatformImage = platformImage,
+                Rules = rules,
             });
         }
 

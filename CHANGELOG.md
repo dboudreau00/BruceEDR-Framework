@@ -26,6 +26,23 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   trusted-publisher list. A process that was running before the agent started now gets its full
   path from the same lookup, so it can be allowed by path.
 
+### Fixed
+
+- Console hosts were flagged for opening their own console's programs. Starts and stops are
+  handled ahead of other telemetry, so a `conhost.exe` that served one command had exited before
+  its events were scored, and an exited process was never recognised as part of Windows. It is
+  now recognised from its own path.
+- Words any program that handles text can hold ("exfil", "keylog", "stealer" and a few API
+  names) no longer score as memory strings on their own: a stealer-specific string or a YARA rule
+  has to be among the hits, or three of the common words together. They were found in git, grep,
+  a chat client and an AI coding tool reading this repository.
+- An uninitialised data section (`.bss`, which takes no room in the file) was reported as a
+  packer's empty section, which put every MinGW build at "packed", git and grep included. Only an
+  executable section with no file data counts now.
+- `crypto-wallet-file-access` matched any folder named after a wallet, including the wallet
+  programs' own install folders. It now matches the folders the wallets keep their data in, and
+  never a program file (`.exe`, `.dll`, `.node`, `.pak`, `.asar`).
+
 ## [3.4.1] - 2026-11-14
 
 The desktop app now shows what a run did, not only what it scored: a process map and a file map
