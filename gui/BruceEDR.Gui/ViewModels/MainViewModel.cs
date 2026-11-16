@@ -120,6 +120,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ReleaseCommand = new RelayCommand(() => Act(p => _host!.Resume(p)), () => HasSelection && IsRunning && !IsReplay);
         SuspendCommand = new RelayCommand(() => Act(p => _host!.Suspend(p)), () => HasSelection && IsRunning && !IsReplay);
         EndCommand     = new RelayCommand(EndSelected,                      () => HasSelection && IsRunning && !IsReplay);
+        AllowCommand   = new RelayCommand(AllowSelected,
+            () => HasSelection && !IsReplay && Path.IsPathFullyQualified(SelectedThreat?.ImagePath ?? ""));
         RefreshCommand = new RelayCommand(() => _ = RefreshAsync());
         ClearEventsCommand = new RelayCommand(ClearEvents);
         TogglePauseCommand = new RelayCommand(TogglePause);
@@ -610,6 +612,34 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ICommand StartReplayCommand { get; }
     public ICommand SetCoverageModeCommand { get; }
 
+    /// <summary>Stop scoring the selected program and take it off the list, through an allow entry on the watchlist.</summary>
+    public ICommand AllowCommand { get; }
+
+    private void AllowSelected()
+    {
+        var row = SelectedThreat;
+        if (row is null || !Path.IsPathFullyQualified(row.ImagePath)) return;
+        try
+        {
+            var res = MessageBox.Show(
+                $"Allow {row.Name}?\n\n{row.ImagePath}\n\n" +
+                "BruceEDR stops scoring this program and takes it off the list. Do this only for software you " +
+                "installed and trust. You can undo it on the Watchlist tab.",
+                "Allow program", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (res != MessageBoxResult.Yes) return;
+
+            var (ok, message) = WatchlistEditor.AllowProgram(row.ImagePath, row.Name);
+            LastMessage = message;
+            if (!ok) return;
+            // Off the list now; the engine drops it too once the reloaded watchlist reaches it.
+            _justAllowed[row.ImagePath] = DateTime.UtcNow;
+            foreach (var other in Threats.Where(t => string.Equals(t.ImagePath, row.ImagePath, StringComparison.OrdinalIgnoreCase)).ToList())
+                Threats.Remove(other);
+            SelectedThreat = null;
+        }
+        catch (Exception ex) { AppLog.Error("allow program", ex); LastMessage = "Not allowed: " + ex.Message; }
+    }
+
     private void EndSelected()
     {
         var row = SelectedThreat;
@@ -1032,10 +1062,21 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex) { AppLog.Error("stats", ex); }
     }
 
+    // Programs just allowed from the dashboard, kept off the list until the reloaded watchlist reaches the
+    // engine (a second or two), so a refresh in between does not put them back.
+    private readonly Dictionary<string, DateTime> _justAllowed = new(StringComparer.OrdinalIgnoreCase);
+
     private void MergeThreats(IReadOnlyList<ProfileSnapshot> snaps)
     {
         try
         {
+            if (_justAllowed.Count > 0)
+            {
+                var now = DateTime.UtcNow;
+                foreach (var stale in _justAllowed.Where(kv => now - kv.Value > TimeSpan.FromSeconds(15)).Select(kv => kv.Key).ToList())
+                    _justAllowed.Remove(stale);
+                snaps = snaps.Where(s => !_justAllowed.ContainsKey(s.ImagePath)).ToList();
+            }
             foreach (var s in snaps)
             {
                 var row = Threats.FirstOrDefault(r => r.Pid == s.Pid);

@@ -4,6 +4,17 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 
 ## [Unreleased]
 
+### Added
+
+- **Allow a program from the Dashboard.** Select a process and press **Allow**: it is no longer
+  scored and leaves the list. The button writes a watchlist entry with the new `allow` action,
+  by path when only administrators can write to the program's folder, or else by the SHA-256 of
+  the file as it is now (allow it again after an update). Undo it on the Watchlist tab. An
+  `allow` entry has to name one exact file, a full path with no wildcards or a hash; a name or a
+  command line is refused, since any program can take a name. A changed watchlist now reaches
+  idle processes too, so an allowed program leaves the list within a couple of seconds, and a
+  process that is actually suspended stays listed until it is released.
+
 ### Changed
 
 - **Opening another process scores once per target, for three targets at most.** Every event

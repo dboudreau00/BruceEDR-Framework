@@ -27,7 +27,8 @@ public sealed partial class ScoringNoiseTests
         public Box(
             Func<int, string, ImageStanding>? standing = null,
             Func<string, string?>? platformImage = null,
-            RuleEngine? rules = null)
+            RuleEngine? rules = null,
+            Func<Watchlist?>? watchlist = null)
         {
             Engine = new DetectionEngine(new EngineOptions(), _ => false, new EngineDependencies
             {
@@ -36,6 +37,7 @@ public sealed partial class ScoringNoiseTests
                 Standing = standing,
                 IdentifyPlatformImage = platformImage,
                 Rules = rules,
+                WatchlistProvider = watchlist,
             });
         }
 

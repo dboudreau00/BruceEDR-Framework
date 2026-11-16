@@ -321,6 +321,16 @@ public sealed class DetectionEngine
         if (s.Kind == SignalKind.ProcessAccess && s.TargetPid > 0)
             s = EnrichTargetName(s, out targetName);
 
+        // Identity first: an operator's allow entry has to be in force before this signal's rules score it.
+        EvaluateWatchlist(p, s.TimestampUtc);
+        // An allowed program is not evaluated at all, so nothing it does while allowed counts against it
+        // if the entry is removed. Its endpoints still go into the API surface inventory, which is not scoring.
+        if (p.Allowed)
+        {
+            if (OwnsPid(p)) _deps.Surface?.Observe(s);
+            return results;
+        }
+
         switch (s.Kind)
         {
             case SignalKind.ProcessStart:   RuleProcessStart(p, s); break;
@@ -335,7 +345,6 @@ public sealed class DetectionEngine
             case SignalKind.KernelRefusal:  RuleKernelRefusal(p, s); break;
         }
 
-        EvaluateWatchlist(p, s.TimestampUtc);
         EvaluateDeclarativeRules(p, s);
         MatchIndicators(p, s);
         if (OwnsPid(p)) _deps.Surface?.Observe(s);
@@ -351,9 +360,13 @@ public sealed class DetectionEngine
 
     public IReadOnlyList<ProfileSnapshot> Snapshot(bool onlyContained)
     {
+        ApplyWatchlistChange();
         var list = new List<ProfileSnapshot>();
         foreach (var p in _profiles.Values)
         {
+            // An allowed program leaves the list, unless it is actually frozen: then it stays, so the
+            // operator can release it. A monitor-mode "would contain" froze nothing.
+            if (p.Allowed && !(p.Contained && !p.ContainmentSkipped && !p.Terminated) && !p.SuspendedByAnalyst) continue;
             if (onlyContained) { if (!p.Contained) continue; }
             // A watchlist conviction is contained at score 0, so "all flagged" must not filter
             // on score alone: it hid those processes from the GUI table and `list all`.
@@ -366,6 +379,21 @@ public sealed class DetectionEngine
 
     public ProfileSnapshot? SnapshotOne(int pid)
         => _profiles.TryGetValue(pid, out var p) ? ToSnapshot(p) : null;
+
+    private int _listedWatchlistVersion;
+
+    /// <summary>
+    /// A reloaded watchlist otherwise reaches a process only with its next signal, so a program allowed
+    /// while it sat idle stayed on the verdict list. Every profile is checked once against each new list.
+    /// </summary>
+    private void ApplyWatchlistChange()
+    {
+        var list = _deps.CurrentWatchlist();
+        if (list is null || list.Version == _listedWatchlistVersion) return;
+        _listedWatchlistVersion = list.Version;
+        var now = _clock.UtcNow;
+        foreach (var p in _profiles.Values) EvaluateWatchlist(p, now);
+    }
 
     public bool SetSuspendedByAnalyst(int pid, bool value)
     {
@@ -1054,10 +1082,10 @@ public sealed class DetectionEngine
     private void Score(ThreatProfile p, int points, string reason, string ruleId,
                        IReadOnlyList<string> techniques, DateTime nowUtc)
     {
-        // Nothing adds up for a process Windows runs protected: only Windows and signed security
-        // software can be one, and an antivirus writing into other processes and its own scheduled
-        // tasks is its job. Containment refused them already.
-        if (points > 0 && StandingOf(p).Protected) return;
+        // Nothing adds up for a program the operator allowed, or for a process Windows runs protected:
+        // only Windows and signed security software can be one, and an antivirus writing into other
+        // processes and its own scheduled tasks is its job. Containment refused them already.
+        if (points > 0 && (p.Allowed || StandingOf(p).Protected)) return;
         p.Add(points, reason, ruleId, techniques, nowUtc);
     }
 
@@ -1151,6 +1179,7 @@ public sealed class DetectionEngine
             // a record of an action already taken); only the forward-looking floor is cleared.
             p.ForcedVerdict = null;
             p.WatchlistRuleId = "";
+            p.Allowed = false;
         }
 
         if (list.Count == 0) return;
@@ -1181,6 +1210,13 @@ public sealed class DetectionEngine
         // with unrelated evidence and contain a process the operator only asked to be told about.
         switch (hit.Action)
         {
+            case WatchAction.Allow:
+                // Recorded at zero for the audit trail; from here on nothing is scored and no verdict is raised.
+                p.Add(0, hit.Reason, hit.Entry.RuleId, Array.Empty<string>(), nowUtc);
+                p.Allowed = true;
+                p.ForcedVerdict = null;
+                break;
+
             case WatchAction.Quarantine:
                 Score(p, 0, hit.Reason, hit.Entry.RuleId, hit.Entry.Techniques, nowUtc);
                 p.ForcedVerdict = Verdict.Quarantine;
@@ -1203,6 +1239,8 @@ public sealed class DetectionEngine
 
     private DetectionResult? Decide(ThreatProfile p, string trigger, DateTime nowUtc)
     {
+        // The operator allowed this program: no verdict, whatever was scored before the entry existed.
+        if (p.Allowed) return null;
         // Who signed it, for the analyst, once it is worth a look. Cached, so this costs one lookup.
         if (p.Score >= _warn) StandingOf(p);
 

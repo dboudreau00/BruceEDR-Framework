@@ -325,6 +325,8 @@ public sealed class ThreatProfile
     public readonly HashSet<int> ChangedTargets = new();
     /// <summary>How many distinct addresses were scored as traffic from a flagged process. Capped.</summary>
     public int FlaggedEgressScored { get; set; }
+    /// <summary>An operator allow entry matched: nothing more is scored and the process is left off the verdict list.</summary>
+    public bool Allowed { get; set; }
     /// <summary>Last time decay was applied, so decay is charged once per interval.</summary>
     public DateTime LastDecayUtc { get; set; }
 
