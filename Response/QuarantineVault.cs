@@ -131,11 +131,11 @@ public sealed class QuarantineVault : IDisposable
         _manifestPath = Path.Combine(_vaultDir, ManifestFileName);
         _keyPath = Path.Combine(_vaultDir, KeyFileName);
 
-        Directory.CreateDirectory(_vaultDir);
-        Directory.CreateDirectory(_blobDir);
-        // Best effort, logged nowhere by design (the vault has no logger): the key file's
-        // own DACL is the real control; this narrows the directory around it too.
-        BruceEDR.Security.SecretFiles.ProtectDirectory(_vaultDir);
+        // The vault folder is created private and must not be a link: the agent writes the
+        // key, the manifest and the blobs here as SYSTEM. Refusing (the constructor throws and
+        // the host runs without a vault) beats writing malware and its key through a junction.
+        BruceEDR.Security.SafePaths.RequirePrivateDirectory(_vaultDir, requireAdministrativeOwner: false);
+        BruceEDR.Security.SafePaths.RequirePrivateDirectory(_blobDir, requireAdministrativeOwner: false);
 
         _key = LoadOrCreateKey(_keyPath);
         LoadManifest();
@@ -210,7 +210,12 @@ public sealed class QuarantineVault : IDisposable
 
         if (!File.Exists(full)) { error = $"source not found or not a file: {full}"; return null; }
 
-        if (!TryReadShared(full, out byte[] plaintext, out string readError))
+        // The source path is chosen by the suspect process. Open it once, prove it is the file
+        // it claims to be (no junction or link on the way, a single hard link), then read and
+        // delete through that one handle: re-resolving the path to delete it is the window in
+        // which a swapped junction would turn the delete onto any file SYSTEM can reach.
+        using var source = OpenSource(full, out byte[] plaintext, out string readError);
+        if (source is null)
         {
             error = readError;
             return null;
@@ -259,7 +264,7 @@ public sealed class QuarantineVault : IDisposable
 
                 _index[id] = entry;
 
-                if (deleteOriginal && !TryDeleteFile(full, out string deleteError))
+                if (deleteOriginal && !TryDeleteSource(source, full, out string deleteError))
                     error = $"stored, but the original could not be deleted ({deleteError}); the live payload is still at {full}";
 
                 return entry;
@@ -319,20 +324,23 @@ public sealed class QuarantineVault : IDisposable
 
             try
             {
+                // The destination is usually the folder the malware ran from, which a standard
+                // user controls. Refuse a link on the way before creating anything, then create
+                // the file itself with CREATE_NEW and check where it landed: the old temp file +
+                // rename wrote and renamed by path, through whatever junction was there.
                 string? destDir = Path.GetDirectoryName(dest);
-                if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
-
-                // Write to a sibling temp file then move: the destination either does not
-                // exist or is the complete file, never a half-written one.
-                string tmp = dest + ".psvrestore.tmp";
                 try
                 {
-                    File.WriteAllBytes(tmp, plaintext);
-                    File.Move(tmp, dest, overwrite: false);
+                    if (!string.IsNullOrEmpty(destDir))
+                    {
+                        if (BruceEDR.Security.SafePaths.FindLink(destDir) is { } link)
+                            throw new IOException($"{link} is a link (junction or symbolic link)");
+                        Directory.CreateDirectory(destDir);
+                    }
+                    BruceEDR.Security.SafePaths.CreateNewFile(dest, plaintext);
                 }
                 catch (Exception ex)
                 {
-                    TryDeleteFile(tmp, out _);
                     error = $"write failed: {ex.GetType().Name}: {ex.Message}";
                     return false;
                 }
@@ -585,41 +593,48 @@ public sealed class QuarantineVault : IDisposable
     }
 
     /// <summary>
-    /// Reads a file while tolerating other openers. FileShare.ReadWrite|Delete matters
-    /// here: the file being quarantined is very often still open by the process that
-    /// wrote it, and a plain File.ReadAllBytes would fail with a sharing violation.
+    /// Opens a file to quarantine and reads it through the same handle. Sharing tolerates
+    /// other openers: the file being quarantined is very often still open by the process that
+    /// wrote it. Returns the handle (the caller deletes through it) or null with the reason;
+    /// a junction, symbolic link or hard link is refused rather than followed.
     /// </summary>
-    private static bool TryReadShared(string path, out byte[] data, out string error)
+    internal static Microsoft.Win32.SafeHandles.SafeFileHandle? OpenSource(string path, out byte[] data, out string error)
     {
         data = Array.Empty<byte>();
         error = "";
+        var handle = BruceEDR.Security.SafePaths.OpenForQuarantine(path, out string? openError);
+        if (handle is null)
+        {
+            error = $"cannot read source ({openError})";
+            return null;
+        }
         try
         {
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete, bufferSize: 81920, useAsync: false);
+            data = BruceEDR.Security.SafePaths.ReadAll(handle, MaxItemBytes);
+            return handle;
+        }
+        catch (Exception ex)
+        {
+            handle.Dispose();
+            error = ex is IOException && ex.Message.Contains("single-item limit", StringComparison.Ordinal)
+                ? ex.Message
+                : $"cannot read source ({ex.GetType().Name}: {ex.Message})";
+            return null;
+        }
+    }
 
-            long length = fs.Length;
-            if (length > MaxItemBytes)
-            {
-                error = $"file is {length} bytes, above the {MaxItemBytes}-byte single-item limit";
-                return false;
-            }
-
-            var buffer = new byte[length];
-            int offset = 0;
-            while (offset < buffer.Length)
-            {
-                int read = fs.Read(buffer, offset, buffer.Length - offset);
-                if (read == 0) break;               // truncated under us; keep what we got
-                offset += read;
-            }
-
-            data = offset == buffer.Length ? buffer : buffer[..offset];
+    /// <summary>Deletes the quarantined original through the handle it was read from.</summary>
+    internal static bool TryDeleteSource(Microsoft.Win32.SafeHandles.SafeFileHandle handle, string path, out string error)
+    {
+        error = "";
+        try
+        {
+            BruceEDR.Security.SafePaths.DeleteQuarantined(handle, path);
             return true;
         }
         catch (Exception ex)
         {
-            error = $"cannot read source ({ex.GetType().Name}: {ex.Message})";
+            error = $"{ex.GetType().Name}: {ex.Message}";
             return false;
         }
     }

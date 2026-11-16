@@ -193,6 +193,73 @@ public static class SafePaths
         return handle;
     }
 
+    /// <summary>
+    /// Reads the whole file behind a handle from <see cref="OpenForQuarantine"/>, refusing one
+    /// above <paramref name="maxBytes"/>. Reading through the handle is what makes the bytes
+    /// stored the bytes of the file that is then deleted.
+    /// </summary>
+    public static byte[] ReadAll(SafeFileHandle handle, long maxBytes)
+    {
+        long length = RandomAccess.GetLength(handle);
+        if (length > maxBytes)
+            throw new IOException($"file is {length} bytes, above the {maxBytes}-byte single-item limit");
+        var buffer = new byte[length];
+        int offset = 0;
+        while (offset < buffer.Length)
+        {
+            int read = RandomAccess.Read(handle, buffer.AsSpan(offset), offset);
+            if (read == 0) break;               // truncated under us; keep what we got
+            offset += read;
+        }
+        return offset == buffer.Length ? buffer : buffer[..offset];
+    }
+
+    /// <summary>
+    /// Removes the file a quarantine handle names: through the handle on Windows, so it is the
+    /// file that was read; off Windows by path, after the link refusal.
+    /// </summary>
+    public static void DeleteQuarantined(SafeFileHandle handle, string path)
+    {
+        if (OperatingSystem.IsWindows()) { DeleteByHandle(handle); return; }
+        DeleteFile(path);
+    }
+
+    /// <summary>
+    /// Creates <paramref name="path"/>, which must not exist, writes <paramref name="content"/>
+    /// and keeps the folder's inherited DACL. The new file must land where its path says: if a
+    /// junction above it sent the create elsewhere, the stray file is deleted through its own
+    /// handle and the call throws, so nothing is ever written through a link. Used to restore
+    /// a quarantined file into a folder that a standard user may control.
+    /// </summary>
+    public static void CreateNewFile(string path, byte[] content)
+    {
+        string full = Path.GetFullPath(path);
+        if (FindLink(Path.GetDirectoryName(full) ?? full) is { } link)
+            throw new IOException($"refusing to create {full}: {link} is a link (junction or symbolic link)");
+        if (!OperatingSystem.IsWindows())
+        {
+            using var plain = new FileStream(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            plain.Write(content, 0, content.Length);
+            return;
+        }
+
+        // CREATE_NEW fails on any existing name, a link included, so the last component can
+        // never be followed; only a folder above it can redirect, and that is checked next.
+        var handle = OpenRaw(full, GENERIC_WRITE | DELETE, CREATE_NEW, 0, out int error);
+        if (handle is null) throw new IOException($"cannot create {full} (Win32 error {error})");
+        using (handle)
+        {
+            if (!FinalPathIs(handle, full, out string? actual))
+            {
+                DeleteByHandle(handle);
+                throw new IOException($"refusing to write {full}: it resolves to {actual}");
+            }
+            using var fs = new FileStream(handle, FileAccess.Write, bufferSize: 0);
+            fs.Write(content, 0, content.Length);
+            fs.Flush();
+        }
+    }
+
     /// <summary>Marks the file behind <paramref name="handle"/> for deletion. Off Windows this is a no-op the caller replaces with a path delete.</summary>
     public static void DeleteByHandle(SafeFileHandle handle)
     {
@@ -351,7 +418,7 @@ public static class SafePaths
     private const uint WRITE_DAC = 0x00040000;
     private const uint FILE_READ_ATTRIBUTES = 0x0080;
     private const uint FILE_SHARE_READ = 1, FILE_SHARE_WRITE = 2, FILE_SHARE_DELETE = 4;
-    private const uint OPEN_EXISTING = 3;
+    private const uint CREATE_NEW = 1, OPEN_EXISTING = 3;
     private const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
     private const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
     private const int ERROR_FILE_NOT_FOUND = 2, ERROR_PATH_NOT_FOUND = 3;

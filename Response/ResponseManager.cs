@@ -271,28 +271,41 @@ public sealed class ResponseManager
 
                 // Preferred path: move the bytes into the encrypted vault, where the payload
                 // is no longer a runnable file and cannot be re-detected by another scanner
-                // as a live threat. Falls back to the historical plain move only if no vault
-                // was configured.
+                // as a live threat. A vault that refuses the file (a junction, a link, a
+                // hard link, too big) has a reason: it is logged and the file is left alone,
+                // never handed to a weaker path-based move that would follow the same link.
                 if (_vault is not null)
                 {
-                    var entry = _vault.Store(archive, $"staged by pid {snap.Pid}", snap.Pid, snap.ProcessName);
+                    var entry = _vault.Store(archive, $"staged by pid {snap.Pid}", snap.Pid, snap.ProcessName, true, out string vaultError);
                     if (entry is not null)
                     {
-                        _log.Action($"vaulted archive {Path.GetFileName(archive)} as {entry.Id}");
+                        _log.Action(string.IsNullOrEmpty(vaultError)
+                            ? $"vaulted archive {Path.GetFileName(archive)} as {entry.Id}"
+                            : $"vaulted archive {Path.GetFileName(archive)} as {entry.Id}; {vaultError}");
                         continue;
                     }
-                    _log.Action($"vault store failed for {Path.GetFileName(archive)}; falling back to a plain move");
+                    _log.Action($"vault store refused {archive}: {vaultError}; the file was left in place");
+                    continue;
                 }
 
-                // Not a runnable file any more: a ".quarantined" suffix so nothing opens it
-                // by association, and a DACL so a standard user cannot read it out again.
+                // No vault configured: copy the bytes, read through a handle proven to be the
+                // archive itself, into a private file in the agent's quarantine folder, then
+                // delete the original through that same handle. A ".quarantined" suffix so
+                // nothing opens it by association. The old File.Move by path followed a
+                // junction the suspect process left in place of the archive's folder.
+                using var source = QuarantineVault.OpenSource(archive, out byte[] bytes, out string readError);
+                if (source is null)
+                {
+                    _log.Action($"quarantine refused {archive}: {readError}; the file was left in place");
+                    continue;
+                }
                 string dest = Path.Combine(_quarantineDir,
                     $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Path.GetFileName(archive)}.quarantined");
-                File.Move(archive, dest, overwrite: false);
-                var acl = BruceEDR.Security.SecretFiles.Protect(dest);
-                _log.Action(acl is null
+                try { BruceEDR.Security.SecretFiles.CreateProtected(dest, bytes); }
+                finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes); }
+                _log.Action(QuarantineVault.TryDeleteSource(source, archive, out string deleteError)
                     ? $"quarantined archive (plain, ACL-restricted): {Path.GetFileName(archive)}"
-                    : $"quarantined archive (plain; ACL NOT applied: {acl}): {Path.GetFileName(archive)}");
+                    : $"quarantined archive (plain, ACL-restricted), but the original could not be deleted ({deleteError}): {archive}");
             }
             catch (Exception ex) { _log.Error($"quarantine {Path.GetFileName(archive)}", ex); }
         }
