@@ -36,6 +36,8 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   or "protected process". It said "unsigned" for every program signed by a publisher outside the
   trusted-publisher list. A process that was running before the agent started now gets its full
   path from the same lookup, so it can be allowed by path.
+- The title bar matches the app: its caption, text and border colours on Windows 11, and the
+  dark title bar on Windows 10 (20H1 and later).
 
 ### Fixed
 
