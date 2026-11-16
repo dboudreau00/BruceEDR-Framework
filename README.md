@@ -318,8 +318,8 @@ Entries are validated individually (a pattern matching everything is rejected ou
 **hot-reloaded** — saving arms them in about a second, no restart.
 
 **Test detections without malware.** `Replay/scenarios/*.jsonl` are signal traces replayed
-through a real engine on a simulated clock. Three ship by default, and one of them —
-`benign-developer-day.jsonl` — exists purely to prove the rules *don't* fire on ordinary work.
+through a real engine on a simulated clock. Four ship by default, and one of them,
+`benign-developer-day.jsonl`, exists purely to prove the rules *don't* fire on ordinary work.
 That false-positive guard matters as much as the malicious ones.
 
 ## Verifying a build
@@ -334,7 +334,7 @@ detection scenario. As of this commit:
 - **2,775 tests passing**, 0 skipped
 - **0 build warnings**
 - 72 rules loading with 0 validation errors
-- 3/3 replay scenarios meeting their expectations
+- 4/4 replay scenarios meeting their expectations
 
 The suite is hermetic: no network, no admin, no real malware. API Studio's HTTP path is proven
 end-to-end against a loopback socket server (query encoding, auth, redirect chains, body

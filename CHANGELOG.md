@@ -2,7 +2,14 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [3.4.2] - 2026-11-16
+
+Monitor mode was far too eager on an ordinary workstation. An antivirus, a network monitor, a
+wallpaper program and a browser climbed into the thousands within minutes, every console host
+was flagged, and every program signed by a publisher outside the trusted-publisher list was shown
+as unsigned. Scores now add up once for each thing a program did, signed software that an
+administrator installed is not scored for doing its job, and a program you trust can be allowed
+from the Dashboard.
 
 ### Added
 
