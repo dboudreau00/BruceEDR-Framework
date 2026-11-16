@@ -314,6 +314,13 @@ C_ASSERT((BRUCE_THREAD_STRIP & (THREAD_TERMINATE | THREAD_GET_CONTEXT | THREAD_Q
     THREAD_QUERY_LIMITED_INFORMATION | THREAD_SET_LIMITED_INFORMATION | SYNCHRONIZE | READ_CONTROL)) == 0);
 C_ASSERT(BRUCE_PROCESS_STRIP == 0x0AEA);
 C_ASSERT(BRUCE_THREAD_STRIP == 0x0232);
+// The creator keeps resuming the first thread, and nothing that writes or runs code.
+C_ASSERT(BRUCE_CREATOR_PROCESS_STRIP == BRUCE_PROCESS_STRIP);
+C_ASSERT((BRUCE_CREATOR_THREAD_STRIP & THREAD_SUSPEND_RESUME) == 0);
+C_ASSERT((BRUCE_CREATOR_THREAD_STRIP & (THREAD_SET_CONTEXT | THREAD_SET_INFORMATION | THREAD_DIRECT_IMPERSONATION)) ==
+         (THREAD_SET_CONTEXT | THREAD_SET_INFORMATION | THREAD_DIRECT_IMPERSONATION));
+C_ASSERT((BRUCE_CREATOR_THREAD_STRIP & ~BRUCE_THREAD_STRIP) == 0);
+C_ASSERT(BRUCE_CREATOR_THREAD_STRIP == 0x0230);
 
 static void TestTrustMask(void)
 {
@@ -438,6 +445,36 @@ static void TestGuardAccess(void)
     CHECK(BruceGuardAccess(&request) == all);
     request.ReceiverExempt = FALSE;
     CHECK(BruceGuardAccess(&request) == (all & ~BRUCE_PROCESS_STRIP));
+    // The creator (residual 1, closed): its CreateProcess handles keep resuming the first
+    // thread and lose every way to write into the process or run code in it.
+    request.ReceiverIsCreator = TRUE;
+    CHECK(BruceGuardAccess(&request) == (all & ~BRUCE_PROCESS_STRIP));
+    request.Desired = PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD | PROCESS_SET_INFORMATION;
+    CHECK(BruceGuardAccess(&request) == 0);
+    request.Desired = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE;
+    CHECK(BruceGuardAccess(&request) == (PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE));
+    request.IsThread = TRUE;
+    request.Desired = THREAD_ALL_ACCESS;
+    CHECK(BruceGuardAccess(&request) == (THREAD_ALL_ACCESS & ~BRUCE_CREATOR_THREAD_STRIP));
+    CHECK((BruceGuardAccess(&request) & THREAD_SUSPEND_RESUME) == THREAD_SUSPEND_RESUME);
+    request.Desired = THREAD_SUSPEND_RESUME;
+    CHECK(BruceGuardAccess(&request) == THREAD_SUSPEND_RESUME);
+    request.Desired = THREAD_SET_CONTEXT;
+    CHECK(BruceGuardAccess(&request) == 0);
+    request.Desired = MAXIMUM_ALLOWED;
+    CHECK(BruceGuardAccess(&request) == (THREAD_ALL_ACCESS & ~BRUCE_CREATOR_THREAD_STRIP));
+    request.Desired = GENERIC_ALL;
+    CHECK(BruceGuardAccess(&request) == (THREAD_ALL_ACCESS & ~BRUCE_CREATOR_THREAD_STRIP));
+    // A creator trusted for the target's stores (Chrome starting its renderers) keeps all.
+    request.ReceiverTrust = 0x1;
+    request.Desired = THREAD_ALL_ACCESS;
+    CHECK(BruceGuardAccess(&request) == THREAD_ALL_ACCESS);
+    request.IsThread = FALSE;
+    request.Desired = all;
+    CHECK(BruceGuardAccess(&request) == all);
+    request.ReceiverTrust = 0;
+    request.ReceiverIsCreator = FALSE;
+    request.Desired = all;
     // A request that names no right is not left to be resolved afterwards.
     CHECK(Guard(FALSE, 0x1, 0, MAXIMUM_ALLOWED) == (PROCESS_ALL_ACCESS & ~BRUCE_PROCESS_STRIP));
     CHECK(Guard(FALSE, 0x1, 0, GENERIC_ALL) == (PROCESS_ALL_ACCESS & ~BRUCE_PROCESS_STRIP));

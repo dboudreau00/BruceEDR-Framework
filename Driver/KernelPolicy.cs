@@ -301,6 +301,35 @@ public static class KernelPolicy
         }
     }
 
+    /// <summary>
+    /// <see cref="WriteRisk"/> for a file that may not exist yet. An existing file is checked
+    /// as usual. For a missing one the nearest existing folder is checked as the file's folder
+    /// (whoever can create files there can supply the file) and its ancestors as ancestors.
+    /// </summary>
+    public static string? WriteRiskOfNearest(string path)
+    {
+        try
+        {
+            var full = Path.GetFullPath(path);
+            if (File.Exists(full)) return WriteRisk(full);
+            if (Directory.Exists(full)) return $"{full} is a directory";
+            var dir = new FileInfo(full).Directory;
+            while (dir is not null && !dir.Exists) dir = dir.Parent;
+            var rights = FolderRights;
+            for (; dir is not null; dir = dir.Parent)
+            {
+                var problem = Risk(dir.GetAccessControl(), rights);
+                if (problem is not null) return $"{dir.FullName} {problem}";
+                rights = AncestorRights;
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"its permissions could not be read ({ex.GetType().Name})";
+        }
+    }
+
     private static string? Risk(FileSystemSecurity security, FileSystemRights dangerous)
     {
         var owner = security.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;

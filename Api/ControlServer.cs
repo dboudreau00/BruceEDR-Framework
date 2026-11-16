@@ -601,8 +601,12 @@ public sealed class ControlServer : IDisposable
         try
         {
             string path = TokenFilePath;
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            if (File.Exists(path)) File.Delete(path);
+            // ProgramData lets a standard user create this folder before the agent does, and
+            // own it; the delete and create below, as SYSTEM, would then follow whatever link
+            // they left in it. The folder is created private, a user-owned one is refused, and
+            // the old token goes through a handle whose final path is the token's own.
+            BruceEDR.Security.SafePaths.RequirePrivateDirectory(Path.GetDirectoryName(path)!, requireAdministrativeOwner: true);
+            BruceEDR.Security.SafePaths.DeleteFile(path);
             BruceEDR.Security.SecretFiles.CreateProtected(path, Encoding.ASCII.GetBytes(token + Environment.NewLine));
             if (!BruceEDR.Security.SecretFiles.IsProtected(path)) aclProblem = "DACL not applied";
             return path;

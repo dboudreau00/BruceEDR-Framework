@@ -96,6 +96,16 @@ BOOLEAN BrucePolicyReadLinkTarget(_In_reads_bytes_(Length) const VOID* Buffer, _
     (BRUCE_THREAD_SUSPEND_RESUME | BRUCE_THREAD_SET_CONTEXT | BRUCE_THREAD_SET_INFORMATION | \
      BRUCE_THREAD_DIRECT_IMPERSONATION)
 
+// The process that created the target keeps only what starting it needs. CreateProcess hands
+// back a process and a thread handle with all access, and resumes the new process's first
+// thread through that thread handle (unless asked to leave it suspended), so
+// THREAD_SUSPEND_RESUME stays on a thread handle. Everything that writes into the new process
+// or runs code in it goes, as for anyone else: memory writes and protection changes, remote
+// threads, handle copies, instrumentation callbacks, the first thread's context (APCs, hijack).
+#define BRUCE_CREATOR_PROCESS_STRIP BRUCE_PROCESS_STRIP
+#define BRUCE_CREATOR_THREAD_STRIP \
+    (BRUCE_THREAD_SET_CONTEXT | BRUCE_THREAD_SET_INFORMATION | BRUCE_THREAD_DIRECT_IMPERSONATION)
+
 // A request that names no right: the system may resolve these after the callback ran, so
 // they are replaced by the explicit rights that survive (all access minus the stripped ones).
 #define BRUCE_ACCESS_GENERIC_ALL      0x10000000u
@@ -111,7 +121,8 @@ typedef struct _BRUCE_HANDLE_REQUEST {
     BOOLEAN   IsThread;        // the target is a thread (of the process whose trust is TargetTrust)
     BOOLEAN   KernelHandle;
     BOOLEAN   SameProcess;     // the process that gets the handle is the target's own process
-    BOOLEAN   ReceiverExempt;  // System, a protected process, the agent, the target's creator
+    BOOLEAN   ReceiverExempt;  // System, a protected process, the agent
+    BOOLEAN   ReceiverIsCreator; // the process that created the target: the creator strip masks
     ULONGLONG TargetTrust;     // BrucePolicyTrustMask of the target process's image
     ULONGLONG ReceiverTrust;   // the same for the process that gets the handle (0 when unknown)
     ACCESS_MASK Desired;
@@ -119,8 +130,9 @@ typedef struct _BRUCE_HANDLE_REQUEST {
 
 // The access the handle may have: Desired, less the stripped rights when the target is
 // protected and the receiver is neither the target, exempt, nor trusted for every store the
-// target is trusted for. Never adds a right the caller did not ask for, except that a
-// request for all or maximum access becomes the explicit rights that survive.
+// target is trusted for. The target's creator loses the creator strip masks instead, which
+// leave it able to resume the first thread. Never adds a right the caller did not ask for,
+// except that a request for all or maximum access becomes the explicit rights that survive.
 ACCESS_MASK BruceGuardAccess(_In_ const BRUCE_HANDLE_REQUEST* Request);
 
 // FALSE when the request holds none of the rights the guard removes (and no wildcard), so a

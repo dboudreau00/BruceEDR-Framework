@@ -59,13 +59,21 @@ public static class SessionStore
         PropertyNameCaseInsensitive = true
     };
 
-    /// <summary>Saves a snapshot and keeps only the newest <paramref name="keep"/> sessions. Returns the path.</summary>
-    public static string Save(string directory, ActivitySnapshot snapshot, int keep = 30, string? label = null)
+    /// <summary>
+    /// Saves a snapshot and keeps only the newest <paramref name="keep"/> sessions. Returns the path.
+    /// The folder must not be, or sit behind, a junction or symbolic link, and every file is
+    /// created and deleted through a handle whose final path was checked: the agent saves here as
+    /// SYSTEM and the desktop app elevated, and both used to follow a link planted in the
+    /// folder's place. <paramref name="requireAdministrativeOwner"/> also refuses a folder (or
+    /// its parent) that a standard user owns, which is how a ProgramData folder created by a
+    /// user ahead of the agent looks.
+    /// </summary>
+    public static string Save(string directory, ActivitySnapshot snapshot, int keep = 30, string? label = null,
+        bool requireAdministrativeOwner = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         ArgumentNullException.ThrowIfNull(snapshot);
-        Directory.CreateDirectory(directory);
-        SecretFiles.ProtectDirectory(directory);
+        SafePaths.RequirePrivateDirectory(directory, requireAdministrativeOwner);
 
         var when = snapshot.EndedUtc == default ? DateTime.UtcNow : snapshot.EndedUtc;
         string stem = $"{when.ToLocalTime():yyyy-MM-dd_HHmmss}{(string.IsNullOrWhiteSpace(label) ? "" : "_" + Slug(label))}";
@@ -77,10 +85,9 @@ public static class SessionStore
         {
             using (var gz = new GZipStream(buffer, CompressionLevel.Optimal, leaveOpen: true))
                 JsonSerializer.Serialize(gz, saved, Json);
-            string temp = path + ".tmp";
-            if (File.Exists(temp)) File.Delete(temp);
-            SecretFiles.CreateProtected(temp, buffer.ToArray());
-            File.Move(temp, path, overwrite: true);
+            // Written in place under its unique name: a temp file renamed over the target was
+            // a second path-based step a swapped folder could redirect.
+            SecretFiles.CreateProtected(path, buffer.ToArray());
         }
 
         var meta = new SessionEntry
@@ -134,8 +141,8 @@ public static class SessionStore
 
     public static void Delete(string path)
     {
-        if (File.Exists(path)) File.Delete(path);
-        if (File.Exists(path + MetaExtension)) File.Delete(path + MetaExtension);
+        SafePaths.DeleteFile(path);
+        SafePaths.DeleteFile(path + MetaExtension);
     }
 
     /// <summary>Replays a trace file into a fresh model and freezes it: every signal in the file, in order.</summary>

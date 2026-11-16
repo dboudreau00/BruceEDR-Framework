@@ -31,9 +31,10 @@ trusted for every store has every bit of the live policy's fragments set. `ObReg
 registers one pre-operation callback for `PsProcessType` and `PsThreadType`, create and duplicate.
 While blocking is on, when a request holds a right in the strip mask, the callback looks up the
 target process (a thread's owning process) and the process that would receive the handle. If the
-target's mask is not zero, and the receiver is not the target itself, not exempt (section 4: the
-target's creator is), and its mask does not contain every bit of the target's, the callback removes
-the strip mask from `DesiredAccess` and queues a report.
+target's mask is not zero, and the receiver is not the target itself, not exempt (section 4), and
+its mask does not contain every bit of the target's, the callback removes the strip mask from
+`DesiredAccess` and queues a report. The target's creator loses a narrower mask that leaves it able
+to resume the first thread, and is not reported (section 4).
 
 The pure decisions are `BrucePolicyTrustMask`, `BruceGuardCares` and `BruceGuardAccess` in
 `BruceFilterPolicy.c`, compiled into the driver and into `test\PolicyTests.c`.
@@ -87,7 +88,7 @@ UNVERIFIED in a VM (scenario P7).
 | A receiver trusted for every store the target is trusted for | `(TargetTrust & ~ReceiverTrust) == 0` | Chrome's browser and its renderers, GPU and utility processes are one image, so they trust each other; Edge is not trusted by Chrome's mask, nor a backup agent trusted for one store by a browser trusted for another |
 | System (`PsInitialSystemProcess`) and every protected process (PP or PPL) | `PsIsProtectedProcess`, `PsIsProtectedProcessLight` | csrss, services, wininit, lsass when protected, and the antimalware engine run as PPL; user-mode code cannot start or inject one, and Windows needs their handles whole |
 | The agent's service process | the process that sent the last message on the SYSTEM-only port | containment suspends and kills through handles to the processes it responds to, and its memory scan reads them |
-| The process that created the target | recorded, and referenced, by the process notify routine, which runs in the creating thread | the thread handle `CreateProcess` gets back is made after the notify routine ran; stripped, the creator cannot resume the first thread, so Explorer, Task Scheduler or a browser's updater could not start a trusted program (the lab saw Task Scheduler fail with access denied). See residual 1 |
+| The process that created the target: **partly** | recorded, and referenced, by the process notify routine, which runs in the creating thread; `ReceiverIsCreator` | the thread handle `CreateProcess` gets back is made after the notify routine ran; stripped of `THREAD_SUSPEND_RESUME`, the creator cannot resume the first thread, so Explorer, Task Scheduler or a browser's updater could not start a trusted program (the lab saw Task Scheduler fail with access denied). It keeps that right and loses `BRUCE_CREATOR_PROCESS_STRIP` (the whole process strip) and `BRUCE_CREATOR_THREAD_STRIP` (`SET_CONTEXT`, `SET_INFORMATION`, `DIRECT_IMPERSONATION`). Its strips are not reported: every start makes them. See residual 1 |
 | Blocking off | `gLive.Blocking` | debuggers, installers and diagnostics work as before; this is the switch for debugging a trusted browser |
 
 For a duplicate, the receiver is `DuplicateHandleInformation.TargetProcess`, the process that ends
@@ -184,17 +185,25 @@ connect log line), `Hosting/Hosting.cs` (the ACTION event text), and `Minifilter
 
 Residuals:
 
-1. **The creator of a trusted process keeps full access to it.** The creator is exempt (section 4),
-   because without that no untrusted program could start a trusted one: the lab's Task Scheduler
-   start of the trusted copy failed with access denied. So a program can start its own `chrome.exe`
-   suspended, write into it and resume it (lab row 44, a known limit), whichever order Windows makes
-   the creator's process handle in. `NtCreateProcessEx`, which makes a process with no thread, gives
-   the same. What the guard stops is reaching into a trusted program someone else started (rows 45
-   to 47). A narrower exemption would leave the creator only what a start needs (resuming the first
-   thread) and strip writing. That needs the creator's process handle stripped too, and if Windows
-   makes it before the notify routine runs, a different signal: a minifilter pre-operation on the
-   image section of a trusted image (`IRP_MJ_ACQUIRE_FOR_SECTION_SYNCHRONIZATION`), remembered for
-   the creating thread.
+1. **The creator of a trusted process: narrowed, UNVERIFIED on Windows.** The creator used to be
+   wholly exempt, so a program could start its own `chrome.exe` suspended, write into it and resume
+   it (lab row 44). It now keeps only what a start needs: `THREAD_SUSPEND_RESUME` and the rights
+   nobody loses. Memory writes, remote threads, handle copies, process information (instrumentation
+   callbacks) and the first thread's context are stripped as for anyone else. What still needs a VM:
+   - **The order of the creator's process handle.** The thread handle is known to be made after the
+     notify routine. If Windows makes the process handle before it, the target is not in the table
+     yet, the handle keeps all access, and this closes only the thread half (APCs and context
+     hijack through the first thread); writing the entry point, or a remote thread, through the
+     process handle would still work. Lab row P13 tells: `WriteProcessMemory` with the handle
+     `CreateProcess` returned must fail. If it succeeds, the signal in the old text is still the
+     way: a minifilter pre-operation on the image section of a trusted image
+     (`IRP_MJ_ACQUIRE_FOR_SECTION_SYNCHRONIZATION`), remembered for the creating thread.
+   - **Compatibility of starts.** A launcher that writes into the process it starts (application
+     compatibility shim data, some launchers and sandboxes), duplicates handles into it, sets its
+     priority or affinity through the returned handle, or starts it under a debugger
+     (`DEBUG_PROCESS`), loses those rights while blocking is on. Row P17 (Chrome and Edge started
+     from Explorer, a pinned taskbar icon, a protocol link and Task Scheduler) must be rerun.
+   - `NtCreateProcessEx`, which makes a process with no thread, is unchanged (P14).
 2. **`PROCESS_VM_READ` is kept.** Reading a browser's memory (infostealers do it for cookies held
    decrypted in memory) is not stopped. The documented list of rights a callback can remove does not
    include it, and removing it would break antivirus, task managers and profilers. The agent's memory
@@ -270,7 +279,7 @@ The lab policy trusts the trusted copy for the lab store.
 | P10 | a copy trusted for another store only | P1 | stripped (its mask does not contain the target's) |
 | P11 | the harness (the port client) from a copy that is trusted for nothing | open the held trusted process fully | granted: the agent exemption |
 | P12 | the harness | start with an empty policy: full access to the held process; commit a policy trusting its image; open again; commit an empty one; open again | full, stripped, full: the re-evaluation, including for a process started before the commit |
-| P13 | untrusted copy | `CreateProcess` of the trusted image, plainly and `CREATE_SUSPENDED`; with the returned handles `WriteProcessMemory` and `ResumeThread` | both succeed: the creator is exempt (residual 1) |
+| P13 | untrusted copy | `CreateProcess` of the trusted image, plainly and `CREATE_SUSPENDED`; with the returned handles `WriteProcessMemory`, `QueueUserAPC` and `ResumeThread` | the start and `ResumeThread` succeed; `WriteProcessMemory` and `QueueUserAPC` fail with access denied; no report (residual 1) |
 | P14 | untrusted copy | `NtCreateProcessEx` from the trusted image's section | records the residual: expected full access |
 | P15 | load the driver while a trusted copy is already running | `lab.ps1 install` with a `hold` process alive first; then P1 against it | stripped, and status shows `process guard on` without the "not covered" note |
 | P16 | untrusted copy | 5,000 opens of the trusted process with `PROCESS_VM_WRITE` in a loop | no stall; reports capped at 64 queued, the rest counted in `Denied`/dropped; machine responsive |

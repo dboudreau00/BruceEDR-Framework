@@ -1129,10 +1129,13 @@ static int Scenarios(_In_ const LAB_TREE* t, _Out_writes_(max) LAB_SCENARIO* lis
         L"shortname", t->Above, L"BLSHORT");
 
     // The process guard. A program that starts the trusted copy must be able to (Task Scheduler
-    // could not, before the creator was exempt), and so it may write into it: residual 1. The
-    // harness started the held copy, so the probes reaching into it are not its creator.
+    // could not, before the creator kept THREAD_SUSPEND_RESUME), but no longer write into it:
+    // residual 1. Whether the write is refused depends on Windows making the creator's process
+    // handle after the notify routine, so row 44 is observed, not judged, until a VM shows it
+    // refused (and a creator's strips send no report). The harness started the held copy, so
+    // the probes reaching into it are not its creator.
     n = AddScenario(list, n, max, L"untrusted starts the trusted copy", FALSE, ExpectAllowed, 0, L"spawn", gTrusted, NULL);
-    n = AddScenario(list, n, max, L"untrusted starts the trusted copy, writes into it", FALSE, ExpectResidual, 0,
+    n = AddScenario(list, n, max, L"untrusted starts the trusted copy, writes into it", FALSE, ExpectObserve, 0,
         L"spawnwrite", gTrusted, NULL);
     n = AddScenario(list, n, max, L"untrusted writes into a running trusted copy", FALSE, ExpectRefused, BruceOpProcessHandle,
         L"vmwrite", t->HeldPid, NULL);

@@ -8,7 +8,14 @@ namespace BruceEDR.Assistant;
 
 /// <summary>
 /// Recorded incidents and cached answers on disk. Incident logs carry command lines and
-/// paths, so the folder is restricted to SYSTEM, Administrators and the creating account.
+/// paths, so the folder is restricted to SYSTEM and Administrators (and the creating account
+/// when it is not elevated).
+///
+/// The elevated GUI keeps this under %LOCALAPPDATA%, which non-elevated code of the same user
+/// can rearrange. So the folders must not be links and, when this process is privileged,
+/// must be owned by SYSTEM or Administrators; every write and delete goes through a handle
+/// whose final path is checked (<see cref="SafePaths"/>), so a folder swapped for a junction
+/// later turns into a refusal rather than an elevated write or delete somewhere else.
 /// </summary>
 public sealed class TriageStore
 {
@@ -26,9 +33,10 @@ public sealed class TriageStore
         Root = root;
         _incidents = Path.Combine(root, "incidents");
         _answers = Path.Combine(root, "answers");
-        Directory.CreateDirectory(_incidents);
-        Directory.CreateDirectory(_answers);
-        SecretFiles.ProtectDirectory(root);
+        bool admin = SafePaths.ProcessIsAdministrative;
+        SafePaths.RequirePrivateDirectory(root, requireAdministrativeOwner: admin);
+        SafePaths.RequirePrivateDirectory(_incidents, requireAdministrativeOwner: admin);
+        SafePaths.RequirePrivateDirectory(_answers, requireAdministrativeOwner: admin);
     }
 
     public IReadOnlyList<IncidentCase> LoadIncidents()
@@ -52,7 +60,7 @@ public sealed class TriageStore
         if (!IncidentCase.IsValidKey(c.Key)) throw new ArgumentException("invalid incident key");
         lock (_gate)
         {
-            File.WriteAllText(Path.Combine(_incidents, c.Key + ".json"), JsonSerializer.Serialize(c, Json));
+            SafePaths.WritePrivateFile(Path.Combine(_incidents, c.Key + ".json"), Encoding.UTF8.GetBytes(JsonSerializer.Serialize(c, Json)));
             Prune();
         }
     }
@@ -99,7 +107,7 @@ public sealed class TriageStore
     public void SaveAnswer(TriageAnswer a)
     {
         string? path = AnswerPath(a.IncidentKey, a.PersonaId) ?? throw new ArgumentException("invalid answer key");
-        lock (_gate) File.WriteAllText(path, JsonSerializer.Serialize(a, Json));
+        lock (_gate) SafePaths.WritePrivateFile(path, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(a, Json)));
     }
 
     private string? AnswerPath(string key, string personaId)
@@ -121,13 +129,16 @@ public sealed class TriageStore
 
     private static void TryDelete(string path)
     {
-        try { File.Delete(path); } catch (Exception) { }
+        try { SafePaths.DeleteFile(path); } catch (Exception) { }
     }
 }
 
 /// <summary>
 /// Provider API keys, encrypted with Windows DPAPI for the current account (and an
-/// application-specific entropy), in files only SYSTEM, Administrators and that account can read.
+/// application-specific entropy). DPAPI is the secrecy control: any process of the same user
+/// can ask DPAPI to decrypt. The folder's DACL (SYSTEM and Administrators, plus the account
+/// when not elevated) keeps other accounts out, and the folder rules of <see cref="TriageStore"/>
+/// apply: no links, an administrative owner when privileged, verified writes and deletes.
 /// </summary>
 public sealed class ApiKeyStore
 {
@@ -137,8 +148,7 @@ public sealed class ApiKeyStore
     public ApiKeyStore(string dir)
     {
         _dir = dir;
-        Directory.CreateDirectory(dir);
-        SecretFiles.ProtectDirectory(dir);
+        SafePaths.RequirePrivateDirectory(dir, requireAdministrativeOwner: SafePaths.ProcessIsAdministrative);
     }
 
     private string PathFor(LlmProvider p) => Path.Combine(_dir, p.ToString().ToLowerInvariant() + ".key");
@@ -153,7 +163,7 @@ public sealed class ApiKeyStore
         {
             byte[] blob = Dpapi.Protect(plain, Entropy);
             string path = PathFor(p);
-            if (File.Exists(path)) File.Delete(path);
+            SafePaths.DeleteFile(path);
             SecretFiles.CreateProtected(path, blob);
         }
         finally { Array.Clear(plain); }
@@ -174,7 +184,7 @@ public sealed class ApiKeyStore
 
     public void Delete(LlmProvider p)
     {
-        try { File.Delete(PathFor(p)); } catch (Exception) { }
+        try { SafePaths.DeleteFile(PathFor(p)); } catch (Exception) { }
     }
 
     private static class Dpapi
