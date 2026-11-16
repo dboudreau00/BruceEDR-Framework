@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using BruceEDR.Configuration;
@@ -106,6 +107,10 @@ public sealed class WatchRow : ViewModelBase
         else if (string.Equals(Action, "quarantine", StringComparison.OrdinalIgnoreCase)
                  && Watchlist.IsProtected(Value))
             Warning = "Protected Windows process. BruceEDR will report it but refuse to contain it.";
+        else if (string.Equals(Action, "allow", StringComparison.OrdinalIgnoreCase)
+                 && string.Equals(Match, "path", StringComparison.OrdinalIgnoreCase)
+                 && Driver.KernelPolicy.WriteRisk(Value.Trim()) is not null)
+            Warning = "A standard user could put another file at this path and it would be allowed too. Allow it by hash instead.";
     }
 }
 
@@ -122,7 +127,7 @@ public sealed class WatchlistViewModel : ViewModelBase
 
     /// <summary>Match kinds offered in the row editor. Values are what the config expects.</summary>
     public string[] MatchKinds { get; } = { "name", "path", "hash", "cmdline" };
-    public string[] Actions { get; } = { "quarantine", "warn", "score" };
+    public string[] Actions { get; } = { "quarantine", "warn", "score", "allow" };
 
     public WatchlistViewModel(string configPath)
     {
@@ -252,6 +257,66 @@ public sealed class WatchlistViewModel : ViewModelBase
             AppLog.Error("watchlist save", ex);
             Message = "Save failed: " + ex.Message;
         }
+    }
+
+    /// <summary>
+    /// Adds an allow entry for one program and saves it at once: the dashboard's Allow button. A program
+    /// in a folder only administrators can write to is allowed by its path, which survives its updates.
+    /// Anything else is allowed by the SHA-256 of the file as it is now, because a standard user could put
+    /// another file at that path and it must not inherit the allowance. Other rows being edited here are
+    /// left as they are; the new entry is written to the file directly.
+    /// </summary>
+    public (bool Ok, string Message) AllowProgram(string imagePath, string name)
+    {
+        try
+        {
+            if (!Path.IsPathFullyQualified(imagePath) || !File.Exists(imagePath))
+                return (false, $"Not allowed: {name}'s file could not be found, so there is nothing exact to allow.");
+
+            bool adminOnly = Driver.KernelPolicy.WriteRisk(imagePath) is null;
+            string match = adminOnly ? "path" : "hash";
+            string value = adminOnly ? imagePath : Sha256(imagePath);
+
+            var onDisk = ConfigLoader.Load(_configPath);
+            var entries = (onDisk.Watchlist.Entries ?? Array.Empty<WatchlistEntryConfig>()).ToList();
+            if (entries.Any(e => e.Enabled
+                                 && string.Equals(e.Action, "allow", StringComparison.OrdinalIgnoreCase)
+                                 && string.Equals(e.Match, match, StringComparison.OrdinalIgnoreCase)
+                                 && string.Equals(e.Value, value, StringComparison.OrdinalIgnoreCase)))
+                return (true, $"{name} is already allowed.");
+
+            var entry = new WatchlistEntryConfig
+            {
+                Match = match, Value = value, Action = "allow", Score = 0, Enabled = true,
+                Note = adminOnly
+                    ? $"Allowed from the dashboard on {DateTime.Now:yyyy-MM-dd}"
+                    : $"{imagePath}, allowed from the dashboard on {DateTime.Now:yyyy-MM-dd}",
+            };
+            entries.Add(entry);
+            onDisk.Watchlist.Entries = entries.ToArray();
+            ConfigLoader.Save(onDisk, _configPath);
+            _config = onDisk;
+
+            Rows.Add(new WatchRow(entry));
+            ArmedCount = onDisk.Watchlist.Enabled ? onDisk.Watchlist.Entries.Count(e => e.Enabled) : 0;
+            OnPropertyChanged(nameof(IsEmpty));
+
+            string how = adminOnly ? "by its path" : "by the file's SHA-256, so it needs allowing again after an update";
+            return (true, onDisk.Watchlist.Enabled
+                ? $"{name} is allowed {how}. Undo it on the Watchlist tab."
+                : $"{name} is allowed {how}, but the watchlist is turned off, so the entry is not in force yet. Turn it on in the Watchlist tab.");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("allow program", ex);
+            return (false, "Not allowed: " + ex.Message);
+        }
+    }
+
+    private static string Sha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)).ToLowerInvariant();
     }
 
     private bool _enabled = true;

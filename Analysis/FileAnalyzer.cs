@@ -702,8 +702,10 @@ public static class FileAnalyzer
 
         foreach (var s in pe.Sections)
         {
-            // Classic UPX shape: UPX0 is a large empty hole the stub unpacks into.
-            if (s.RawSize == 0 && s.VirtualSize >= 0x1000)
+            // Classic UPX shape: UPX0 is a large empty hole the stub unpacks code into, so it is
+            // executable. A .bss with no file data is just uninitialised data: every MinGW and GCC
+            // build has one, which put git, grep and the rest of Git for Windows at "packed".
+            if (s.RawSize == 0 && s.VirtualSize >= 0x1000 && s.IsExecutable)
                 list.Add($"section '{s.Name}' has no file data but reserves {s.VirtualSize} bytes");
             if (s.IsWritable && s.IsExecutable)
                 list.Add($"section '{s.Name}' is both writable and executable");

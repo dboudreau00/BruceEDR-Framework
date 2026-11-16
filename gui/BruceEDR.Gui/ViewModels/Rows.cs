@@ -21,7 +21,14 @@ public sealed class ThreatRow : ViewModelBase
     public string State { get; private set; } = "";
     public string Severity { get; private set; } = "watch";   // safe | watch | threat
     public bool Trusted { get; private set; }
-    public string Trust => Trusted ? "signed" : "unsigned";
+    /// <summary>Who signed the image ("signed by Mozilla Corporation", "unsigned"), or "" when it was not looked at.</summary>
+    public string Signature { get; private set; } = "";
+    /// <summary>
+    /// Trusted means the signer is on the operator's trusted-publisher list, which is narrower than signed:
+    /// "unsigned" used to be shown for every program signed by anyone else.
+    /// </summary>
+    public string Trust => Trusted ? (Signature.Length > 0 ? Signature + " (trusted)" : "trusted publisher")
+                         : Signature.Length > 0 ? Signature : "not checked";
     public string ImagePath { get; private set; } = "";
     public string CommandLine { get; private set; } = "";
     public string IncidentId { get; private set; } = "";
@@ -51,6 +58,7 @@ public sealed class ThreatRow : ViewModelBase
         Score = s.Score;
         PeakScore = s.PeakScore;
         Trusted = s.Trusted;
+        Signature = s.Signature;
         ImagePath = s.ImagePath;
         CommandLine = s.CommandLine;
         IncidentId = s.IncidentId;

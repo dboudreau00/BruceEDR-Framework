@@ -15,7 +15,7 @@ your machine actually talks to.**
 [![License: MIT](https://img.shields.io/badge/License-MIT-3FA9B8.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0E1621.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-2740%20passing-3FA9B8.svg)](#verifying-a-build)
+[![Tests](https://img.shields.io/badge/tests-2775%20passing-3FA9B8.svg)](#verifying-a-build)
 
 </div>
 
@@ -87,7 +87,7 @@ tool that overstates itself is worse than one that admits its edges.
 | **Rules** | **72 shipped JSON rules** across 5 packs, each carrying MITRE ATT&CK technique ids. Hot-reloadable, community-authorable, no C# required. See [`rules/detection/README.md`](rules/detection/README.md). |
 | **ATT&CK** | Every alert carries technique ids; `attack` in the console and the **Coverage** tab render rule coverage against what the host has actually exhibited. **71 techniques across 8 tactics** covered by the default packs. |
 | **Analytics** | C2 **beacon detection** (median interval + MAD jitter, not naive equality), **DGA and DNS-tunnel scoring**, and full **process lineage** with PID-reuse and cycle safety. |
-| **Watchlist** | Your own detections without writing a rule: name a **process, path, SHA-256 or command line** and *contain on sight*, warn, or score. A contain entry deliberately **overrides a trusted signature**, and is refused against protected Windows processes so a typo cannot bugcheck the host. Hot-reloaded. |
+| **Watchlist** | Your own detections without writing a rule: name a **process, path, SHA-256 or command line** and *contain on sight*, warn, score, or **allow** a program you trust. A contain entry deliberately **overrides a trusted signature**, and is refused against protected Windows processes so a typo cannot bugcheck the host. Hot-reloaded. |
 | **Intel** | Drop hash / domain / IP / CIDR / URL indicator feeds into `intel/feeds/`; matching is hash-set based, so a million-entry feed costs the same per event as ten. |
 | **File analysis** | Dependency-free PE reader: sections, entropy, imphash, packer indicators, suspicious imports, SHA-256 — bounds-checked at every offset, because it gets pointed at hostile files. |
 | **Trust** | Full **Authenticode** verification (`WinVerifyTrust` chain validation + thumbprint pinning); allowlisted publishers get a scoring discount. Trust is only granted on a cryptographically valid chain. |
@@ -119,7 +119,7 @@ engine with no monitors and every action off, which is the safe way to see the a
   *would* have done, and no process is suspended, firewall-blocked, quarantined or ended
   automatically. Switch to **Enforce** on the set-up screen or in Settings once monitor mode
   looks right on that machine. Developer and gaming PCs run plenty of unsigned software that
-  can score high.
+  can score high. For a program you trust, select it on the Dashboard and press **Allow**.
 - The installer never installs the Windows service. Uninstalling removes every firewall block
   BruceEDR added (and the service, if you installed it), and leaves your config, logs and
   quarantine vault in the install folder.
@@ -293,13 +293,14 @@ Rules describe *behaviour*. When you already know the *identity* of what you are
     { "match": "name",    "value": "mimikatz", "action": "quarantine", "note": "red-team tooling" },
     { "match": "hash",    "value": "<sha256>", "action": "quarantine", "note": "IOC from IR-2451" },
     { "match": "cmdline", "value": "-enc",     "action": "score", "score": 25 },
-    { "match": "path",    "value": "\appdata\local\temp\\", "action": "warn" }
+    { "match": "path",    "value": "\appdata\local\temp\\", "action": "warn" },
+    { "match": "path",    "value": "C:\\Program Files\\Monitor\\monitor.exe", "action": "allow" }
   ]
 }
 ```
 
 Match on **name**, **path**, **hash** or **cmdline** (names and paths take `*`/`?` globs); act
-with **quarantine**, **warn** or **score**. Two properties make it more than a blocklist:
+with **quarantine**, **warn**, **score** or **allow**. Two properties make it more than a blocklist:
 
 - **A `quarantine` entry outranks a valid Authenticode signature.** If you named the binary by
   hand, "but it's signed" is not a defence — that is the entire point of naming it.
@@ -307,12 +308,18 @@ with **quarantine**, **warn** or **score**. Two properties make it more than a b
   `services.exe`, `svchost.exe` and friends is still *reported*, but containment is refused, so
   a mistyped rule cannot take down the host it is defending.
 
+An **allow** entry is the opposite: the program is never scored and stays off the list. It has
+to name one exact file, a full path with no wildcards or a SHA-256, because any program can
+call itself `chrome.exe`. The Dashboard's **Allow** button writes one for the selected process:
+by path when only administrators can write to its folder, otherwise by the hash of the file as
+it is now.
+
 Entries are validated individually (a pattern matching everything is rejected outright) and
 **hot-reloaded** — saving arms them in about a second, no restart.
 
 **Test detections without malware.** `Replay/scenarios/*.jsonl` are signal traces replayed
-through a real engine on a simulated clock. Three ship by default, and one of them —
-`benign-developer-day.jsonl` — exists purely to prove the rules *don't* fire on ordinary work.
+through a real engine on a simulated clock. Four ship by default, and one of them,
+`benign-developer-day.jsonl`, exists purely to prove the rules *don't* fire on ordinary work.
 That false-positive guard matters as much as the malicious ones.
 
 ## Verifying a build
@@ -324,10 +331,10 @@ That false-positive guard matters as much as the malicious ones.
 Builds the solution, runs the full xUnit suite, validates every rule pack, and replays every
 detection scenario. As of this commit:
 
-- **2,740 tests passing**, 0 skipped
+- **2,775 tests passing**, 0 skipped
 - **0 build warnings**
 - 72 rules loading with 0 validation errors
-- 3/3 replay scenarios meeting their expectations
+- 4/4 replay scenarios meeting their expectations
 
 The suite is hermetic: no network, no admin, no real malware. API Studio's HTTP path is proven
 end-to-end against a loopback socket server (query encoding, auth, redirect chains, body
@@ -387,6 +394,9 @@ changes take effect on restart.
   a valid signature, so a careless entry will suspend software you rely on. Protected Windows
   processes are refused outright, but nothing protects you from watchlisting your own EDR agent,
   your backup client, or your VPN.
+- **A watchlist `allow` entry is a blind spot by design.** Nothing the allowed program does is
+  scored. An entry by path covers whatever file is at that path, so the Watchlist tab warns when
+  a standard user could write there; an entry by hash stops matching when the file changes.
 - **Archive quarantine for ETW-detected files.** ETW reports `\Device\HarddiskVolumeN\...` paths
   that `System.IO` can't open directly, so the move-to-vault step no-ops for those (it fails
   safe; suspend + firewall containment still apply). Archives caught by the `FileSystemWatcher`

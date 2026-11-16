@@ -466,6 +466,15 @@ public static class MonitorSupport
     }
 
     /// <summary>
+    /// As <see cref="IsInjectionCapableAccess"/> without <c>PROCESS_DUP_HANDLE</c>: the rights that let
+    /// the caller put code or data into the target. Handle duplication is how a browser, an Electron app
+    /// or a console host manages its own helpers, and on a workstation it was most of what the
+    /// cross-process rule scored. It still counts against LSASS, where taking a handle is the theft.
+    /// </summary>
+    public static bool CanChangeProcess(uint desiredAccess)
+        => IsInjectionCapableAccess(desiredAccess & ~ProcessDupHandle);
+
+    /// <summary>
     /// Named rights in the order they are rendered. Keeping this ordered (rather than
     /// deriving it from a dictionary) makes <see cref="DescribeAccessMask"/> output
     /// stable, which matters because alert text is diffed and grepped by analysts.

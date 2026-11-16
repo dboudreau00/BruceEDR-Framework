@@ -593,8 +593,18 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="6"/>
                                         <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="6"/>
+                                        <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <Button Grid.Column="0" Style="{StaticResource Btn.Subtle}" Padding="6,6"
+                                            ToolTip="Stop scoring this program and take it off the list. Undo it on the Watchlist tab."
+                                            Command="{Binding DataContext.AllowCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE73E;" Style="{StaticResource Icon}" FontSize="11" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Allow"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Grid.Column="2" Style="{StaticResource Btn.Subtle}" Padding="6,6"
                                             ToolTip="Copy a plain-text incident report to the clipboard"
                                             Command="{Binding DataContext.CopyReportCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                         <StackPanel Orientation="Horizontal">
@@ -602,7 +612,7 @@
                                             <TextBlock Text="Copy report"/>
                                         </StackPanel>
                                     </Button>
-                                    <Button Grid.Column="2" Style="{StaticResource Btn.Subtle}" Padding="6,6"
+                                    <Button Grid.Column="4" Style="{StaticResource Btn.Subtle}" Padding="6,6"
                                             ToolTip="Reveal the image in File Explorer"
                                             Command="{Binding DataContext.OpenLocationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                         <StackPanel Orientation="Horizontal">
@@ -644,9 +654,9 @@
                                             <TextBlock Text="{Binding FirstSeen}" Style="{StaticResource Text.Data}"/>
                                         </StackPanel>
                                         <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,8,0">
-                                            <TextBlock Text="TRUST" Style="{StaticResource DetailLabel}"/>
+                                            <TextBlock Text="SIGNATURE" Style="{StaticResource DetailLabel}"/>
                                             <TextBlock Text="{Binding Trust}" Style="{StaticResource Text.Data}"
-                                                       Foreground="{StaticResource Brush.Mist}"/>
+                                                       Foreground="{StaticResource Brush.Mist}" TextWrapping="Wrap" ToolTip="{Binding Trust}"/>
                                         </StackPanel>
                                         <StackPanel Grid.Row="1" Grid.Column="1"
                                                     Visibility="{Binding HasIncident, Converter={StaticResource BoolToVis}}">

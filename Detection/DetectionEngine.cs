@@ -96,6 +96,19 @@ public sealed class EngineDependencies
     public Func<int, string?>? IdentifyPlatform { get; init; }
 
     /// <summary>
+    /// Names the Windows user-session component an image path is (conhost and the like), for a process
+    /// whose events are scored after it exited, when its pid can no longer be looked at. Null names nothing.
+    /// </summary>
+    public Func<string, string?>? IdentifyPlatformImage { get; init; }
+
+    /// <summary>
+    /// The signature, publisher, location and protection of a process's image (pid 0 for one that has
+    /// exited: judged by its own path alone). Null, the default, knows nothing, so a test or a replay,
+    /// whose pids are not this machine's, scores everything.
+    /// </summary>
+    public Func<int, string, Security.ImageStanding>? Standing { get; init; }
+
+    /// <summary>
     /// The agent's own pid. Its signals are dropped: the triage collector writes csv files into a
     /// staging folder, and the agent's memory holds every IOC string it scans for, so scoring it
     /// only produces incidents about itself. 0, the default, ignores nothing.
@@ -281,7 +294,7 @@ public sealed class DetectionEngine
             }
             p = GetOrAdd(s.Pid);
         }
-        if (s.Kind == SignalKind.ProcessStart) p.StartedUtc = s.TimestampUtc;
+        if (s.Kind == SignalKind.ProcessStart) { p.StartedUtc = s.TimestampUtc; p.StartSeen = true; }
         if (!string.IsNullOrEmpty(s.ProcessName)) p.ProcessName = s.ProcessName;
         else if (p.ProcessName.Length == 0 && !p.NameLookedUp && s.Kind != SignalKind.ProcessStart)
         {
@@ -308,6 +321,16 @@ public sealed class DetectionEngine
         if (s.Kind == SignalKind.ProcessAccess && s.TargetPid > 0)
             s = EnrichTargetName(s, out targetName);
 
+        // Identity first: an operator's allow entry has to be in force before this signal's rules score it.
+        EvaluateWatchlist(p, s.TimestampUtc);
+        // An allowed program is not evaluated at all, so nothing it does while allowed counts against it
+        // if the entry is removed. Its endpoints still go into the API surface inventory, which is not scoring.
+        if (p.Allowed)
+        {
+            if (OwnsPid(p)) _deps.Surface?.Observe(s);
+            return results;
+        }
+
         switch (s.Kind)
         {
             case SignalKind.ProcessStart:   RuleProcessStart(p, s); break;
@@ -322,7 +345,6 @@ public sealed class DetectionEngine
             case SignalKind.KernelRefusal:  RuleKernelRefusal(p, s); break;
         }
 
-        EvaluateWatchlist(p, s.TimestampUtc);
         EvaluateDeclarativeRules(p, s);
         MatchIndicators(p, s);
         if (OwnsPid(p)) _deps.Surface?.Observe(s);
@@ -338,9 +360,13 @@ public sealed class DetectionEngine
 
     public IReadOnlyList<ProfileSnapshot> Snapshot(bool onlyContained)
     {
+        ApplyWatchlistChange();
         var list = new List<ProfileSnapshot>();
         foreach (var p in _profiles.Values)
         {
+            // An allowed program leaves the list, unless it is actually frozen: then it stays, so the
+            // operator can release it. A monitor-mode "would contain" froze nothing.
+            if (p.Allowed && !(p.Contained && !p.ContainmentSkipped && !p.Terminated) && !p.SuspendedByAnalyst) continue;
             if (onlyContained) { if (!p.Contained) continue; }
             // A watchlist conviction is contained at score 0, so "all flagged" must not filter
             // on score alone: it hid those processes from the GUI table and `list all`.
@@ -353,6 +379,21 @@ public sealed class DetectionEngine
 
     public ProfileSnapshot? SnapshotOne(int pid)
         => _profiles.TryGetValue(pid, out var p) ? ToSnapshot(p) : null;
+
+    private int _listedWatchlistVersion;
+
+    /// <summary>
+    /// A reloaded watchlist otherwise reaches a process only with its next signal, so a program allowed
+    /// while it sat idle stayed on the verdict list. Every profile is checked once against each new list.
+    /// </summary>
+    private void ApplyWatchlistChange()
+    {
+        var list = _deps.CurrentWatchlist();
+        if (list is null || list.Version == _listedWatchlistVersion) return;
+        _listedWatchlistVersion = list.Version;
+        var now = _clock.UtcNow;
+        foreach (var p in _profiles.Values) EvaluateWatchlist(p, now);
+    }
 
     public bool SetSuspendedByAnalyst(int pid, bool value)
     {
@@ -568,9 +609,15 @@ public sealed class DetectionEngine
         if (p.ArchiveStagedUtc is { } t && s.TimestampUtc - t <= _window)
             Score(p, 45, $"Outbound to {endpoint} shortly after staging an archive (collect->exfil)",
                   "builtin-exfil-chain", Tech("T1041", "T1567"), s.TimestampUtc);
-        else if (p.Score >= _warn)
+        // Once per address and for a few addresses only. Scored per connection, a browser that one false
+        // positive had flagged climbed 15 points with every page it loaded, into the thousands.
+        else if (p.Score >= _warn && p.FlaggedEgressScored < MaxFlaggedEgress &&
+                 p.FiredOnce.Add("flagged-egress:" + s.RemoteAddress))
+        {
+            p.FlaggedEgressScored++;
             Score(p, 15, $"Outbound to {endpoint} from a flagged process",
                   "builtin-flagged-egress", Tech("T1071.001"), s.TimestampUtc);
+        }
 
         AnalyzeBeacon(p, endpoint, s.TimestampUtc);
     }
@@ -650,31 +697,103 @@ public sealed class DetectionEngine
             Score(p, 60, $"Opened LSASS with memory-access rights (mask 0x{s.DesiredAccess:X})",
                   "builtin-lsass-access", Tech("T1003.001"), s.TimestampUtc);
         }
-        // Any other target counts only for rights that change it. Read masks scored here put
-        // WMI, Defrag and VMware Tools at quarantine on a clean lab VM within minutes.
-        else if (changesTarget)
+        // Any other target counts only for rights that put code or data into it. Read masks scored here
+        // put WMI, Defrag and VMware Tools at quarantine on a clean lab VM within minutes, and handle
+        // duplication alone (how browsers and Electron apps run their helpers) did the same on a workstation.
+        else if (Monitoring.MonitorSupport.CanChangeProcess(s.DesiredAccess))
         {
-            // csrss opens every new process with full rights, svchost and lsass duplicate handles,
-            // conhost asks for MAXIMUM_ALLOWED on its console clients: the system's own plumbing, scored
-            // 25 a target until three targets meant quarantine. Only a verified component is let off, not
-            // a name; a process injected into the component is scored on the injector.
+            // csrss opens every new process with full rights, conhost asks for MAXIMUM_ALLOWED on its
+            // console clients: the system's own plumbing. Only a verified component is let off, not a
+            // name; a process injected into the component is scored on the injector.
             if (PlatformOf(p).Length > 0) return;
+            // A multi-process program setting up a copy of itself (chrome.exe and its renderers). A
+            // parent writing into a child of another image is how hollowing starts, and still scores.
+            if (IsOwnHelper(p, s.TargetPid)) return;
+            // Once per target and for a few targets. Per event, an antivirus or a network monitor
+            // that opens every process with full rights reached thousands of points in minutes.
+            if (p.ChangedTargets.Count >= MaxChangedTargets || p.ChangedTargets.Contains(s.TargetPid)) return;
+            // Security, monitoring and overlay software opens other processes for a living. Signed and
+            // installed where only administrators write, or run protected: not scored for it.
+            if (StandingOf(p).Installed) return;
+            p.ChangedTargets.Add(s.TargetPid);
             Score(p, 25, $"Opened pid {s.TargetPid} with injection-capable rights (mask 0x{s.DesiredAccess:X})",
                   "builtin-cross-process-access", Tech("T1055"), s.TimestampUtc);
         }
     }
 
+    private const int MaxChangedTargets = 3;
+    private const int MaxFlaggedEgress = 3;
+
+    /// <summary>
+    /// True when <paramref name="targetPid"/> is a process this one started (or one of their children)
+    /// running the same image: a browser, an Electron app or any multi-process program and its helpers.
+    /// The opener must have been running when the helper started, or the pid is a later tenant's.
+    /// </summary>
+    private bool IsOwnHelper(ThreatProfile p, int targetPid)
+    {
+        var tree = _deps.Tree;
+        if (tree is null || targetPid == p.Pid || !OwnsPid(p)) return false;
+        var target = tree.Get(targetPid);
+        if (target is null || !SameImage(p, target)) return false;
+        var chain = new List<ProcessNode>(8) { target };
+        chain.AddRange(tree.Ancestors(targetPid, maxDepth: 8));
+        foreach (var node in chain)
+        {
+            if (node.ParentPid != p.Pid) continue;
+            return !p.StartSeen || p.StartedUtc <= node.StartUtc;
+        }
+        return false;
+    }
+
+    private static bool SameImage(ThreatProfile p, ProcessNode target)
+    {
+        bool bothPaths = Path.IsPathFullyQualified(p.ImagePath) && Path.IsPathFullyQualified(target.ImagePath);
+        return bothPaths
+            ? string.Equals(p.ImagePath, target.ImagePath, StringComparison.OrdinalIgnoreCase)
+            : p.ProcessName.Length > 0 && string.Equals(p.ProcessName, target.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The image's signature, location and protection, looked up once per process, the first time a rule
+    /// or a verdict needs it, because it reads the file's signature and permissions. An exited process is
+    /// judged by the path its own events gave, never by its pid, which may be another program's by now.
+    /// </summary>
+    private Security.ImageStanding StandingOf(ThreatProfile p)
+    {
+        if (p.Standing is { } known) return known;
+        Security.ImageStanding standing;
+        try
+        {
+            standing = _deps.Standing is null ? Security.ImageStanding.Unknown
+                : _deps.Standing(!p.Exited && OwnsPid(p) ? p.Pid : 0, p.ImagePath);
+        }
+        catch { standing = Security.ImageStanding.Unknown; }
+        p.Standing = standing;
+        // A process that started before the agent never sent the image load that names its file; the
+        // lookup just did. Without it, a path entry in the watchlist could never match the process.
+        if (standing.ImagePath.Length > 0) PromoteImagePath(p, standing.ImagePath);
+        return standing;
+    }
+
     /// <summary>
     /// The Windows component this process verifiably is, or "". Resolved once per process, the first
     /// time a rule would score it, because the check reads the image's permissions from disk. An exited
-    /// process is never identified: its pid may belong to something else by now.
+    /// process is never identified by its pid, which may belong to something else by now; one of the
+    /// user's own shell programs can still be named from the path its own events gave. Starts and stops
+    /// are handled ahead of other telemetry, so a console host that lived for one command was always
+    /// exited by the time its events were scored, and each one was scored 25 a target.
     /// </summary>
     private string PlatformOf(ThreatProfile p)
     {
         if (!p.PlatformChecked)
         {
             p.PlatformChecked = true;
-            try { p.PlatformName = !p.Exited && OwnsPid(p) ? _deps.IdentifyPlatform?.Invoke(p.Pid) : null; }
+            try
+            {
+                p.PlatformName = !p.Exited && OwnsPid(p) ? _deps.IdentifyPlatform?.Invoke(p.Pid) : null;
+                if (p.PlatformName is null && Path.IsPathFullyQualified(p.ImagePath))
+                    p.PlatformName = _deps.IdentifyPlatformImage?.Invoke(p.ImagePath);
+            }
             catch { p.PlatformName = null; }
         }
         return p.PlatformName ?? "";
@@ -894,6 +1013,10 @@ public sealed class DetectionEngine
 
         var now = _clock.UtcNow;
 
+        // Commercial software is packed and protected as a matter of course, and imports the same APIs.
+        bool wouldScore = analysis.PackerIndicators.Count > 0 || analysis.SuspiciousImports.Count >= 3;
+        if (wouldScore && StandingOf(p).Installed) return results;
+
         if (analysis.PackerIndicators.Count > 0 && p.FiredOnce.Add("pe-packed"))
             Score(p, 20, "Image looks packed or obfuscated: " +
                          string.Join(", ", analysis.PackerIndicators.Take(3)),
@@ -941,6 +1064,14 @@ public sealed class DetectionEngine
         if (p.Exited) return results;
 
         var now = _clock.UtcNow;
+        // The builtin scan looks for words any program that handles text can hold ("exfil", "keylog",
+        // "stealer", a few API names), and found them in git, grep, a chat client and an AI coding tool
+        // reading this repository. Those alone no longer score: a stealer-specific string or a YARA rule
+        // has to be among the hits, or three of the common words at once.
+        var distinct = hits.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        int common = distinct.Count(h => IocDatabase.CommonMemoryStrings.Contains(h, StringComparer.OrdinalIgnoreCase));
+        if (common == distinct.Count && common < 3) return results;
+        if (StandingOf(p).Installed) return results;
         Score(p, 20 + 5 * Math.Min(hits.Count, 6), "Memory IOC(s): " + string.Join(", ", hits.Select(DefangMemoryHit)),
               "builtin-memory-ioc", Tech("T1055", "T1005"), now);
         var r = Decide(p, "MemoryScan", now);
@@ -950,7 +1081,13 @@ public sealed class DetectionEngine
 
     private void Score(ThreatProfile p, int points, string reason, string ruleId,
                        IReadOnlyList<string> techniques, DateTime nowUtc)
-        => p.Add(points, reason, ruleId, techniques, nowUtc);
+    {
+        // Nothing adds up for a program the operator allowed, or for a process Windows runs protected:
+        // only Windows and signed security software can be one, and an antivirus writing into other
+        // processes and its own scheduled tasks is its job. Containment refused them already.
+        if (points > 0 && (p.Allowed || StandingOf(p).Protected)) return;
+        p.Add(points, reason, ruleId, techniques, nowUtc);
+    }
 
     /// <summary>
     /// Adopts the main image's full path from its ImageLoad when the profile only knows a
@@ -1042,6 +1179,7 @@ public sealed class DetectionEngine
             // a record of an action already taken); only the forward-looking floor is cleared.
             p.ForcedVerdict = null;
             p.WatchlistRuleId = "";
+            p.Allowed = false;
         }
 
         if (list.Count == 0) return;
@@ -1072,6 +1210,13 @@ public sealed class DetectionEngine
         // with unrelated evidence and contain a process the operator only asked to be told about.
         switch (hit.Action)
         {
+            case WatchAction.Allow:
+                // Recorded at zero for the audit trail; from here on nothing is scored and no verdict is raised.
+                p.Add(0, hit.Reason, hit.Entry.RuleId, Array.Empty<string>(), nowUtc);
+                p.Allowed = true;
+                p.ForcedVerdict = null;
+                break;
+
             case WatchAction.Quarantine:
                 Score(p, 0, hit.Reason, hit.Entry.RuleId, hit.Entry.Techniques, nowUtc);
                 p.ForcedVerdict = Verdict.Quarantine;
@@ -1094,6 +1239,11 @@ public sealed class DetectionEngine
 
     private DetectionResult? Decide(ThreatProfile p, string trigger, DateTime nowUtc)
     {
+        // The operator allowed this program: no verdict, whatever was scored before the entry existed.
+        if (p.Allowed) return null;
+        // Who signed it, for the analyst, once it is worth a look. Cached, so this costs one lookup.
+        if (p.Score >= _warn) StandingOf(p);
+
         // Authenticode verification is deferred until the score could actually be changed
         // by it. WinVerifyTrust walks a certificate chain and touches the file, and the
         // check used to run on the FIRST signal of EVERY process -- including the vast
@@ -1233,7 +1383,9 @@ public sealed class DetectionEngine
         ContainmentSkipped = p.ContainmentSkipped,
         Generation = p.Generation,
         StartedUtc = p.StartedUtc,
-        Exited = p.Exited
+        Exited = p.Exited,
+        Signature = p.Standing is { } standing && !ReferenceEquals(standing, Security.ImageStanding.Unknown)
+            ? standing.Describe() : ""
     };
 
     /// <summary>

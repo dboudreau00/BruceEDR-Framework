@@ -2,6 +2,70 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.4.2] - 2026-11-16
+
+Monitor mode was far too eager on an ordinary workstation. An antivirus, a network monitor, a
+wallpaper program and a browser climbed into the thousands within minutes, every console host
+was flagged, and every program signed by a publisher outside the trusted-publisher list was shown
+as unsigned. Scores now add up once for each thing a program did, signed software that an
+administrator installed is not scored for doing its job, and a program you trust can be allowed
+from the Dashboard.
+
+### Added
+
+- **Allow a program from the Dashboard.** Select a process and press **Allow**: it is no longer
+  scored and leaves the list. The button writes a watchlist entry with the new `allow` action,
+  by path when only administrators can write to the program's folder, or else by the SHA-256 of
+  the file as it is now (allow it again after an update). Undo it on the Watchlist tab. An
+  `allow` entry has to name one exact file, a full path with no wildcards or a hash; a name or a
+  command line is refused, since any program can take a name. A changed watchlist now reaches
+  idle processes too, so an allowed program leaves the list within a couple of seconds, and a
+  process that is actually suspended stays listed until it is released.
+
+### Changed
+
+- **Opening another process scores once per target, for three targets at most.** Every event
+  scored 25 points, so an antivirus or a network monitor that opens every process with full
+  rights reached thousands of points in minutes. Duplicating a handle (how browsers and Electron
+  apps run their helpers) no longer counts as injection, except out of LSASS, and a program
+  writing into a copy of itself that it started (`chrome.exe` and its renderers) is not scored.
+  Writing into a child of another image, the way hollowing starts, still is.
+- **Traffic from a flagged process scores once per address, for three addresses at most.** Every
+  connection scored 15 points, so a browser that one false positive had flagged climbed with
+  every page it loaded.
+- **Who signed a program now counts.** A program with a valid signature from any publisher,
+  installed where only administrators can write, is not scored for opening other processes, for
+  strings in its memory, or for packing and imports in its image. One that is only signed, or
+  only installed there, is scored as before. A process Windows runs protected (PPL) is not
+  scored at all: only Windows and signed security software can be one, and containment already
+  refused it.
+- The Dashboard's **SIGNATURE** line (was TRUST) names the signer: "signed by ...", "unsigned"
+  or "protected process". It said "unsigned" for every program signed by a publisher outside the
+  trusted-publisher list. A process that was running before the agent started now gets its full
+  path from the same lookup, so it can be allowed by path.
+- The title bar matches the app: its caption, text and border colours on Windows 11, and the
+  dark title bar on Windows 10 (20H1 and later).
+
+### Fixed
+
+- Console hosts were flagged for opening their own console's programs. Starts and stops are
+  handled ahead of other telemetry, so a `conhost.exe` that served one command had exited before
+  its events were scored, and an exited process was never recognised as part of Windows. It is
+  now recognised from its own path.
+- Words any program that handles text can hold ("exfil", "keylog", "stealer" and a few API
+  names) no longer score as memory strings on their own: a stealer-specific string or a YARA rule
+  has to be among the hits, or three of the common words together. They were found in git, grep,
+  a chat client and an AI coding tool reading this repository.
+- An uninitialised data section (`.bss`, which takes no room in the file) was reported as a
+  packer's empty section, which put every MinGW build at "packed", git and grep included. Only an
+  executable section with no file data counts now.
+- `crypto-wallet-file-access` matched any folder named after a wallet, including the wallet
+  programs' own install folders. It now matches the folders the wallets keep their data in, and
+  never a program file (`.exe`, `.dll`, `.node`, `.pak`, `.asar`).
+- The desktop app saved each run even with `telemetry.saveSessions` off, and a run it had just
+  saved did not appear in the source picker until **Earlier runs** was pressed.
+- The shortcut hint in Settings said `Ctrl+1` to `Ctrl+8`; it is `Ctrl+1` to `Ctrl+0`.
+
 ## [3.4.1] - 2026-11-14
 
 The desktop app now shows what a run did, not only what it scored: a process map and a file map

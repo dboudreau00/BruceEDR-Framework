@@ -212,6 +212,13 @@ public sealed record ProfileSnapshot
     /// already belong to another process.
     /// </summary>
     public bool Exited { get; init; }
+
+    /// <summary>
+    /// Who signed the image, in a few words ("signed by Mozilla Corporation", "unsigned", "protected
+    /// process"), or "" when it has not been looked at. <see cref="Trusted"/> says something narrower:
+    /// that the signer is on the operator's trusted-publisher list.
+    /// </summary>
+    public string Signature { get; init; } = "";
 }
 
 /// <summary>
@@ -310,6 +317,16 @@ public sealed class ThreatProfile
     public bool PlatformChecked { get; set; }
     /// <summary>Canonical name of the Windows component this process really is (verified by image location), or null.</summary>
     public string? PlatformName { get; set; }
+    /// <summary>The image's signature, location and protection, looked up once, when a rule or a verdict first needs it.</summary>
+    public Security.ImageStanding? Standing { get; set; }
+    /// <summary>True once this process's own ProcessStart was seen, so <see cref="StartedUtc"/> is its real start.</summary>
+    public bool StartSeen { get; set; }
+    /// <summary>Distinct processes this one was scored for opening with rights that change them. Capped.</summary>
+    public readonly HashSet<int> ChangedTargets = new();
+    /// <summary>How many distinct addresses were scored as traffic from a flagged process. Capped.</summary>
+    public int FlaggedEgressScored { get; set; }
+    /// <summary>An operator allow entry matched: nothing more is scored and the process is left off the verdict list.</summary>
+    public bool Allowed { get; set; }
     /// <summary>Last time decay was applied, so decay is charged once per interval.</summary>
     public DateTime LastDecayUtc { get; set; }
 
@@ -509,6 +526,15 @@ public static class IocDatabase
         "select * from logins", "encrypted_key", @"chrome\user data",
         "grabber", "stealer", "exfil", "keylog",
         "setwindowshookex", "getasynckeystate", "keybd_event"
+    };
+
+    /// <summary>
+    /// The entries of <see cref="MemoryStringIocs"/> that ordinary programs hold too: plain words any
+    /// text can carry and API names any input or overlay tool imports. Found alone they do not score.
+    /// </summary>
+    public static readonly string[] CommonMemoryStrings =
+    {
+        "grabber", "stealer", "exfil", "keylog", "setwindowshookex", "getasynckeystate", "keybd_event"
     };
 
     public static readonly string[] SuspiciousModuleFragments =

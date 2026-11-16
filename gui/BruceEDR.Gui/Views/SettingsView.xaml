@@ -326,7 +326,7 @@
                         <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
                             <Border Style="{StaticResource Pill}" Margin="0,0,6,0"><TextBlock Text="F5" Style="{StaticResource Pill.Text}"/></Border>
                             <TextBlock Text="refresh" Style="{StaticResource Caption}" Margin="0,0,14,0" VerticalAlignment="Center"/>
-                            <Border Style="{StaticResource Pill}" Margin="0,0,6,0"><TextBlock Text="Ctrl+1 to Ctrl+8" Style="{StaticResource Pill.Text}"/></Border>
+                            <Border Style="{StaticResource Pill}" Margin="0,0,6,0"><TextBlock Text="Ctrl+1 to Ctrl+0" Style="{StaticResource Pill.Text}"/></Border>
                             <TextBlock Text="switch views" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
                         </StackPanel>
                     </StackPanel>

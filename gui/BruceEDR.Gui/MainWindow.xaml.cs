@@ -14,6 +14,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        TitleBar.UseAppColours(this);
         string configPath = ResolveConfigPath(Environment.GetCommandLineArgs());
         _ui = UiState.Load();
         _vm = new MainViewModel(configPath, _ui);

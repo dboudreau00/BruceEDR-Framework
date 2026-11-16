@@ -80,7 +80,8 @@ opt-in (sections 7 and 9).
 
 Besides the console, the solution includes a **WPF desktop app** — a dark
 instrument-panel dashboard. It shows current posture, a live table of contained and
-flagged processes with one-click **Release / Suspend / End process**, a live event
+flagged processes with one-click **Release / Suspend / End process** and **Allow** (for a
+program you trust: it is no longer scored and leaves the list), a live event
 feed, and a Settings editor that writes `bruce.config.json` (threshold and
 allowlist changes apply live).
 
@@ -89,13 +90,14 @@ allowlist changes apply live).
 The **Watchlist** tab is where you name things you have already decided do not belong on
 your estate. Each entry matches on one of four things — process **name**, image **path**,
 image **SHA-256**, or a **command-line** fragment (names and paths accept `*`/`?` globs) —
-and picks one of three actions:
+and picks one of four actions:
 
 | Action | What happens |
 |---|---|
 | `quarantine` | Contained on sight: suspended and network-blocked the moment it appears |
 | `warn` | Alert only, no containment |
 | `score` | Adds points and lets the normal thresholds decide |
+| `allow` | Never scored and kept off the list: for software you installed and trust |
 
 Two things make this more than a blocklist:
 
@@ -104,6 +106,14 @@ Two things make this more than a blocklist:
 - **It cannot be aimed at Windows itself.** Entries resolving to a protected system process
   (`lsass.exe`, `csrss.exe`, `services.exe`, `svchost.exe`, …) are still *reported*, but
   containment is refused, so a typo in a rule cannot bugcheck the host it is defending.
+
+An `allow` entry has to name one exact file: a full **path** with no wildcards, or a
+**SHA-256**. A name or a command line is refused, because any program can call itself
+`chrome.exe`. The Dashboard's **Allow** button writes one for the selected process: by path
+when only administrators can write to its folder, so it survives the program's updates, and
+otherwise by the SHA-256 of the file as it is now, so allow it again after an update. The
+Watchlist tab warns about an allow path a standard user could write to. Remove the entry to
+have the program scored again.
 
 Entries live in `bruce.config.json` under `watchlist` and are **hot-reloaded** — saving in
 the GUI arms them within a second or two, no restart. Invalid entries are rejected
@@ -117,7 +127,8 @@ refused outright.
     { "match": "name",    "value": "mimikatz",  "action": "quarantine", "note": "red-team tooling" },
     { "match": "hash",    "value": "<sha256>",  "action": "quarantine", "note": "IOC from IR-2451" },
     { "match": "cmdline", "value": "-enc",      "action": "score", "score": 25 },
-    { "match": "path",    "value": "\\appdata\\local\\temp\\", "action": "warn" }
+    { "match": "path",    "value": "\\appdata\\local\\temp\\", "action": "warn" },
+    { "match": "path",    "value": "C:\\Program Files\\Monitor\\monitor.exe", "action": "allow" }
   ]
 }
 ```

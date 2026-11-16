@@ -25,6 +25,11 @@ public enum WatchAction
     Warn,
     /// <summary>Force containment on sight, bypassing the trusted-publisher discount.</summary>
     Quarantine,
+    /// <summary>
+    /// Never score this program and leave it off the verdict list. Only for one exact file: a full image
+    /// path, or a SHA-256 for a program in a folder a standard user could write to.
+    /// </summary>
+    Allow,
 }
 
 /// <summary>One compiled, validated watchlist rule.</summary>
@@ -207,6 +212,21 @@ public sealed class Watchlist
                 continue;
             }
 
+            // An allow entry stops detection for whatever matches it, so it names one file and nothing that
+            // can be copied: a process name or a command line is anybody's to use.
+            if (action == WatchAction.Allow && kind is not (WatchMatchKind.Path or WatchMatchKind.Hash))
+            {
+                onError?.Invoke($"watchlist entry '{raw}' skipped: allow needs a full image path or a SHA-256, " +
+                                "not a name or a command line, which any program can copy");
+                continue;
+            }
+            if (action == WatchAction.Allow && kind == WatchMatchKind.Path &&
+                (!Path.IsPathFullyQualified(raw) || raw.Contains('*') || raw.Contains('?')))
+            {
+                onError?.Invoke($"watchlist entry '{raw}' skipped: allow needs the full path of one file, without wildcards");
+                continue;
+            }
+
             string pattern = Normalise(kind, raw);
 
             if (kind == WatchMatchKind.Hash && !IsSha256(pattern))
@@ -236,7 +256,7 @@ public sealed class Watchlist
                 RawPattern = raw,
                 Action = action,
                 // A Score entry with no points would be a silent no-op; give it a sane default.
-                Score = action == WatchAction.Score ? (c.Score > 0 ? c.Score : 50) : c.Score,
+                Score = action == WatchAction.Score ? (c.Score > 0 ? c.Score : 50) : action == WatchAction.Allow ? 0 : c.Score,
                 Note = (c.Note ?? "").Trim(),
                 RuleId = $"watchlist:{kind.ToString().ToLowerInvariant()}:{pattern}",
                 Techniques = (c.Techniques ?? Array.Empty<string>())
@@ -294,6 +314,8 @@ public sealed class Watchlist
 
     private static bool Matches(WatchlistEntry e, string subject)
     {
+        // An allow entry is the whole path or nothing: a fragment would let anything under it through.
+        if (e.Action == WatchAction.Allow) return string.Equals(subject, e.Pattern, StringComparison.Ordinal);
         if (e.IsGlob) return Glob(e.Pattern, subject);
         return e.Kind switch
         {
@@ -306,6 +328,13 @@ public sealed class Watchlist
     private static string Describe(WatchlistEntry e, bool downgraded)
     {
         var sb = new StringBuilder();
+        if (e.Action == WatchAction.Allow)
+        {
+            sb.Append(e.Kind == WatchMatchKind.Hash ? "Allowed by the operator: image hash '" : "Allowed by the operator: '")
+              .Append(e.RawPattern).Append('\'');
+            if (e.Note.Length > 0) sb.Append(" (").Append(e.Note).Append(')');
+            return sb.ToString();
+        }
         sb.Append(e.Kind switch
         {
             WatchMatchKind.Name => "Watchlisted process name",
@@ -388,6 +417,7 @@ public sealed class Watchlist
             case "" or "quarantine" or "contain" or "block": action = WatchAction.Quarantine; return true;
             case "warn" or "alert": action = WatchAction.Warn; return true;
             case "score" or "points": action = WatchAction.Score; return true;
+            case "allow" or "trust" or "ignore" or "whitelist": action = WatchAction.Allow; return true;
             default: action = WatchAction.Quarantine; return false;
         }
     }
