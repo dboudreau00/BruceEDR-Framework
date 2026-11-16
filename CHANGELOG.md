@@ -2,6 +2,31 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.4.3] - 2026-11-16
+
+Five high-severity findings from an outside review of 3.4.2 are closed. They are about what the
+service does as SYSTEM with files a standard user can influence.
+
+### Fixed
+
+- **SYSTEM no longer follows links under `%ProgramData%BruceEDR`.** The heartbeat, control token and
+  saved sessions were written, deleted and re-ACLed by path, so a junction left there by a standard user
+  turned them into an arbitrary file overwrite or delete. They now go through handle-verified I/O
+  (`SafePaths`).
+- **The quarantine vault reads and deletes through one verified handle.** The source path comes from the
+  suspect process; it is opened once, checked (no link on the way, a single hard link) and read and deleted
+  through that handle. The `File.Move` fallback is gone, and a restore never writes through a linked folder.
+- **The elevated GUI no longer trusts or re-ACLs `%LOCALAPPDATA%` by path**, and adds no creator ACE when
+  it runs privileged.
+- **A user-writable or linked config is refused** by install, the service and the watchdog, and the
+  install folder's ACLs are checked.
+- **Driver: the process guard's creator exemption is narrowed** to the resume-thread case. The creator of a
+  trusted process keeps `THREAD_SUSPEND_RESUME` and loses VM write, create thread and the other rights. The
+  lab rows 43 and 44 and checks P13 and P17 still need a run in a test-signed VM; the driver is not in the
+  MSI or the zip.
+- Reading a file's hard-link count used the wrong struct layout (a fresh file read as 458752 links), which
+  would have made the vault refuse every file on Windows. Caught by the full suite on Windows before release.
+
 ## [3.4.2] - 2026-11-16
 
 Monitor mode was far too eager on an ordinary workstation. An antivirus, a network monitor, a
