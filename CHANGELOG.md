@@ -57,6 +57,7 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
   never a program file (`.exe`, `.dll`, `.node`, `.pak`, `.asar`).
 - The desktop app saved each run even with `telemetry.saveSessions` off, and a run it had just
   saved did not appear in the source picker until **Earlier runs** was pressed.
+- The shortcut hint in Settings said `Ctrl+1` to `Ctrl+8`; it is `Ctrl+1` to `Ctrl+0`.
 
 ## [3.4.1] - 2026-11-14
 
