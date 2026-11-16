@@ -71,23 +71,22 @@ public static class SecretFiles
 
     /// <summary>
     /// Restricts a directory, and everything created under it, to SYSTEM + Administrators.
-    /// Returns null on success, else the reason.
+    /// Returns null on success, else the reason. The folder is created if missing; one that is,
+    /// or sits behind, a junction or symbolic link is refused rather than followed, and the
+    /// DACL goes on through a handle whose final path was checked (see
+    /// <see cref="SafePaths.EnsurePrivateDirectory"/>). Setting it by path used to follow a
+    /// junction planted in the folder's place and rewrite the DACL of whatever it pointed at.
     /// </summary>
     public static string? ProtectDirectory(string path)
-    {
-        if (!OperatingSystem.IsWindows()) return "not Windows";
-        try
-        {
-            var info = new DirectoryInfo(path);
-            if (!info.Exists) return "directory does not exist";
+        => SafePaths.EnsurePrivateDirectory(path, requireAdministrativeOwner: false);
 
-            var sec = new DirectorySecurity();
-            sec.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            GrantCore(sec, inherit: true);
-            info.SetAccessControl(sec);
-            return null;
-        }
-        catch (Exception ex) { return ex.GetType().Name + ": " + ex.Message; }
+    /// <summary>The DACL <see cref="ProtectDirectory"/> applies: SYSTEM, Administrators and the creator, inherited by children, nothing from the parent.</summary>
+    internal static DirectorySecurity PrivateDirectorySecurity()
+    {
+        var sec = new DirectorySecurity();
+        sec.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        GrantCore(sec, inherit: true);
+        return sec;
     }
 
     /// <summary>
@@ -98,7 +97,9 @@ public static class SecretFiles
     {
         if (!OperatingSystem.IsWindows())
         {
-            File.WriteAllBytes(path, content);
+            if (SafePaths.FindLink(path) is { } link) throw new IOException($"refusing to create {path}: {link} is a link");
+            using var created = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+            created.Write(content, 0, content.Length);
             return;
         }
 
@@ -107,8 +108,17 @@ public static class SecretFiles
         GrantCore(sec, inherit: false);
 
         var info = new FileInfo(path);
-        using var fs = info.Create(FileMode.CreateNew, FileSystemRights.Write | FileSystemRights.ReadData,
+        using var fs = info.Create(FileMode.CreateNew,
+                                   FileSystemRights.Write | FileSystemRights.ReadData | FileSystemRights.Delete,
                                    FileShare.None, 4096, FileOptions.None, sec);
+        // CreateNew never follows a link in the last component, but a folder above it can be a
+        // junction swapped in a moment ago. Prove where the file landed before writing a secret
+        // into it, and take it back through the same handle if it is not where it was meant to be.
+        if (!SafePaths.HandleIs(fs.SafeFileHandle, path, out string? actual))
+        {
+            SafePaths.DeleteByHandle(fs.SafeFileHandle);
+            throw new IOException($"refusing to write {path}: it resolves to {actual}");
+        }
         fs.Write(content, 0, content.Length);
     }
 

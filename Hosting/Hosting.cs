@@ -927,7 +927,12 @@ public sealed class Composition : IDisposable
             Activity.ApplyProfiles(Host.ListProfiles(onlyContained: false), Config.Detection.QuarantineThreshold);
             var snapshot = Activity.Snapshot();
             if (snapshot.Processes.Count == 0) return null;
-            var path = SessionStore.Save(dir, snapshot, Math.Max(1, Config.Telemetry.SessionsKept));
+            // The agent's own folder (ProgramData by default) is written as SYSTEM, so a folder a
+            // standard user created there first is refused, not used. The desktop app's folder
+            // under the analyst's profile is the analyst's own and needs no such owner.
+            bool agentFolder = string.Equals(dir, ConfiguredSessionDirectory, StringComparison.OrdinalIgnoreCase);
+            var path = SessionStore.Save(dir, snapshot, Math.Max(1, Config.Telemetry.SessionsKept),
+                requireAdministrativeOwner: agentFolder);
             Log.Info($"session saved: {path} ({snapshot.Processes.Count} processes, {snapshot.Files.Count} files)");
             return path;
         }
@@ -1119,12 +1124,14 @@ public sealed class BruceWorker : BackgroundService
         _composition.Log.Info($"service running. monitors: {_composition.Host.ActiveMonitors}");
         var svc = _composition.Config.Service;
         var interval = TimeSpan.FromSeconds(svc.HeartbeatIntervalSeconds);
+        var log = _composition.Log;
+        string? heartbeat = Watchdog.ResolveHeartbeatPath(svc.HeartbeatPath, m => log.Info("heartbeat: " + m));
 
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                WriteHeartbeat(svc.HeartbeatPath, _composition.Log);
+                if (heartbeat is not null) WriteHeartbeat(heartbeat, _composition.Log);
                 await Task.Delay(interval, stoppingToken).ConfigureAwait(false);
             }
         }
@@ -1137,13 +1144,18 @@ public sealed class BruceWorker : BackgroundService
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Rewrites the heartbeat in place. The folder was vetted by
+    /// <see cref="Watchdog.ResolveHeartbeatPath"/>; the file itself is reused only when it is
+    /// SYSTEM's own single-link file (see <see cref="SafePaths.WritePrivateFile"/>), so a link
+    /// planted under the heartbeat's name is removed instead of written through every 5 s.
+    /// </summary>
     private static void WriteHeartbeat(string path, Logger log)
     {
         try
         {
-            var dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            File.WriteAllText(path, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
+            SafePaths.WritePrivateFile(path,
+                System.Text.Encoding.ASCII.GetBytes(DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()));
         }
         catch (Exception ex) { log.Error("heartbeat", ex); }
     }
@@ -1163,7 +1175,15 @@ public static class Watchdog
         // config must not take the watchdog down with it.
         var cfg = ConfigLoader.Load(configPath, strict: false);
         var svc = cfg.Service.ServiceName;
-        var hbPath = cfg.Service.HeartbeatPath;
+        // The same resolution the service makes, so both agree on one vetted file. With no
+        // trustworthy folder the service writes no heartbeat, and watching for one would only
+        // restart it forever.
+        var hbPath = ResolveHeartbeatPath(cfg.Service.HeartbeatPath, m => Console.Error.WriteLine("[watchdog] " + m));
+        if (hbPath is null)
+        {
+            Console.Error.WriteLine("[watchdog] no trustworthy heartbeat folder; not supervising");
+            return 2;
+        }
         var stale = TimeSpan.FromSeconds(cfg.Service.WatchdogStaleSeconds);
         var interval = TimeSpan.FromSeconds(cfg.Service.HeartbeatIntervalSeconds);
 
@@ -1187,6 +1207,38 @@ public static class Watchdog
             stop.Wait(interval);
         }
         return 0;
+    }
+
+    /// <summary>
+    /// The heartbeat file both the service and the watchdog use. Its folder (ProgramData\BruceEDR
+    /// by default) is created SYSTEM + Administrators only, and refused when a standard user
+    /// created or owns it first (see <see cref="SafePaths.EnsurePrivateDirectory"/>): SYSTEM
+    /// writing every few seconds into a folder a user controls is an arbitrary file overwrite.
+    /// A refused folder falls back to a "state" folder beside the agent, which only
+    /// administrators can write, so the watchdog and the service still agree on one file and a
+    /// pre-created folder cannot leave the service in a restart loop. Null when neither folder
+    /// can be trusted.
+    /// </summary>
+    public static string? ResolveHeartbeatPath(string configured, Action<string>? warn = null)
+    {
+        string full;
+        try { full = Path.GetFullPath(configured); }
+        catch (Exception ex) { warn?.Invoke($"'{configured}' is not a usable path ({ex.Message})"); return null; }
+
+        string? dir = Path.GetDirectoryName(full);
+        if (string.IsNullOrEmpty(dir)) return null;
+        string? problem = SafePaths.EnsurePrivateDirectory(dir, requireAdministrativeOwner: true);
+        if (problem is null) return full;
+
+        string fallback = Path.Combine(AppContext.BaseDirectory, "state");
+        string? fallbackProblem = SafePaths.EnsurePrivateDirectory(fallback, requireAdministrativeOwner: true);
+        if (fallbackProblem is null)
+        {
+            warn?.Invoke($"{dir} cannot be trusted ({problem}); using {fallback} instead");
+            return Path.Combine(fallback, Path.GetFileName(full));
+        }
+        warn?.Invoke($"{dir} cannot be trusted ({problem}), nor can {fallback} ({fallbackProblem}); no heartbeat is written");
+        return null;
     }
 
     private static TimeSpan? HeartbeatAge(string path)
