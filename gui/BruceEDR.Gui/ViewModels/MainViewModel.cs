@@ -213,7 +213,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             running = await Task.Run(() =>
             {
                 built = Composition.Build(_configPath, sink);
-                built.SessionDirectory = AppPaths.SessionRoot;
+                built.SessionDirectory = built.Config.Telemetry.SaveSessions ? AppPaths.SessionRoot : null;
                 return built.Host.Start();
             });
         }
@@ -570,6 +570,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _dispatcher.BeginInvoke(() =>
             {
                 _stopping = false;
+                Activity.RefreshSessions();
                 Setup.Message = wasReplay ? "Replay ended. Nothing is being monitored." : "Stopped. Nothing is being monitored.";
                 AppLog.Info(wasReplay ? "Replay ended by the operator." : "Engine stopped by the operator.");
                 CommandManager.InvalidateRequerySuggested();

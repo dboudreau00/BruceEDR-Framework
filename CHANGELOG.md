@@ -55,6 +55,8 @@ All notable changes to BruceEDR. This project follows [Semantic Versioning](http
 - `crypto-wallet-file-access` matched any folder named after a wallet, including the wallet
   programs' own install folders. It now matches the folders the wallets keep their data in, and
   never a program file (`.exe`, `.dll`, `.node`, `.pak`, `.asar`).
+- The desktop app saved each run even with `telemetry.saveSessions` off, and a run it had just
+  saved did not appear in the source picker until **Earlier runs** was pressed.
 
 ## [3.4.1] - 2026-11-14
 
