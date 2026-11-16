@@ -447,7 +447,9 @@ public static class SafePaths
     private const uint DACL_SECURITY_INFORMATION = 0x4;
     private const uint PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000;
 
-    [StructLayout(LayoutKind.Sequential)]
+    // Pack = 4 is the native layout: its times are FILETIMEs (two DWORDs), not 8-aligned longs, and the
+    // default packing moved NumberOfLinks to the wrong offset (a fresh file read as 458752 links).
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
     private struct BY_HANDLE_FILE_INFORMATION
     {
         public uint FileAttributes;
