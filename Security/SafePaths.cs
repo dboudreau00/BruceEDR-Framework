@@ -51,6 +51,25 @@ public static class SafePaths
         return null;
     }
 
+    /// <summary>
+    /// True when this process runs as SYSTEM or with an elevated Administrators token: the
+    /// case in which a folder a standard account owns, or one under a user profile that
+    /// medium-integrity code can rearrange, must not be trusted. False off Windows.
+    /// </summary>
+    public static bool ProcessIsAdministrative
+    {
+        get
+        {
+            if (!OperatingSystem.IsWindows()) return false;
+            try
+            {
+                using var id = WindowsIdentity.GetCurrent();
+                return id.IsSystem || new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
+            }
+            catch { return false; }
+        }
+    }
+
     /// <summary>True for SYSTEM, Administrators and TrustedInstaller.</summary>
     internal static bool IsAdministrative(SecurityIdentifier? sid) =>
         sid is not null && (sid.Equals(LocalSystem) || sid.Equals(Administrators) || sid.Equals(TrustedInstaller));

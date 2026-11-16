@@ -26,15 +26,21 @@ public static class SecretFiles
         new(WellKnownSidType.BuiltinAdministratorsSid, null);
 
     /// <summary>
-    /// The identity doing the creating. SYSTEM in production, an elevated administrator
-    /// in a lab -- and a plain user under CI or a non-elevated test run, whose
-    /// Administrators membership is deny-only in the token. Without this grant that user
-    /// could create the secret and then never read it back.
+    /// The identity doing the creating, when SYSTEM and Administrators do not already cover
+    /// it: a plain user under CI or a non-elevated test run, whose Administrators membership
+    /// is deny-only in the token. Without this grant that user could create the secret and
+    /// then never read it back.
+    ///
+    /// An elevated process gets no creator grant. Its user SID is also the SID of every
+    /// non-elevated process the same person runs, so granting it FullControl handed the
+    /// folder (and, through a junction, whatever it pointed at) to medium-integrity code:
+    /// the protection protected nothing from the malware it was meant to keep out.
     /// </summary>
     private static SecurityIdentifier? Creator
     {
         get
         {
+            if (SafePaths.ProcessIsAdministrative) return null;
             try { return WindowsIdentity.GetCurrent().User; }
             catch { return null; }
         }

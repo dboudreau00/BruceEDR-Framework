@@ -157,13 +157,19 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         PublishTimeline(force: true);
     }
 
+    // The fallbacks used to be fixed names under %TEMP%, which the same user's non-elevated
+    // processes can create (or turn into a junction) first. A fresh, unguessable name is
+    // created by this process with its private DACL in one step, so nothing else can own it.
+    private static string FreshTempFolder(string prefix) =>
+        Path.Combine(Path.GetTempPath(), prefix + "-" + Guid.NewGuid().ToString("N"));
+
     private static ApiKeyStore CreateKeyStore()
     {
         try { return new ApiKeyStore(AppPaths.KeyRoot); }
         catch (Exception ex)
         {
             AppLog.Error("key store", ex);
-            return new ApiKeyStore(Path.Combine(Path.GetTempPath(), "BruceEDR-assistant"));
+            return new ApiKeyStore(FreshTempFolder("BruceEDR-assistant"));
         }
     }
 
@@ -173,7 +179,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             AppLog.Error("triage store", ex);
-            return new TriageStore(Path.Combine(Path.GetTempPath(), "BruceEDR-triage"));
+            return new TriageStore(FreshTempFolder("BruceEDR-triage"));
         }
     }
 

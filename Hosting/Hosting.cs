@@ -928,11 +928,13 @@ public sealed class Composition : IDisposable
             var snapshot = Activity.Snapshot();
             if (snapshot.Processes.Count == 0) return null;
             // The agent's own folder (ProgramData by default) is written as SYSTEM, so a folder a
-            // standard user created there first is refused, not used. The desktop app's folder
-            // under the analyst's profile is the analyst's own and needs no such owner.
+            // standard user created there first is refused, not used. The elevated desktop app's
+            // folder sits under the analyst's profile, where the analyst's own non-elevated
+            // processes can create it first: when this process is privileged that folder must
+            // be owned by SYSTEM or Administrators too.
             bool agentFolder = string.Equals(dir, ConfiguredSessionDirectory, StringComparison.OrdinalIgnoreCase);
             var path = SessionStore.Save(dir, snapshot, Math.Max(1, Config.Telemetry.SessionsKept),
-                requireAdministrativeOwner: agentFolder);
+                requireAdministrativeOwner: agentFolder || BruceEDR.Security.SafePaths.ProcessIsAdministrative);
             Log.Info($"session saved: {path} ({snapshot.Processes.Count} processes, {snapshot.Files.Count} files)");
             return path;
         }

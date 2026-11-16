@@ -189,7 +189,8 @@ public sealed class ActivityHub : ViewModelBase
         if (!IsLive || snap.IsEmpty) return null;
         try
         {
-            var path = SessionStore.Save(AppPaths.SessionRoot, snap, label: "Saved " + DateTime.Now.ToString("d MMM HH:mm"));
+            var path = SessionStore.Save(AppPaths.SessionRoot, snap, label: "Saved " + DateTime.Now.ToString("d MMM HH:mm"),
+                                         requireAdministrativeOwner: BruceEDR.Security.SafePaths.ProcessIsAdministrative);
             RefreshSessions();
             Message = "";
             return path;
