@@ -86,7 +86,7 @@ public static class SafePaths
     /// The DACL is applied through a handle whose final path was checked, so a junction swapped
     /// in after the check cannot redirect it.
     /// </summary>
-    public static string? EnsurePrivateDirectory(string path, bool requireAdministrativeOwner)
+    public static string? EnsurePrivateDirectory(string path, bool requireAdministrativeOwner, bool allowCurrentUserOwner = false)
     {
         string full;
         try { full = Path.GetFullPath(path); }
@@ -105,7 +105,9 @@ public static class SafePaths
                 return FindLink(full) is { } late ? $"{late} is a link (junction or symbolic link)" : null;
             }
 
-            if (requireAdministrativeOwner && !string.IsNullOrEmpty(parent) &&
+            // The parent's owner only matters for a folder SYSTEM shares with standard users (ProgramData).
+            // The desktop app's folders sit under the analyst's own profile, whose parents the analyst owns.
+            if (requireAdministrativeOwner && !allowCurrentUserOwner && !string.IsNullOrEmpty(parent) &&
                 OwnerProblem(parent, directory: true) is { } parentProblem)
                 return parentProblem;
 
@@ -120,7 +122,8 @@ public static class SafePaths
 
             using var handle = OpenVerified(full, READ_CONTROL | WRITE_DAC, directory: true, out string? error);
             if (handle is null) return error;
-            if (requireAdministrativeOwner && OwnerOf(handle) is var owner && !IsAdministrative(owner))
+            if (requireAdministrativeOwner && OwnerOf(handle) is var owner && !IsAdministrative(owner) &&
+                !(allowCurrentUserOwner && IsCurrentUser(owner)))
                 return $"{full} is owned by {Describe(owner)}, not SYSTEM or Administrators; delete it and restart";
 
             byte[] sd = sec.GetSecurityDescriptorBinaryForm();
@@ -135,9 +138,9 @@ public static class SafePaths
     }
 
     /// <summary>As <see cref="EnsurePrivateDirectory"/>, throwing an <see cref="IOException"/> instead of returning the reason.</summary>
-    public static void RequirePrivateDirectory(string path, bool requireAdministrativeOwner)
+    public static void RequirePrivateDirectory(string path, bool requireAdministrativeOwner, bool allowCurrentUserOwner = false)
     {
-        if (EnsurePrivateDirectory(path, requireAdministrativeOwner) is { } problem)
+        if (EnsurePrivateDirectory(path, requireAdministrativeOwner, allowCurrentUserOwner) is { } problem)
             throw new IOException("refusing to use " + path + ": " + problem);
     }
 
@@ -351,6 +354,14 @@ public static class SafePaths
     }
 
     // ------------------------------------------------------------------ internals
+
+    /// <summary>True when <paramref name="sid"/> is the account this process runs as (an elevated token keeps the user's own SID).</summary>
+    private static bool IsCurrentUser(SecurityIdentifier? sid)
+    {
+        if (sid is null) return false;
+        try { using var id = WindowsIdentity.GetCurrent(); return id.User is { } me && sid.Equals(me); }
+        catch { return false; }
+    }
 
     private static string? OwnerProblem(string path, bool directory)
     {

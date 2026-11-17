@@ -34,9 +34,11 @@ public sealed class TriageStore
         _incidents = Path.Combine(root, "incidents");
         _answers = Path.Combine(root, "answers");
         bool admin = SafePaths.ProcessIsAdministrative;
-        SafePaths.RequirePrivateDirectory(root, requireAdministrativeOwner: admin);
-        SafePaths.RequirePrivateDirectory(_incidents, requireAdministrativeOwner: admin);
-        SafePaths.RequirePrivateDirectory(_answers, requireAdministrativeOwner: admin);
+        // The analyst's own folders: they own them, so an owner other than SYSTEM, Administrators or
+        // the analyst is what is refused.
+        SafePaths.RequirePrivateDirectory(root, admin, allowCurrentUserOwner: true);
+        SafePaths.RequirePrivateDirectory(_incidents, admin, allowCurrentUserOwner: true);
+        SafePaths.RequirePrivateDirectory(_answers, admin, allowCurrentUserOwner: true);
     }
 
     public IReadOnlyList<IncidentCase> LoadIncidents()
@@ -148,7 +150,7 @@ public sealed class ApiKeyStore
     public ApiKeyStore(string dir)
     {
         _dir = dir;
-        SafePaths.RequirePrivateDirectory(dir, requireAdministrativeOwner: SafePaths.ProcessIsAdministrative);
+        SafePaths.RequirePrivateDirectory(dir, SafePaths.ProcessIsAdministrative, allowCurrentUserOwner: true);
     }
 
     private string PathFor(LlmProvider p) => Path.Combine(_dir, p.ToString().ToLowerInvariant() + ".key");
