@@ -69,11 +69,11 @@ public static class SessionStore
     /// user ahead of the agent looks.
     /// </summary>
     public static string Save(string directory, ActivitySnapshot snapshot, int keep = 30, string? label = null,
-        bool requireAdministrativeOwner = false)
+        bool requireAdministrativeOwner = false, bool allowCurrentUserOwner = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         ArgumentNullException.ThrowIfNull(snapshot);
-        SafePaths.RequirePrivateDirectory(directory, requireAdministrativeOwner);
+        SafePaths.RequirePrivateDirectory(directory, requireAdministrativeOwner, allowCurrentUserOwner);
 
         var when = snapshot.EndedUtc == default ? DateTime.UtcNow : snapshot.EndedUtc;
         string stem = $"{when.ToLocalTime():yyyy-MM-dd_HHmmss}{(string.IsNullOrWhiteSpace(label) ? "" : "_" + Slug(label))}";

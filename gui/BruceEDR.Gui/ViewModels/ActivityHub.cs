@@ -190,7 +190,8 @@ public sealed class ActivityHub : ViewModelBase
         try
         {
             var path = SessionStore.Save(AppPaths.SessionRoot, snap, label: "Saved " + DateTime.Now.ToString("d MMM HH:mm"),
-                                         requireAdministrativeOwner: BruceEDR.Security.SafePaths.ProcessIsAdministrative);
+                                         requireAdministrativeOwner: BruceEDR.Security.SafePaths.ProcessIsAdministrative,
+                                         allowCurrentUserOwner: true);
             RefreshSessions();
             Message = "";
             return path;

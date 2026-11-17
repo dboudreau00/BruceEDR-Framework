@@ -962,7 +962,8 @@ public sealed class Composition : IDisposable
             // be owned by SYSTEM or Administrators too.
             bool agentFolder = string.Equals(dir, ConfiguredSessionDirectory, StringComparison.OrdinalIgnoreCase);
             var path = SessionStore.Save(dir, snapshot, Math.Max(1, Config.Telemetry.SessionsKept),
-                requireAdministrativeOwner: agentFolder || BruceEDR.Security.SafePaths.ProcessIsAdministrative);
+                requireAdministrativeOwner: agentFolder || BruceEDR.Security.SafePaths.ProcessIsAdministrative,
+                allowCurrentUserOwner: !agentFolder);
             Log.Info($"session saved: {path} ({snapshot.Processes.Count} processes, {snapshot.Files.Count} files)");
             return path;
         }
