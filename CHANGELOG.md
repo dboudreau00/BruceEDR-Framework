@@ -2,6 +2,23 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.4.4] - 2026-11-16
+
+3.4.3 did not start on an ordinary desktop. Use this release instead.
+
+### Fixed
+
+- **The elevated desktop app refused to start** ("refusing to use ...TempBruceEDR-assistant-...: ... is owned by
+  <your account>, not SYSTEM or Administrators"). 3.4.3 demanded an administrator as owner of every folder the
+  app uses, and of the folder above it, but those folders are under your profile and you own them. Your own
+  account may now own them. The agent's folders under `ProgramData` still need an administrative owner.
+
+### Known limit
+
+- An elevated desktop app that accepts a folder you own cannot keep your own non-elevated programs from
+  changing it. The folders hold saved runs, triage answers and the encrypted assistant key; the link
+  and hard-link protections from 3.4.3 still apply to every write and delete.
+
 ## [3.4.3] - 2026-11-16
 
 Five high-severity findings from an outside review of 3.4.2 are closed. They are about what the
