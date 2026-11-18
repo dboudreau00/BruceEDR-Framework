@@ -73,7 +73,7 @@ real **kernel minifilter**, a **localhost REST control plane**, and **API Studio
 Postman-style request workbench wired directly to the endpoint inventory the agent builds from
 observed traffic.
 
-## ⚠️ Honest scope
+## Honest scope -- no "trust me bro"
 
 Where a technique is evadable, the code says so in a comment. That is deliberate — a security
 tool that overstates itself is worse than one that admits its edges.
