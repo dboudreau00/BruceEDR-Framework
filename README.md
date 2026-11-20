@@ -17,6 +17,9 @@ your machine actually talks to.**
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0E1621.svg)](#)
 [![Tests](https://img.shields.io/badge/tests-2808%20passing-3FA9B8.svg)](#verifying-a-build)
 
+
+Integrate it into whatever you want, partially or in full, credit or none, as long as it ruins a TA's day.
+
 </div>
 
 <div align="center">
