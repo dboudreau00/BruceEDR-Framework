@@ -76,6 +76,9 @@
           "all": [
             { "field": "filePath", "op": "regex", "value": "(?i)\\\\start menu\\\\programs\\\\startup\\\\[^\\\\]+" },
             { "field": "fileExtension", "op": "notIn", "values": [".ini", ".tmp", ".db"] }
+          ],
+          "none": [
+            { "field": "detail", "op": "in", "values": ["open", "dir"] }
           ]
         }
       ],
@@ -101,7 +104,7 @@
       "detection": [
         {
           "all": [
-            { "field": "registryKey", "op": "regex", "value": "(?i)\\\\system\\\\currentcontrolset\\\\services\\\\" },
+            { "field": "registryKey", "op": "regex", "value": "(?i)\\\\system\\\\(?:currentcontrolset|controlset00[1-9])\\\\services\\\\" },
             { "field": "registryValue", "op": "in", "values": ["ImagePath", "ServiceDll", "ServiceManifest"] }
           ],
           "none": [
@@ -220,6 +223,7 @@
             { "field": "filePath", "op": "regex", "value": "(?i)\\\\windows\\\\system32\\\\tasks\\\\" }
           ],
           "none": [
+            { "field": "detail", "op": "in", "values": ["open", "dir"] },
             { "field": "processName", "op": "in", "values": ["svchost.exe", "taskhostw.exe", "taskeng.exe", "schtasks.exe", "mmc.exe", "trustedinstaller.exe", "tiworker.exe", "msiexec.exe"] },
             { "field": "platform", "op": "in", "values": ["searchindexer.exe", "svchost.exe"] }
           ]
@@ -296,7 +300,7 @@
       "detection": [
         {
           "all": [
-            { "field": "registryKey", "op": "regex", "value": "(?i)^hk(?:cu|ey_current_user)\\\\software\\\\classes\\\\clsid\\\\\\{[0-9a-f-]{36}\\}\\\\(?:inproc(?:server|handler)32|localserver32)" }
+            { "field": "registryKey", "op": "regex", "value": "(?i)^(?:hk(?:cu|ey_current_user)|hku\\\\[^\\\\]+)\\\\software\\\\classes\\\\clsid\\\\\\{[0-9a-f-]{36}\\}\\\\(?:inproc(?:server|handler)32|localserver32)" }
           ]
         }
       ],

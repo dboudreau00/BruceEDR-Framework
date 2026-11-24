@@ -248,6 +248,8 @@ public sealed class ThreatProfile
     public bool MemoryScanned { get; set; }
     /// <summary>Whether the image has been PE-analyzed; the parse is claimed once per process.</summary>
     public bool ImageAnalyzed { get; set; }
+    /// <summary>Whether the image path has been hashed against the threat-intel feed.</summary>
+    public bool HashChecked { get; set; }
 
     /// <summary>Timestamp of the applied ProcessStop; null while the process is believed alive.</summary>
     public DateTime? ExitUtc { get; set; }
@@ -487,7 +489,9 @@ public static class IocDatabase
     {
         "login data", "cookies.sqlite", "local state", "key4.db", "key3.db",
         "logins.json", "signons.sqlite", "wallet.dat", "formhistory.sqlite",
-        @"\electrum\wallets\", @"\discord\leveldb\", "credentials.json"
+        @"\electrum\wallets\", @"\discord\leveldb\",
+        @"\discord\local storage\leveldb\", @"\discordptb\local storage\leveldb\", @"\discordcanary\local storage\leveldb\",
+        "credentials.json"
     };
 
     /// <summary>
@@ -511,6 +515,8 @@ public static class IocDatabase
         ("firefox.exe", @"\mozilla\"),
         ("thunderbird.exe", @"\thunderbird\"),
         ("discord.exe", @"\discord\"),
+        ("discordptb.exe", @"\discordptb\"),
+        ("discordcanary.exe", @"\discordcanary\"),
         ("exodus.exe", @"\exodus\"),
         ("electrum.exe", @"\electrum\")
     };
