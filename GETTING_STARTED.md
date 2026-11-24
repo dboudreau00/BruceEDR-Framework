@@ -202,7 +202,6 @@ order and `Ctrl+,` opens Settings.
 The app opens on a **set-up screen** and monitors nothing until you press **Start
 monitoring**. **Stop monitoring** in the status bar returns to set-up, and offers to resume
 any process BruceEDR suspended (stopping never resumes them by itself).
-
 Build the solution (section 3), then run it either way:
 - **Visual Studio:** right-click **BruceEDR.Gui** in Solution Explorer ->
   **Set as Startup Project**, then **Debug -> Start** (F5). It requests administrator
@@ -430,6 +429,9 @@ Key settings:
 - `response.allowPlaybookIsolation` - must be `true` before a playbook may isolate the
   host. Default `false`.
 - `detection.warnThreshold` / `quarantineThreshold` - scoring cutoffs.
+- `detection.profile` - `"aggressive"` (default) or `"neutral"`: under neutral a program reading a
+  folder named after itself is not flagged (rules use the `ownStore` field). The set-up screen fills
+  the two cutoffs from the profile; the engine reads only this setting, live.
 - `detection.autoKill` - `false` = suspend only (recommended for beta).
 - `detection.memoryScanEngine` - `"builtin"` or `"yara"`.
 - `detection.rulesPath` - where the JSON detection packs live (default `rules/detection`).

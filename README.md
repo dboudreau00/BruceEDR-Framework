@@ -15,7 +15,7 @@ your machine actually talks to.**
 [![License: MIT](https://img.shields.io/badge/License-MIT-3FA9B8.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0E1621.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-2832%20passing-3FA9B8.svg)](#verifying-a-build)
+[![Tests](https://img.shields.io/badge/tests-2859%20passing-3FA9B8.svg)](#verifying-a-build)
 
 
 Integrate it into whatever you want, partially or in full, credit or none, as long as it ruins a TA's day.
@@ -334,7 +334,7 @@ That false-positive guard matters as much as the malicious ones.
 Builds the solution, runs the full xUnit suite, validates every rule pack, and replays every
 detection scenario. As of this commit:
 
-- **2,832 tests passing**, 0 skipped
+- **2,859 tests passing**, 0 skipped
 - **0 build warnings**
 - 72 rules loading with 0 validation errors
 - 4/4 replay scenarios meeting their expectations
@@ -397,6 +397,10 @@ changes take effect on restart.
   a valid signature, so a careless entry will suspend software you rely on. Protected Windows
   processes are refused outright, but nothing protects you from watchlisting your own EDR agent,
   your backup client, or your VPN.
+- **The neutral profile's own-folder exemption is by name.** A program named after a folder under
+  AppData or ProgramData is not flagged for reading it; a stealer that names itself after the folder
+  it reads is excused for that folder, which is its own. A program reading a browser's or another
+  app's folder is still flagged under both profiles.
 - **A watchlist `allow` entry is a blind spot by design.** Nothing the allowed program does is
   scored. An entry by path covers whatever file is at that path, so the Watchlist tab warns when
   a standard user could write there; an entry by hash stops matching when the file changes.

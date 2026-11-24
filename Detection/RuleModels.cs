@@ -237,6 +237,12 @@ public sealed record RuleContext
     /// <summary>Late-bound <see cref="Platform"/>: the check reads the image's permissions from disk.</summary>
     public Func<string>? PlatformLookup { get; init; }
 
+    /// <summary>
+    /// True under the neutral monitoring profile: the <c>ownStore</c> field is then "true" for a file in a folder named
+    /// after the process. Under the aggressive profile it is always "false", so a rule that skips own stores skips none.
+    /// </summary>
+    public bool OwnStoreExemption { get; init; }
+
     /// <summary>Context for a signal with no known process history.</summary>
     public static readonly RuleContext Empty = new();
 }
@@ -247,7 +253,7 @@ internal enum RuleField
     Kind, Pid, ParentPid, TargetPid, ProcessName, ImagePath, CommandLine, FilePath,
     FileName, FileExtension, RemoteAddress, RemotePort, Domain, RegistryKey, RegistryValue,
     PipeName, ScriptText, User, Detail, PrimaryTarget, ParentName, Ancestry, Score,
-    DesiredAccess, Trusted, Platform
+    DesiredAccess, Trusted, Platform, OwnStore
 }
 
 /// <summary>
@@ -340,7 +346,8 @@ internal static class RuleFields
         ["score"] = RuleField.Score,
         ["desiredAccess"] = RuleField.DesiredAccess,
         ["trusted"] = RuleField.Trusted,
-        ["platform"] = RuleField.Platform
+        ["platform"] = RuleField.Platform,
+        ["ownStore"] = RuleField.OwnStore
     };
 
     private static readonly string[] Canonical = BuildCanonical();
@@ -403,6 +410,8 @@ internal static class RuleFields
             case RuleField.Trusted: return FieldValues.One(ctx.Trusted ? "true" : "false");
             case RuleField.Platform:
                 return FieldValues.One(ctx.Platform.Length > 0 ? ctx.Platform : ctx.PlatformLookup?.Invoke() ?? "");
+            case RuleField.OwnStore:
+                return FieldValues.One(ctx.OwnStoreExemption && OwnStores.IsOwn(ctx.ProcessName, ctx.ImagePath, s.FilePath) ? "true" : "false");
             default: return FieldValues.None;
         }
     }

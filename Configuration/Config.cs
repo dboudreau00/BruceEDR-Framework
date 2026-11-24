@@ -16,6 +16,7 @@ public sealed class BruceConfig
 
     public void ClampAndValidate()
     {
+        Detection.Profile = MonitoringProfiles.Normalize(Detection.Profile);
         Detection.WarnThreshold = Math.Max(1, Detection.WarnThreshold);
         Detection.QuarantineThreshold = Math.Max(Detection.WarnThreshold + 1, Detection.QuarantineThreshold);
         if (Detection.CorrelationWindowSeconds <= 0) Detection.CorrelationWindowSeconds = 30;
@@ -66,6 +67,14 @@ public sealed class DetectionConfig
 {
     public int WarnThreshold { get; set; } = 40;
     public int QuarantineThreshold { get; set; } = 70;
+
+    /// <summary>
+    /// <c>aggressive</c> (the default, and how every version before profiles behaves) or <c>neutral</c>: a program
+    /// reading a folder named after itself is not flagged for it. The set-up screen also fills the two scores above
+    /// from the profile; they stay editable. See <see cref="MonitoringProfiles"/>.
+    /// </summary>
+    public string Profile { get; set; } = MonitoringProfiles.Aggressive;
+
     public int CorrelationWindowSeconds { get; set; } = 30;
     public bool AutoKill { get; set; } = false;
     public int TrustDiscount { get; set; } = 30;
