@@ -110,6 +110,7 @@ public sealed class StackedTimeline : ChartBase
 
         const double left = 44, top = 14, bottom = 30;
         double plotW = w - left - 12, plotH = h - top - bottom;
+        if (plotW <= 2 || plotH <= 2) return;
         // Whole-number gridlines (0, 2, 4, 6), and the bars are scaled to the top one so they line up with the labels.
         var (step, peak) = AxisScale.Nice(data.Peak);
         for (int value = 0; value <= peak; value += step)
@@ -167,11 +168,12 @@ public sealed class HeatmapChart : ChartBase
         double w = ActualWidth, h = ActualHeight;
         dc.DrawRectangle(Brushes.Transparent, null, new Rect(0, 0, w, h));
         var heat = Data;
-        if (heat is null || heat.Rows.Count == 0 || w < 120) return;
+        if (heat is null || heat.Columns <= 0 || heat.Rows.Count == 0 || w < 120) return;
 
         var labels = heat.Rows.Select(r => Text(r, 11, MistB)).ToList();
         double left = labels.Max(l => l.Width) + 22, top = 8, bottom = 28;
         double plotW = w - left - 12, rowH = Math.Min(34, (h - top - bottom) / heat.Rows.Count);
+        if (plotW <= 4 || h - top <= 4 || rowH <= 4) return;
         double cell = plotW / heat.Columns;
         var accent = Color.FromRgb(0x7C, 0x6C, 0xFF);
 
@@ -179,7 +181,7 @@ public sealed class HeatmapChart : ChartBase
         {
             double y = top + r * rowH;
             dc.DrawText(labels[r], new Point(left - labels[r].Width - 10, y + (rowH - labels[r].Height) / 2));
-            dc.DrawRoundedRectangle(LevelColors.Brush(Color.FromRgb(0x14, 0x19, 0x27)), null, new Rect(left, y + 2, plotW, rowH - 4), 4, 4);
+            dc.DrawRoundedRectangle(LevelColors.Brush(Color.FromRgb(0x14, 0x19, 0x27)), null, new Rect(left, y + 2, plotW, Math.Max(1, rowH - 4)), 4, 4);
         }
 
         HeatCell? hot = null;
@@ -187,7 +189,7 @@ public sealed class HeatmapChart : ChartBase
         {
             double x = left + c.Column * cell, y = top + c.Row * rowH;
             double t = Math.Pow(c.Value / (double)Math.Max(1, heat.Max), 0.55);
-            var rect = new Rect(x, y + 2, Math.Max(1.5, cell - 0.6), rowH - 4);
+            var rect = new Rect(x, y + 2, Math.Max(1, cell - 0.6), Math.Max(1, rowH - 4));
             dc.DrawRectangle(LevelColors.Brush(accent, (byte)(40 + 215 * t)), null, rect);
             if (Over && rect.Contains(Mouse)) hot = c;
         }
@@ -232,6 +234,7 @@ public sealed class LifetimeChart : ChartBase
         double end = Math.Max(1, rows.Max(r => r.End));
         const double labelW = 170, right = 14;
         double plotL = labelW + 12, plotW = w - plotL - right;
+        if (plotW <= 4 || RowH <= 4) return;
         double X(double s) => plotL + plotW * s / end;
 
         for (int i = 0; i <= 4; i++)
@@ -310,6 +313,10 @@ public sealed class BarList : ChartBase
 
         long max = Math.Max(1, items.Max(i => i.Value));
         double valueW = items.Max(i => Text(Nice(i.Value), 11, MistB, mono: true).Width) + 8;
+        double trackW = w - valueW - 10;
+        if (trackW <= 2) return;
+        Ranked? hotItem = null;
+        double hotY = 0;
         for (int i = 0; i < items.Count; i++)
         {
             var it = items[i];
@@ -321,15 +328,18 @@ public sealed class BarList : ChartBase
             label.Trimming = TextTrimming.CharacterEllipsis;
             dc.DrawText(label, new Point(2, y));
 
-            double bw = w - valueW - 10;
+            double bw = trackW;
             dc.DrawRoundedRectangle(LevelColors.Brush(Color.FromRgb(0x14, 0x19, 0x27)), null, new Rect(2, y + 19, bw, 7), 3.5, 3.5);
-            dc.DrawRoundedRectangle(LevelColors.Brush(c), null, new Rect(2, y + 19, Math.Max(4, bw * it.Value / max), 7), 3.5, 3.5);
+            double fill = Math.Max(4, bw * it.Value / max);
+            if (fill > 0) dc.DrawRoundedRectangle(LevelColors.Brush(c), null, new Rect(2, y + 19, Math.Min(fill, bw), 7), 3.5, 3.5);
             var val = Text(Nice(it.Value), 11, MistB, mono: true);
             dc.DrawText(val, new Point(w - val.Width - 2, y + 1));
 
-            if (Over && Mouse.Y >= y - 2 && Mouse.Y < y + RowH - 2 && it.Detail.Length > 0)
-                Tip(dc, it.Label, new (Brush?, string)[] { (null, $"{it.Value:N0}  ·  {it.Detail}") });
+            if (Over && Mouse.Y >= y - 2 && Mouse.Y < y + RowH - 2 && it.Detail.Length > 0) { hotItem = it; hotY = y; }
         }
+        // The card goes last, so the rows below the hovered one cannot paint over it.
+        if (hotItem is { } hit)
+            Tip(dc, hit.Label, new (Brush?, string)[] { (null, $"{hit.Value:N0}  ·  {hit.Detail}") });
     }
 }
 
@@ -351,6 +361,7 @@ public sealed class DonutChart : ChartBase
         if (slices is null || slices.Count == 0 || w < 160 || h < 100) return;
 
         long total = slices.Sum(s => s.Value);
+        if (total <= 0) return;
         double size = Math.Min(h - 8, w * 0.5);
         var center = new Point(size / 2 + 6, h / 2);
         double outer = size / 2, inner = outer * 0.64, mid = (outer + inner) / 2;
@@ -372,8 +383,10 @@ public sealed class DonutChart : ChartBase
             double sweep = 360.0 * slices[i].Value / total;
             var c = LevelColors.Of(slices[i].Level);
             double gap = slices.Count > 1 ? Math.Min(2.2, sweep / 3) : 0;
-            var pen = new Pen(LevelColors.Brush(c, (byte)(i == hot ? 255 : 220)), (outer - inner) * (i == hot ? 1.0 : 0.9)) { StartLineCap = PenLineCap.Flat, EndLineCap = PenLineCap.Flat };
-            dc.DrawGeometry(null, pen, Arc(center, mid, angle + gap / 2, Math.Max(0.5, sweep - gap)));
+            var pen = Frozen(new Pen(LevelColors.Brush(c, (byte)(i == hot ? 255 : 220)), (outer - inner) * (i == hot ? 1.0 : 0.9)) { StartLineCap = PenLineCap.Flat, EndLineCap = PenLineCap.Flat });
+            // One slice covering the whole ring is a degenerate 360-degree arc that WPF draws as nothing: use a circle.
+            if (sweep - gap >= 359.5) dc.DrawEllipse(null, pen, center, mid, mid);
+            else dc.DrawGeometry(null, pen, Arc(center, mid, angle + gap / 2, Math.Max(0.5, sweep - gap)));
             angle += sweep;
         }
 

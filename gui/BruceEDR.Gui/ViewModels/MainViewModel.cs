@@ -89,6 +89,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         WatchlistEditor = new WatchlistViewModel(configPath);
         Setup = new SetupViewModel(configPath);
         Setup.Load();
+        if (ui is not null) Setup.AttachUiState(ui);
         Assistant = new AssistantSettings(ui, CreateKeyStore());
         Triage = new TriageViewModel(CreateTriageStore(), Assistant);
         Settings.AttachAssistant(Assistant);
@@ -131,6 +132,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         CopyPathCommand = new RelayCommand(CopyPath, () => HasSelection);
         OpenLocationCommand = new RelayCommand(OpenLocation,
             () => HasSelection && !string.IsNullOrEmpty(SelectedThreat?.ImagePath));
+        ExplainThreatCommand = new RelayCommand(ExplainSelectedInTriage, () => HasSelection);
+        ShowThreatOnMapCommand = new RelayCommand(() => _ = ShowSelectedOnMapAsync(), () => HasSelection);
+        ClearThreatSearchCommand = new RelayCommand(() => ThreatSearch = "", () => ThreatSearch.Length > 0);
+        ResetEventFilterCommand = new RelayCommand(() => { EventFilter = "ALL"; EventSearch = ""; },
+            () => EventFilter != "ALL" || EventSearch.Length > 0);
+        ResetSurfaceFilterCommand = new RelayCommand(() => { OnlyBeaconing = false; SurfaceSearch = ""; },
+            () => OnlyBeaconing || SurfaceSearch.Length > 0);
         OpenUrlCommand = new RelayCommandP(p => OpenUrl(p as string));
         CopyEventCommand = new RelayCommandP(p => CopyEvent(p as EventRow));
         SetEventFilterCommand = new RelayCommandP(p => EventFilter = p as string ?? "ALL");
@@ -143,10 +151,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // filter here filters every consumer without touching the source collections.
         _threatsView = CollectionViewSource.GetDefaultView(Threats);
         _threatsView.Filter = o => o is ThreatRow t && t.Matches(_threatSearch.Trim());
+        Threats.CollectionChanged += (_, _) => RaiseFilterMatches();
         _eventsView = CollectionViewSource.GetDefaultView(Events);
         _eventsView.Filter = o => o is EventRow r && EventPasses(r);
+        Events.CollectionChanged += (_, _) => RaiseFilterMatches();
         _surfaceView = CollectionViewSource.GetDefaultView(Surface);
         _surfaceView.Filter = o => o is SurfaceRow s && SurfacePasses(s);
+        Surface.CollectionChanged += (_, _) => RaiseFilterMatches();
 
         _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
         _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); ToastVisible = false; };
@@ -529,7 +540,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             if (Setup.Enforce && !Setup.EnforceOnDisk && !SetupViewModel.ConfirmEnforceMode("Turn on enforce mode"))
                 Setup.Enforce = false;
             if (!Setup.Save()) return;
-            try { Settings.LoadFrom(ConfigLoader.Load(_configPath)); }
+            try
+            {
+                var cfg = ConfigLoader.Load(_configPath);
+                Settings.LoadFrom(cfg);
+                WatchlistEditor.LoadFrom(cfg);
+            }
             catch (Exception ex) { AppLog.Error("settings reload", ex); }
         }
         IsSetupOpen = false;
@@ -606,6 +622,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public ICommand CopyReportCommand { get; }
     public ICommand CopyPathCommand { get; }
     public ICommand OpenLocationCommand { get; }
+    public ICommand ExplainThreatCommand { get; }
+    public ICommand ShowThreatOnMapCommand { get; }
+    public ICommand ClearThreatSearchCommand { get; }
+    public ICommand ResetEventFilterCommand { get; }
+    public ICommand ResetSurfaceFilterCommand { get; }
     public ICommand OpenUrlCommand { get; }
     public ICommand CopyEventCommand { get; }
     public ICommand SetEventFilterCommand { get; }
@@ -966,6 +987,43 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     {
         SelectedTabIndex = FileMapTabIndex;
         FileMap.SetFocus(processId);
+    }
+
+    private void ExplainSelectedInTriage()
+    {
+        var row = SelectedThreat;
+        if (row is null) return;
+        var match = Triage.Incidents.FirstOrDefault(i =>
+            (!string.IsNullOrEmpty(row.IncidentId) && string.Equals(i.Case.IncidentId, row.IncidentId, StringComparison.OrdinalIgnoreCase))
+            || i.Pid == row.Pid);
+        if (match is null && _host is not null)
+        {
+            try
+            {
+                var snaps = _host.ListProfiles(onlyContained: false);
+                CaptureIncidents(snaps);
+                match = Triage.Incidents.FirstOrDefault(i =>
+                    (!string.IsNullOrEmpty(row.IncidentId) && string.Equals(i.Case.IncidentId, row.IncidentId, StringComparison.OrdinalIgnoreCase))
+                    || i.Pid == row.Pid);
+            }
+            catch (Exception ex) { AppLog.Error("explain threat lookup", ex); }
+        }
+        SelectedTabIndex = TriageTabIndex;
+        if (match is not null)
+        {
+            Triage.SelectedIncident = match;
+            Triage.OpenScene(match, 1);
+        }
+    }
+
+    private async Task ShowSelectedOnMapAsync()
+    {
+        var row = SelectedThreat;
+        if (row is null) return;
+        int pid = row.Pid;
+        SelectedTabIndex = ProcessMapTabIndex;
+        await Activity.RefreshAsync(true);
+        ProcessMap.SelectPid(pid);
     }
 
     // -------------------------------------------------------------- refresh
@@ -1627,35 +1685,47 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public string EventFilter
     {
         get => _eventFilter;
-        set { if (Set(ref _eventFilter, value)) _eventsView.Refresh(); }
+        set { if (Set(ref _eventFilter, value)) { _eventsView.Refresh(); RaiseFilterMatches(); } }
     }
 
     private string _eventSearch = "";
     public string EventSearch
     {
         get => _eventSearch;
-        set { if (Set(ref _eventSearch, value)) _eventsView.Refresh(); }
+        set { if (Set(ref _eventSearch, value)) { _eventsView.Refresh(); RaiseFilterMatches(); } }
     }
 
     private string _threatSearch = "";
     public string ThreatSearch
     {
         get => _threatSearch;
-        set { if (Set(ref _threatSearch, value)) _threatsView.Refresh(); }
+        set { if (Set(ref _threatSearch, value)) { _threatsView.Refresh(); RaiseFilterMatches(); } }
     }
 
     private string _surfaceSearch = "";
     public string SurfaceSearch
     {
         get => _surfaceSearch;
-        set { if (Set(ref _surfaceSearch, value)) _surfaceView.Refresh(); }
+        set { if (Set(ref _surfaceSearch, value)) { _surfaceView.Refresh(); RaiseFilterMatches(); } }
     }
 
     private bool _onlyBeaconing;
     public bool OnlyBeaconing
     {
         get => _onlyBeaconing;
-        set { if (Set(ref _onlyBeaconing, value)) _surfaceView.Refresh(); }
+        set { if (Set(ref _onlyBeaconing, value)) { _surfaceView.Refresh(); RaiseFilterMatches(); } }
+    }
+
+    public bool HasNoMatchingThreats => Threats.Count > 0 && _threatsView.IsEmpty;
+    public bool HasNoMatchingEvents => Events.Count > 0 && _eventsView.IsEmpty;
+    public bool HasNoMatchingSurface => Surface.Count > 0 && _surfaceView.IsEmpty;
+
+    private void RaiseFilterMatches()
+    {
+        OnPropertyChanged(nameof(HasNoMatchingThreats));
+        OnPropertyChanged(nameof(HasNoMatchingEvents));
+        OnPropertyChanged(nameof(HasNoMatchingSurface));
+        CommandManager.InvalidateRequerySuggested();
     }
 
     // ---- severity chip counts ----

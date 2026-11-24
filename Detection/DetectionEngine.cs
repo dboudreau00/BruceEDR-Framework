@@ -231,9 +231,13 @@ public sealed class DetectionEngine
         var results = new List<DetectionResult>();
         MaybePrune();
 
+        if (s.Kind == SignalKind.FileCreate && string.Equals(s.Detail, "dir", StringComparison.Ordinal))
+            return results;
+
         if (s.Kind == SignalKind.FileCreate && s.Pid == 0)
         {
-            CorrelateUnattributedArchive(s, results);
+            if (!string.Equals(s.Detail, "open", StringComparison.Ordinal))
+                CorrelateUnattributedArchive(s, results);
             return results;
         }
         if (s.Pid <= 0) return results;
@@ -546,8 +550,10 @@ public sealed class DetectionEngine
         bool inStaging = IocDatabase.StagingDirFragments.Any(file.Contains);
         // Gate the whole block on the de-dup insert so a repeated notification of the
         // SAME archive (e.g. two overlapping FileSystemWatchers, or ETW + watcher) can't
-        // score the process twice.
-        if (isArchive && inStaging && p.StagedArchives.Add(file))
+        // score the process twice. Read-only opens (ETW Detail == "open") of an existing
+        // archive in Temp are not archive creation/staging.
+        if (isArchive && inStaging && !string.Equals(s.Detail, "open", StringComparison.Ordinal)
+            && p.StagedArchives.Add(file))
         {
             p.ArchiveStagedUtc = s.TimestampUtc;
             Score(p, 30, "Created archive in a staging directory", "builtin-archive-staged",
@@ -650,6 +656,16 @@ public sealed class DetectionEngine
                   "builtin-impair-defenses", Tech("T1562.001"), s.TimestampUtc);
     }
 
+    private static readonly HashSet<string> BrowserProcessNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "firefox.exe", "chrome.exe", "msedge.exe", "brave.exe", "opera.exe",
+        "vivaldi.exe", "waterfox.exe", "librewolf.exe", "arc.exe", "zen.exe",
+        "iexplore.exe", "msedgewebview2.exe"
+    };
+
+    private bool IsInstalledBrowser(ThreatProfile p)
+        => BrowserProcessNames.Contains(p.ProcessName) && StandingOf(p).Installed;
+
     private void RuleDns(ThreatProfile p, Signal s)
     {
         string domain = (s.Domain ?? "").Trim().ToLowerInvariant();
@@ -657,6 +673,13 @@ public sealed class DetectionEngine
         if (!p.Domains.Add(domain)) return;   // score each distinct name once per process
 
         if (!_opt.EnableDomainAnalysis) return;
+
+        // A genuine, Authenticode-signed browser installed in an admin-only directory resolves
+        // whatever third-party CDNs, ad networks and developer links appear on ordinary web pages.
+        // Recording p.Domains above preserves full surface inventory, timeline and IOC feed matching
+        // (MatchIndicators runs separately), while avoiding heuristic DGA/tunnel convictions on
+        // everyday browsing. Unsigned or user-writable look-alike "firefox.exe" copies still score.
+        if (IsInstalledBrowser(p)) return;
 
         var verdict = DomainAnalysis.Analyze(domain);
 
@@ -748,10 +771,31 @@ public sealed class DetectionEngine
     private static bool SameImage(ThreatProfile p, ProcessNode target)
     {
         bool bothPaths = Path.IsPathFullyQualified(p.ImagePath) && Path.IsPathFullyQualified(target.ImagePath);
-        return bothPaths
-            ? string.Equals(p.ImagePath, target.ImagePath, StringComparison.OrdinalIgnoreCase)
-            : p.ProcessName.Length > 0 && string.Equals(p.ProcessName, target.Name, StringComparison.OrdinalIgnoreCase);
+        if (!bothPaths)
+            return p.ProcessName.Length > 0 && string.Equals(p.ProcessName, target.Name, StringComparison.OrdinalIgnoreCase);
+
+        if (string.Equals(p.ImagePath, target.ImagePath, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Windows 11 inbox MSIX apps (Notepad, Terminal, Paint, SnippingTool) launch through a stub or
+        // AppExecutionAlias in System32 or %LOCALAPPDATA%\Microsoft\WindowsApps that hands off to the
+        // packaged binary under C:\Program Files\WindowsApps\Microsoft.* with the same executable name.
+        string leafA = Path.GetFileName(p.ImagePath);
+        string leafB = Path.GetFileName(target.ImagePath);
+        if (leafA.Length > 0 && string.Equals(leafA, leafB, StringComparison.OrdinalIgnoreCase))
+        {
+            return (IsInboxAliasPath(p.ImagePath) && IsPackagedMicrosoftPath(target.ImagePath))
+                || (IsPackagedMicrosoftPath(p.ImagePath) && IsInboxAliasPath(target.ImagePath));
+        }
+        return false;
     }
+
+    private static bool IsInboxAliasPath(string path)
+        => path.Contains(@"\windows\system32\", StringComparison.OrdinalIgnoreCase)
+        || path.Contains(@"\microsoft\windowsapps\", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPackagedMicrosoftPath(string path)
+        => path.Contains(@"\program files\windowsapps\microsoft.", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The image's signature, location and protection, looked up once per process, the first time a rule
@@ -884,14 +928,23 @@ public sealed class DetectionEngine
                       "intel-ip", Tech("T1071"), s.TimestampUtc);
         }
 
-        if (s.Kind == SignalKind.ProcessStart && _deps.ImageHash is { } hasher &&
-            !string.IsNullOrEmpty(p.ImagePath))
+        if (!p.HashChecked && s.Kind is SignalKind.ProcessStart or SignalKind.ImageLoad &&
+            _deps.ImageHash is { } hasher && !string.IsNullOrEmpty(p.ImagePath))
         {
             string? sha;
             try { sha = hasher(p.ImagePath); } catch { sha = null; }
-            if (sha is not null && feed.MatchHash(sha) is { } hit && p.FiredOnce.Add("intel-hash"))
-                Score(p, _opt.IntelHitScore, $"Indicator feed match on image hash ({hit.Label})",
-                      "intel-hash", Tech("T1204.002"), s.TimestampUtc);
+            if (sha is not null)
+            {
+                p.HashChecked = true;
+                if (feed.MatchHash(sha) is { } hit && p.FiredOnce.Add("intel-hash"))
+                    Score(p, _opt.IntelHitScore, $"Indicator feed match on image hash ({hit.Label})",
+                          "intel-hash", Tech("T1204.002"), s.TimestampUtc);
+            }
+            else if (p.ImagePath.IndexOfAny(new[] { '\\', '/' }) >= 0)
+            {
+                // Full path already known and unreadable; avoid re-hashing on every DLL ImageLoad.
+                p.HashChecked = true;
+            }
         }
     }
 
@@ -1104,9 +1157,10 @@ public sealed class DetectionEngine
         if (own.Length == 0 || !string.Equals(leaf, own, StringComparison.OrdinalIgnoreCase)) return;
 
         p.ImagePath = loadedPath;
-        // The PE analysis may have been skipped (or attempted against the bare name and
-        // failed) before the real path was known; let it be claimed again.
+        // The PE analysis and image-hash check may have been skipped (or attempted against
+        // the bare name and failed) before the real path was known; let them run once on the real path.
         p.ImageAnalyzed = false;
+        p.HashChecked = false;
     }
 
     /// <summary>

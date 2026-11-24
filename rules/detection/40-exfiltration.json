@@ -21,6 +21,7 @@
             { "field": "filePath", "op": "regex", "value": "(?i)\\\\(?:temp|appdata\\\\local\\\\temp|programdata|users\\\\public|windows\\\\temp|perflogs)\\\\" }
           ],
           "none": [
+            { "field": "detail", "op": "in", "values": ["open", "dir"] },
             { "field": "processName", "op": "in", "values": ["msiexec.exe", "trustedinstaller.exe", "tiworker.exe", "setup.exe", "wusa.exe"] }
           ]
         }
@@ -369,7 +370,8 @@
             { "field": "filePath", "op": "regex", "value": "(?i)\\\\(?:appdata\\\\local\\\\temp|programdata|users\\\\public|windows\\\\temp|perflogs)\\\\" }
           ],
           "none": [
-            { "field": "processName", "op": "in", "values": ["winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "acrord32.exe", "acrobat.exe", "chrome.exe", "msedge.exe", "firefox.exe", "spoolsv.exe", "msiexec.exe"] }
+            { "field": "detail", "op": "in", "values": ["open", "dir"] },
+            { "field": "processName", "op": "in", "values": ["winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "acrord32.exe", "acrobat.exe", "chrome.exe", "msedge.exe", "firefox.exe", "spoolsv.exe", "msiexec.exe", "notepad.exe", "wordpad.exe"] }
           ]
         }
       ],

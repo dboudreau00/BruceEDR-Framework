@@ -299,6 +299,14 @@
                         <TextBlock Text="Nothing observed yet" Style="{StaticResource Text.Body}" FontWeight="Medium"
                                    HorizontalAlignment="Center" Margin="0,10,0,0"/>
                     </StackPanel>
+
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Visibility="{Binding HasNoMatchingSurface, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="No endpoints match the current filter" Style="{StaticResource Text.Body}" FontWeight="Medium"
+                                   HorizontalAlignment="Center"/>
+                        <Button Content="Reset filter" Style="{StaticResource Btn.Subtle}" Margin="0,10,0,0"
+                                HorizontalAlignment="Center" Command="{Binding ResetSurfaceFilterCommand}"/>
+                    </StackPanel>
                 </Grid>
             </DockPanel>
         </Border>

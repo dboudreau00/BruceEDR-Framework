@@ -182,19 +182,28 @@
                             <Style.Triggers><DataTrigger Binding="{Binding Chart}" Value="Files"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
                         </Style>
                     </Grid.Style>
+                    <Grid.Resources>
+                        <Style x:Key="WhenFiles" TargetType="StackPanel">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding NoFiles}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Grid.Resources>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                    <StackPanel>
+                    <StackPanel Style="{StaticResource WhenFiles}">
                         <TextBlock Text="WHAT BECAME OF THEM" Style="{StaticResource Text.Label}" Margin="0,0,0,10"/>
                         <v:DonutChart Slices="{Binding FileMix}" Height="260" Caption="files"/>
-                        <TextBlock Text="No file was made, moved or removed." Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Faint}"
-                                   Visibility="{Binding NoFiles, Converter={StaticResource BoolToVis}}"/>
                     </StackPanel>
-                    <StackPanel Grid.Column="2">
+                    <StackPanel Grid.Column="2" Style="{StaticResource WhenFiles}">
                         <TextBlock Text="KINDS OF FILE" Style="{StaticResource Text.Label}" Margin="0,0,0,10"/>
                         <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="360">
                             <v:BarList Items="{Binding Extensions}"/>
                         </ScrollViewer>
                     </StackPanel>
+                    <TextBlock Grid.ColumnSpan="3" Text="No file was made, moved or removed." Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Faint}"
+                               VerticalAlignment="Center" HorizontalAlignment="Center" Visibility="{Binding NoFiles, Converter={StaticResource BoolToVis}}"/>
                 </Grid>
 
                 <!-- Network -->
@@ -204,12 +213,21 @@
                             <Style.Triggers><DataTrigger Binding="{Binding Chart}" Value="Network"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
                         </Style>
                     </Grid.Style>
+                    <Grid.Resources>
+                        <Style x:Key="WhenNetwork" TargetType="StackPanel">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding NoNetwork}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Grid.Resources>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                    <StackPanel>
+                    <StackPanel Style="{StaticResource WhenNetwork}">
                         <TextBlock Text="WHERE CONNECTIONS WENT" Style="{StaticResource Text.Label}" Margin="0,0,0,10"/>
                         <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="400"><v:BarList Items="{Binding Destinations}"/></ScrollViewer>
                     </StackPanel>
-                    <StackPanel Grid.Column="2">
+                    <StackPanel Grid.Column="2" Style="{StaticResource WhenNetwork}">
                         <TextBlock Text="NAMES LOOKED UP" Style="{StaticResource Text.Label}" Margin="0,0,0,10"/>
                         <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="400"><v:BarList Items="{Binding Domains}"/></ScrollViewer>
                     </StackPanel>

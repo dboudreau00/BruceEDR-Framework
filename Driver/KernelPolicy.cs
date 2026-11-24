@@ -286,11 +286,26 @@ public static class KernelPolicy
             var file = new FileInfo(path);
             var problem = Risk(file.GetAccessControl(), ImageRights);
             if (problem is not null) return $"{file.FullName} {problem}";
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            string windowsApps = programFiles.Length > 0
+                ? Path.TrimEndingDirectorySeparator(Path.Combine(programFiles, "WindowsApps"))
+                : "";
             var rights = FolderRights;
             for (var dir = file.Directory; dir is not null; dir = dir.Parent)
             {
-                problem = Risk(dir.GetAccessControl(), rights);
-                if (problem is not null) return $"{dir.FullName} {problem}";
+                try
+                {
+                    problem = Risk(dir.GetAccessControl(), rights);
+                    if (problem is not null) return $"{dir.FullName} {problem}";
+                }
+                catch (UnauthorizedAccessException) when (
+                    windowsApps.Length > 0 &&
+                    string.Equals(Path.TrimEndingDirectorySeparator(dir.FullName), windowsApps, StringComparison.OrdinalIgnoreCase))
+                {
+                    // C:\Program Files\WindowsApps is owned by TrustedInstaller and denies READ_CONTROL even to
+                    // elevated Administrators; the file itself, its package folder, and C:\Program Files above it
+                    // are still checked.
+                }
                 rights = AncestorRights;
             }
             return null;

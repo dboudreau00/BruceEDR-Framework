@@ -659,13 +659,11 @@ public static class FileAnalyzer
         "AdjustTokenPrivileges", "LookupPrivilegeValueA", "LookupPrivilegeValueW",
         "DuplicateTokenEx", "ImpersonateLoggedOnUser", "SetTokenInformation",
         "CreateProcessWithTokenW", "CreateProcessAsUserW",
-        // input capture / spying
-        "SetWindowsHookExA", "SetWindowsHookExW", "GetAsyncKeyState", "GetKeyboardState",
+        // input capture / spying (ubiquitous desktop clipboard/UI APIs like GetClipboardData, BitBlt, GetKeyboardState excluded)
+        "SetWindowsHookExA", "SetWindowsHookExW", "GetAsyncKeyState",
         "AttachThreadInput", "BlockInput", "keybd_event", "mouse_event",
-        "GetClipboardData", "SetClipboardData", "BitBlt",
-        // anti-analysis
-        "IsDebuggerPresent", "CheckRemoteDebuggerPresent", "NtQueryInformationProcess",
-        "OutputDebugStringA", "NtSetInformationThread", "GetTickCount64",
+        // anti-analysis (ubiquitous MSVC CRT startup APIs like IsDebuggerPresent, GetTickCount64, OutputDebugStringA excluded)
+        "CheckRemoteDebuggerPresent", "NtQueryInformationProcess", "NtSetInformationThread",
         // persistence / lateral movement / staging
         "CreateServiceA", "CreateServiceW", "StartServiceA", "StartServiceW",
         "NetUserAdd", "WNetAddConnection2A", "WNetAddConnection2W",

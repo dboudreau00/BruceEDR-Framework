@@ -28,6 +28,9 @@ public sealed class UiState
     public Dictionary<string, string> AssistantModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public bool AssistantRedact { get; set; } = true;
 
+    /// <summary>True once the first-start baseline scan has pre-populated verified signing authorities.</summary>
+    public bool BaselineInitialized { get; set; }
+
     [JsonIgnore]
     public static string FilePath { get; } = BuildPath();
 

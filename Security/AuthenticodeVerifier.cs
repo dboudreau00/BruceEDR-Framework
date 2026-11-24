@@ -46,23 +46,25 @@ public sealed class AuthenticodeVerifier
             // this: the old requireValidChain flag never actually did (both matchers below
             // gate on chainOk regardless), so it was removed rather than left as a knob that
             // appeared to do something.
-            bool chainOk = ChainIsValid(path, allow.CheckRevocation);
-            if (!chainOk) return false;
+            var (chainOk, cert) = VerifyAndLoadSigner(path, allow.CheckRevocation);
+            if (!chainOk || cert is null) { cert?.Dispose(); return false; }
 
-            using var cert = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
-            string thumb = cert.Thumbprint ?? "";
-            string subject = cert.GetNameInfo(X509NameType.SimpleName, forIssuer: false) ?? "";
+            using (cert)
+            {
+                string thumb = cert.Thumbprint ?? "";
+                string subject = cert.GetNameInfo(X509NameType.SimpleName, forIssuer: false) ?? "";
 
-            if (chainOk && allow.Thumbprints.Any(t =>
-                    string.Equals(NormalizeThumbprint(t), thumb, StringComparison.OrdinalIgnoreCase)))
-                return true;
+                if (allow.Thumbprints.Any(t =>
+                        string.Equals(NormalizeThumbprint(t), thumb, StringComparison.OrdinalIgnoreCase)))
+                    return true;
 
-            if (chainOk && allow.AllowSubjectMatch &&
-                !string.IsNullOrEmpty(subject) &&
-                allow.Publishers.Any(pub => string.Equals(pub, subject, StringComparison.OrdinalIgnoreCase)))
-                return true;
+                if (allow.AllowSubjectMatch &&
+                    !string.IsNullOrEmpty(subject) &&
+                    allow.Publishers.Any(pub => string.Equals(pub, subject, StringComparison.OrdinalIgnoreCase)))
+                    return true;
 
-            return false;
+                return false;
+            }
         }
         catch
         {
@@ -80,12 +82,36 @@ public sealed class AuthenticodeVerifier
     {
         try
         {
-            if (!File.Exists(path) || !ChainIsValid(path, checkRevocation: false)) return null;
-            using var cert = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
-            string subject = cert.GetNameInfo(X509NameType.SimpleName, forIssuer: false) ?? "";
-            return subject.Length > 0 ? subject : "an unnamed publisher";
+            var (ok, cert) = VerifyAndLoadSigner(path, checkRevocation: false);
+            if (!ok || cert is null) { cert?.Dispose(); return null; }
+            using (cert)
+            {
+                string subject = cert.GetNameInfo(X509NameType.SimpleName, forIssuer: false) ?? "";
+                return subject.Length > 0 ? subject : "an unnamed publisher";
+            }
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Verifies either an embedded PE Authenticode signature or a Windows security-catalog
+    /// signature (used by most inbox System32 binaries such as notepad.exe, svchost.exe and cmd.exe)
+    /// and returns the leaf signer certificate when valid.
+    /// </summary>
+    private static (bool Valid, X509Certificate2? Signer) VerifyAndLoadSigner(string path, bool checkRevocation)
+    {
+        if (!File.Exists(path)) return (false, null);
+
+        if (ChainIsValid(path, checkRevocation))
+        {
+            try
+            {
+                return (true, new X509Certificate2(X509Certificate.CreateFromSignedFile(path)));
+            }
+            catch { /* embedded blob unreadable; try catalog below */ }
+        }
+
+        return VerifyCatalogSigner(path, checkRevocation);
     }
 
     // Keep only hex digits so a pinned thumbprint copied from certmgr (which can carry
@@ -160,10 +186,131 @@ public sealed class AuthenticodeVerifier
     private const uint WTD_REVOKE_NONE = 0;
     private const uint WTD_REVOKE_WHOLECHAIN = 1;
     private const uint WTD_CHOICE_FILE = 1;
+    private const uint WTD_CHOICE_CATALOG = 2;
     private const uint WTD_STATEACTION_VERIFY = 1;
     private const uint WTD_STATEACTION_CLOSE = 2;
     private const uint WTD_SAFER_FLAG = 0x100;
     private const uint WTD_REVOCATION_CHECK_NONE = 0x10;
+
+    private static (bool Valid, X509Certificate2? Signer) VerifyCatalogSigner(string path, bool checkRevocation)
+    {
+        IntPtr hCatAdmin = IntPtr.Zero;
+        IntPtr hCatInfo = IntPtr.Zero;
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            IntPtr hFile = fs.SafeFileHandle.DangerousGetHandle();
+
+            if (!CryptCATAdminAcquireContext2(out hCatAdmin, IntPtr.Zero, null, IntPtr.Zero, 0) &&
+                !CryptCATAdminAcquireContext(out hCatAdmin, IntPtr.Zero, 0))
+                return (false, null);
+
+            uint hashLen = 0;
+            bool useV2 = CryptCATAdminCalcHashFromFileHandle2(hCatAdmin, hFile, ref hashLen, null, 0);
+            if (!useV2 && hashLen == 0)
+            {
+                CryptCATAdminCalcHashFromFileHandle(hFile, ref hashLen, null, 0);
+            }
+            if (hashLen == 0 || hashLen > 512) return (false, null);
+
+            byte[] hash = new byte[hashLen];
+            bool hashed = useV2
+                ? CryptCATAdminCalcHashFromFileHandle2(hCatAdmin, hFile, ref hashLen, hash, 0)
+                : CryptCATAdminCalcHashFromFileHandle(hFile, ref hashLen, hash, 0);
+            if (!hashed || hashLen == 0) return (false, null);
+
+            string memberTag = Convert.ToHexString(hash.AsSpan(0, (int)hashLen));
+            var hHash = GCHandle.Alloc(hash, GCHandleType.Pinned);
+            try
+            {
+                IntPtr pHash = hHash.AddrOfPinnedObject();
+                while (true)
+                {
+                    // CryptCATAdminEnumCatalogFromHash releases the previous hCatInfo automatically.
+                    hCatInfo = CryptCATAdminEnumCatalogFromHash(hCatAdmin, pHash, hashLen, 0, ref hCatInfo);
+                    if (hCatInfo == IntPtr.Zero) break;
+
+                    var info = new CATALOG_INFO { cbStruct = (uint)Marshal.SizeOf<CATALOG_INFO>(), wszCatalogFilePath = "" };
+                    if (!CryptCATCatalogInfoFromContext(hCatInfo, ref info, 0) || string.IsNullOrEmpty(info.wszCatalogFilePath))
+                        continue;
+
+                    if (CatalogChainIsValid(info.wszCatalogFilePath, memberTag, path, hFile, pHash, hashLen, hCatAdmin, checkRevocation))
+                    {
+                        CryptCATAdminReleaseCatalogContext(hCatAdmin, hCatInfo, 0);
+                        hCatInfo = IntPtr.Zero;
+                        return (true, new X509Certificate2(X509Certificate.CreateFromSignedFile(info.wszCatalogFilePath)));
+                    }
+                }
+            }
+            finally { hHash.Free(); }
+
+            return (false, null);
+        }
+        catch { return (false, null); }
+        finally
+        {
+            if (hCatInfo != IntPtr.Zero && hCatAdmin != IntPtr.Zero)
+                CryptCATAdminReleaseCatalogContext(hCatAdmin, hCatInfo, 0);
+            if (hCatAdmin != IntPtr.Zero)
+                CryptCATAdminReleaseContext(hCatAdmin, 0);
+        }
+    }
+
+    private static bool CatalogChainIsValid(string catalogPath, string memberTag, string memberFilePath,
+        IntPtr hMemberFile, IntPtr pbHash, uint cbHash, IntPtr hCatAdmin, bool checkRevocation)
+    {
+        var catInfo = new WINTRUST_CATALOG_INFO
+        {
+            cbStruct = (uint)Marshal.SizeOf<WINTRUST_CATALOG_INFO>(),
+            dwCatalogVersion = 0,
+            pcwszCatalogFilePath = catalogPath,
+            pcwszMemberTag = memberTag,
+            pcwszMemberFilePath = memberFilePath,
+            hMemberFile = hMemberFile,
+            pbCalculatedFileHash = pbHash,
+            cbCalculatedFileHash = cbHash,
+            pcCatalogContext = IntPtr.Zero,
+            hCatAdmin = hCatAdmin
+        };
+
+        IntPtr pCat = Marshal.AllocHGlobal((int)catInfo.cbStruct);
+        try
+        {
+            Marshal.StructureToPtr(catInfo, pCat, false);
+
+            var data = new WINTRUST_DATA
+            {
+                cbStruct = (uint)Marshal.SizeOf<WINTRUST_DATA>(),
+                dwUIChoice = WTD_UI_NONE,
+                fdwRevocationChecks = checkRevocation ? WTD_REVOKE_WHOLECHAIN : WTD_REVOKE_NONE,
+                dwUnionChoice = WTD_CHOICE_CATALOG,
+                pUnion = pCat,
+                dwStateAction = WTD_STATEACTION_VERIFY,
+                dwProvFlags = WTD_SAFER_FLAG | (checkRevocation ? 0u : WTD_REVOCATION_CHECK_NONE)
+            };
+
+            IntPtr pData = Marshal.AllocHGlobal((int)data.cbStruct);
+            try
+            {
+                Marshal.StructureToPtr(data, pData, false);
+                int result = WinVerifyTrust(IntPtr.Zero, WINTRUST_ACTION_GENERIC_VERIFY_V2, pData);
+
+                data = Marshal.PtrToStructure<WINTRUST_DATA>(pData);
+                data.dwStateAction = WTD_STATEACTION_CLOSE;
+                Marshal.StructureToPtr(data, pData, false);
+                WinVerifyTrust(IntPtr.Zero, WINTRUST_ACTION_GENERIC_VERIFY_V2, pData);
+
+                return result == 0;
+            }
+            finally { Marshal.FreeHGlobal(pData); }
+        }
+        catch { return false; }
+        finally
+        {
+            Marshal.DestroyStructure<WINTRUST_CATALOG_INFO>(pCat);
+            Marshal.FreeHGlobal(pCat);
+        }
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct WINTRUST_FILE_INFO
@@ -192,7 +339,58 @@ public sealed class AuthenticodeVerifier
         public IntPtr pSignatureSettings;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct CATALOG_INFO
+    {
+        public uint cbStruct;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string wszCatalogFilePath;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct WINTRUST_CATALOG_INFO
+    {
+        public uint cbStruct;
+        public uint dwCatalogVersion;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pcwszCatalogFilePath;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pcwszMemberTag;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pcwszMemberFilePath;
+        public IntPtr hMemberFile;
+        public IntPtr pbCalculatedFileHash;
+        public uint cbCalculatedFileHash;
+        public IntPtr pcCatalogContext;
+        public IntPtr hCatAdmin;
+    }
+
     [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = false)]
     private static extern int WinVerifyTrust(IntPtr hwnd,
         [MarshalAs(UnmanagedType.LPStruct)] Guid pgActionID, IntPtr pWVTData);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CryptCATAdminAcquireContext2(out IntPtr phCatAdmin, IntPtr pgSubsystem,
+        string? pwszHashAlgorithm, IntPtr pStrongHashPolicy, uint dwFlags);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true)]
+    private static extern bool CryptCATAdminAcquireContext(out IntPtr phCatAdmin, IntPtr pgSubsystem, uint dwFlags);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true)]
+    private static extern bool CryptCATAdminCalcHashFromFileHandle2(IntPtr hCatAdmin, IntPtr hFile,
+        ref uint pcbHash, [Out] byte[]? pbHash, uint dwFlags);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true)]
+    private static extern bool CryptCATAdminCalcHashFromFileHandle(IntPtr hFile,
+        ref uint pcbHash, [Out] byte[]? pbHash, uint dwFlags);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true)]
+    private static extern IntPtr CryptCATAdminEnumCatalogFromHash(IntPtr hCatAdmin, IntPtr pbHash,
+        uint cbHash, uint dwFlags, ref IntPtr phPrevCatInfo);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CryptCATCatalogInfoFromContext(IntPtr hCatInfo, ref CATALOG_INFO psCatInfo, uint dwFlags);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true)]
+    private static extern bool CryptCATAdminReleaseCatalogContext(IntPtr hCatAdmin, IntPtr hCatInfo, uint dwFlags);
+
+    [DllImport("wintrust.dll", ExactSpelling = true, SetLastError = true)]
+    private static extern bool CryptCATAdminReleaseContext(IntPtr hCatAdmin, uint dwFlags);
 }

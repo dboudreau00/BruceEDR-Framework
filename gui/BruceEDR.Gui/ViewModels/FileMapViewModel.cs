@@ -175,6 +175,7 @@ public sealed class FileMapViewModel : ViewModelBase
     /// <summary>Only the files this process (node id) touched; 0 clears it. Used by the jump from the process map.</summary>
     public void SetFocus(int processId)
     {
+        EnsureSynced();
         FocusId = processId;
         FocusName = processId != 0 && _procs.TryGetValue(processId, out var p) ? (p.Name.Length > 0 ? p.Name : $"pid {p.Pid}") : "";
         if (processId != 0) { _filter = FileFilter.All; SyncChips(); }
@@ -185,6 +186,7 @@ public sealed class FileMapViewModel : ViewModelBase
     /// <summary>Opens the file in the map by its path (the jump from a flagged event).</summary>
     public void SelectFile(int fileId)
     {
+        EnsureSynced();
         if (!_files.TryGetValue(fileId, out var f)) return;
         _search = "";
         _filter = FileFilter.All;
@@ -202,9 +204,24 @@ public sealed class FileMapViewModel : ViewModelBase
     private void OnHubChanged()
     {
         _snap = _hub.Snapshot;
+        _snapUnsynced = true;
+        if (_hub.IsViewing) { _expanded.Clear(); _folded.Clear(); _focusId = 0; FocusName = ""; OnPropertyChanged(nameof(FocusId)); OnPropertyChanged(nameof(HasFocus)); }
+        OnPropertyChanged(nameof(IsEmpty));
+        OnPropertyChanged(nameof(HasData));
+        if (!_viewActive) { _dirty = true; return; }
+        Rebuild();
+    }
+
+    private bool _viewActive = true;
+    private bool _dirty;
+    private bool _snapUnsynced;
+
+    private void EnsureSynced()
+    {
+        if (!_snapUnsynced) return;
+        _snapUnsynced = false;
         _procs = _snap.Processes.ToDictionary(p => p.Id);
         _files = _snap.Files.ToDictionary(f => f.Id);
-        if (_hub.IsViewing) { _expanded.Clear(); _folded.Clear(); _focusId = 0; FocusName = ""; OnPropertyChanged(nameof(FocusId)); OnPropertyChanged(nameof(HasFocus)); }
         var c = FileMapBuilder.Count(_snap);
         _noisy = c.Noisy;
         OnPropertyChanged(nameof(NoiseLabel));
@@ -226,13 +243,25 @@ public sealed class FileMapViewModel : ViewModelBase
         };
         OnPropertyChanged(nameof(HasMelted));
         OnPropertyChanged(nameof(MeltedBanner));
-        OnPropertyChanged(nameof(IsEmpty));
-        OnPropertyChanged(nameof(HasData));
-        Rebuild();
+    }
+
+    /// <summary>False while the view is mounted but hidden: live ticks then only mark the map stale, and it is rebuilt when shown.
+    /// True by default, so a model with no window (the tests) behaves as before.</summary>
+    public bool IsViewActive
+    {
+        get => _viewActive;
+        set
+        {
+            if (_viewActive == value) return;
+            _viewActive = value;
+            if (value && _dirty) Rebuild();
+        }
     }
 
     private void Rebuild()
     {
+        _dirty = false;
+        EnsureSynced();
         var result = FileMapBuilder.Build(_snap, new FileMapOptions
         {
             GroupBy = _groupBy, Filter = _filter, ShowNoise = _showNoise, Search = _search, FocusProcessId = _focusId, Expanded = _expanded, Collapsed = _folded

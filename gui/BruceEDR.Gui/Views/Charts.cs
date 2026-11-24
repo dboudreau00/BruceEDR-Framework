@@ -58,7 +58,9 @@ public sealed class Sparkline : FrameworkElement
         var values = Values;
         if (w <= 2 || h <= 2 || values is null || values.Count < 2) return;
 
-        var stroke = Stroke as SolidColorBrush ?? (SolidColorBrush)ChartInk.Get(this, "Brush.Accent", Color.FromRgb(0x7C, 0x6C, 0xFF));
+        var stroke = (Stroke as SolidColorBrush)
+                  ?? (ChartInk.Get(this, "Brush.Accent", Color.FromRgb(0x7C, 0x6C, 0xFF)) as SolidColorBrush)
+                  ?? new SolidColorBrush(Color.FromRgb(0x7C, 0x6C, 0xFF));
         double max = Math.Max(values.Max(), 1e-9);
         double step = w / (values.Count - 1);
         Point P(int i) => new(i * step, h - 1.5 - (values[i] / max) * (h - 3));
@@ -134,7 +136,7 @@ public sealed class TimelineChart : FrameworkElement
         double top0 = ShowAxis ? 7 : 0;
         double plotH = h - (ShowAxis ? AxisHeight : 0) - top0;
         double plotW = w - left;
-
+        if (plotW <= 2 || plotH <= 2) return;
         var grid = ChartInk.Get(this, "Brush.LineSoft", Color.FromRgb(0x17, 0x1C, 0x29));
         var faint = ChartInk.Get(this, "Brush.Faint", Color.FromRgb(0x5C, 0x64, 0x79));
         var gridPen = new Pen(grid, 1);
@@ -208,6 +210,7 @@ public sealed class TimelineChart : FrameworkElement
         if (buckets is null || buckets.Count == 0) return;
         double left = ShowAxis ? LabelWidth : 0;
         double slot = (ActualWidth - left) / buckets.Count;
+        if (slot <= 0 || ActualWidth - left <= 0) return;
         int ix = (int)Math.Floor((e.GetPosition(this).X - left) / slot);
         ix = ix < 0 || ix >= buckets.Count ? -1 : ix;
         if (ix == _hover) return;
@@ -273,10 +276,11 @@ public sealed class ScoreRing : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         double size = Math.Min(ActualWidth, ActualHeight);
-        if (size <= 10) return;
+        if (size <= 14) return;
         var c = new Point(ActualWidth / 2, ActualHeight / 2);
         double thickness = Math.Max(4, size * 0.09);
         double r = size / 2 - thickness / 2 - 1;
+        if (r <= 1) return;
 
         var track = ChartInk.Get(this, "Brush.InkRaised", Color.FromRgb(0x0B, 0x0E, 0x18));
         var line = ChartInk.Get(this, "Brush.Line", Color.FromRgb(0x23, 0x29, 0x38));

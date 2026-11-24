@@ -85,7 +85,7 @@ public sealed class InsightsViewModel : ViewModelBase
     private IReadOnlyList<Ranked> _destinations = Array.Empty<Ranked>();
     public IReadOnlyList<Ranked> Destinations { get => _destinations; private set { if (Set(ref _destinations, value)) OnPropertyChanged(nameof(NoNetwork)); } }
     private IReadOnlyList<Ranked> _domains = Array.Empty<Ranked>();
-    public IReadOnlyList<Ranked> Domains { get => _domains; private set => Set(ref _domains, value); }
+    public IReadOnlyList<Ranked> Domains { get => _domains; private set { if (Set(ref _domains, value)) OnPropertyChanged(nameof(NoNetwork)); } }
     public bool NoNetwork => _destinations.Count == 0 && _domains.Count == 0;
 
     private void OnHubChanged()
@@ -93,6 +93,29 @@ public sealed class InsightsViewModel : ViewModelBase
         _snap = _hub.Snapshot;
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(HasData));
+        if (!_viewActive) { _dirty = true; return; }
+        Refresh();
+    }
+
+    private bool _viewActive = true;
+    private bool _dirty;
+
+    /// <summary>False while the view is mounted but hidden: live ticks then only mark the charts stale, and they are rebuilt when shown.
+    /// True by default, so a model with no window (the tests) behaves as before.</summary>
+    public bool IsViewActive
+    {
+        get => _viewActive;
+        set
+        {
+            if (_viewActive == value) return;
+            _viewActive = value;
+            if (value && _dirty) Refresh();
+        }
+    }
+
+    private void Refresh()
+    {
+        _dirty = false;
         Timeline = InsightsData.Bin(_snap, 90);
         Heatmap = InsightsData.Heatmap(_snap, 72);
         Lifetimes = InsightsData.Lifetimes(_snap, 45);

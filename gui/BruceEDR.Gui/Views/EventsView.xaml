@@ -354,6 +354,14 @@
                         <TextBlock Text="No events yet" Style="{StaticResource Text.Body}" FontWeight="Medium"
                                    HorizontalAlignment="Center" Margin="0,10,0,0"/>
                     </StackPanel>
+
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Visibility="{Binding HasNoMatchingEvents, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="No events match the current filter" Style="{StaticResource Text.Body}" FontWeight="Medium"
+                                   HorizontalAlignment="Center"/>
+                        <Button Content="Show all events" Style="{StaticResource Btn.Subtle}" Margin="0,10,0,0"
+                                HorizontalAlignment="Center" Command="{Binding ResetEventFilterCommand}"/>
+                    </StackPanel>
                 </Grid>
             </DockPanel>
         </Border>

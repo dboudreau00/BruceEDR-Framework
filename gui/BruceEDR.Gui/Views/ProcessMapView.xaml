@@ -232,8 +232,8 @@
                                 <TextBlock Text="{Binding Timing}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" TextWrapping="Wrap"/>
 
                                 <TextBlock Text="LINEAGE" Style="{StaticResource Section}"/>
-                                <TextBlock Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" TextWrapping="Wrap">
-                                    <Run Text="Started by "/><Run Text="{Binding Parent, Mode=OneWay}" Foreground="{StaticResource Brush.Paper}"/>
+                                <TextBlock Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" TextWrapping="Wrap"
+                                           Visibility="{Binding HasParent, Converter={StaticResource BoolToVis}}"><Run Text="Started by "/><Run Text="{Binding Parent, Mode=OneWay}" Foreground="{StaticResource Brush.Paper}"/>
                                 </TextBlock>
                                 <TextBlock Text="{Binding Children}" Style="{StaticResource Text.Body}" Foreground="{StaticResource Brush.Mist}" Margin="0,3,0,0"/>
 

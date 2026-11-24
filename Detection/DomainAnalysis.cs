@@ -214,6 +214,39 @@ public static class DomainAnalysis
         "onrender.com", "repl.co", "replit.dev", "glitch.me", "herokuapp.com"
     };
 
+    /// <summary>
+    /// Managed CDN, major cloud PaaS/edge, and browser/OS vendor infrastructure zones where
+    /// subdomain labels are machine-generated distribution IDs, build hashes or regional service
+    /// routing tags (e.g. <c>d2gt2ux04o03l1.cloudfront.net</c>, <c>sgtm-prod-985009374134.us-central1.run.app</c>),
+    /// and where third parties cannot delegate authoritative NS records to run an interactive DNS
+    /// tunnel (<c>iodine</c>/<c>dnscat2</c>). Developer-tunnel / free-subdomain zones stay in
+    /// <see cref="DynamicDnsSuffixes"/> and are deliberately excluded here.
+    /// </summary>
+    private static readonly HashSet<string> ManagedCloudAndCdnSuffixes = new(StringComparer.Ordinal)
+    {
+        // AWS / CloudFront
+        "cloudfront.net", "amazonaws.com", "awsglobalaccelerator.com", "awsstatic.com",
+        // Google / Cloud Run / GCP / YouTube
+        "run.app", "cloudfunctions.net", "appspot.com", "googleusercontent.com", "gstatic.com",
+        "googleapis.com", "1e100.net", "google.com", "googlevideo.com", "gvt1.com", "gvt2.com",
+        "ggpht.com", "ytimg.com", "doubleclick.net", "googlesyndication.com", "googletagmanager.com",
+        "google-analytics.com", "firebaseio.com", "web.app", "firebaseapp.com",
+        // Microsoft / Azure CDN & Edge / Windows
+        "azureedge.net", "azurefd.net", "azurewebsites.net", "trafficmanager.net", "windows.net",
+        "msedge.net", "msecnd.net", "office.com", "office.net", "office365.com", "microsoft.com",
+        "microsoftonline.com", "live.com", "windowsupdate.com", "bing.com", "msn.com", "sfx.ms",
+        "sharepoint.com", "onedrive.com", "visualstudio.com", "aka.ms",
+        // Akamai / Fastly / Cloudflare CDN (excluding trycloudflare.com / workers.dev / pages.dev)
+        "akamaiedge.net", "akamaihd.net", "akadns.net", "akamaized.net", "akamai.net",
+        "edgekey.net", "edgesuite.net", "fastly.net", "fastlylb.net",
+        "cloudflare.com", "cloudflare-dns.com", "cdn.cloudflare.net", "cloudflareinsights.com",
+        // Mozilla / Firefox services, Apple, Meta CDN, PKI OCSP/CRL
+        "mozilla.com", "mozilla.net", "mozilla.org", "firefox.com", "mozgcp.net",
+        "icloud.com", "apple.com", "mzstatic.com", "aaplimg.com", "cdn-apple.com",
+        "fbcdn.net", "cdninstagram.net",
+        "digicert.com", "letsencrypt.org", "lencr.org", "sectigo.com", "globalsign.com"
+    };
+
     // ------------------------------------------------------------------- public
 
     /// <summary>
@@ -268,16 +301,22 @@ public static class DomainAnalysis
         string scored = labels[nameIndex];
         double best = ScoreLabel(scored);
 
+        bool managedInfra = IsManagedCloudOrCdn(norm);
+
         // ... but a family that registers "a1b2c3xyz.duckdns.org" controls only the
         // LEFT-most label; scoring the registrable name would judge the provider's brand
         // and miss the payload entirely. So every operator-chosen label long enough to
-        // carry signal is scored and the worst one wins. The cost is more exposure to
-        // long machine-generated CDN subdomains, which is the dominant false positive here.
-        for (int i = 0; i < nameIndex; i++)
+        // carry signal is scored and the worst one wins, UNLESS the zone is managed CDN or
+        // cloud infrastructure (cloudfront.net, run.app, azureedge.net, 1e100.net, ...)
+        // where subdomains are machine-generated edge/service hashes rather than DGAs.
+        if (!managedInfra)
         {
-            if (labels[i].Length < MinScannedLabelLength) continue;
-            double s = ScoreLabel(labels[i]);
-            if (s > best) { best = s; scored = labels[i]; }
+            for (int i = 0; i < nameIndex; i++)
+            {
+                if (labels[i].Length < MinScannedLabelLength) continue;
+                double s = ScoreLabel(labels[i]);
+                if (s > best) { best = s; scored = labels[i]; }
+            }
         }
 
         double entropy = Entropy(scored);
@@ -290,7 +329,8 @@ public static class DomainAnalysis
             if (l.StartsWith("xn--", StringComparison.Ordinal)) { punycode = true; break; }
 
         bool dynamicDns = IsDynamicDnsProvider(norm);
-        bool tunnel = LooksLikeTunnel(labels, suffixLabels, out string tunnelWhy);
+        string tunnelWhy = "";
+        bool tunnel = !managedInfra && LooksLikeTunnel(labels, suffixLabels, out tunnelWhy);
 
         var why = new List<string>(6);
         if (likelyDga)
@@ -302,6 +342,7 @@ public static class DomainAnalysis
             why.Add($"label '{scored}' scores {best.ToString("0.00", CultureInfo.InvariantCulture)}, below the " +
                     $"{DgaThreshold.ToString("0.00", CultureInfo.InvariantCulture)} DGA threshold");
 
+        if (managedInfra && nameIndex > 0) why.Add("subdomain sits under managed CDN/cloud infrastructure where machine-generated labels are expected");
         if (dynamicDns) why.Add($"registrable domain '{registrable}' is a dynamic-DNS or tunnelling provider (also used legitimately)");
         if (punycode) why.Add("contains an xn-- (IDNA) label, so a homograph of a known brand is possible");
         if (tunnel) why.Add(tunnelWhy);
@@ -344,20 +385,28 @@ public static class DomainAnalysis
     /// developer-tunnel provider. Matching is on the suffix boundary, so
     /// <c>evilduckdns.org</c> does not match <c>duckdns.org</c>.
     /// </summary>
-    public static bool IsDynamicDnsProvider(string domain)
+    public static bool IsDynamicDnsProvider(string domain) => MatchesSuffixTable(domain, DynamicDnsSuffixes);
+
+    /// <summary>
+    /// True when the name is, or sits beneath, a managed CDN or major cloud infrastructure
+    /// suffix where subdomains are machine-generated edge IDs and NS delegation is not open.
+    /// </summary>
+    public static bool IsManagedCloudOrCdn(string domain) => MatchesSuffixTable(domain, ManagedCloudAndCdnSuffixes);
+
+    private static bool MatchesSuffixTable(string domain, HashSet<string> table)
     {
         string norm = NormalizeName(domain ?? "");
         if (norm.Length == 0) return false;
 
         // Walk the suffixes of the name rather than the provider list, so cost is bounded
-        // by label count (at most ~127) instead of by the size of the provider table.
-        if (DynamicDnsSuffixes.Contains(norm)) return true;
+        // by label count (at most ~127) instead of by the size of the suffix table.
+        if (table.Contains(norm)) return true;
         int idx = 0;
         while (true)
         {
             int dot = norm.IndexOf('.', idx);
             if (dot < 0 || dot + 1 >= norm.Length) return false;
-            if (DynamicDnsSuffixes.Contains(norm[(dot + 1)..])) return true;
+            if (table.Contains(norm[(dot + 1)..])) return true;
             idx = dot + 1;
         }
     }
@@ -512,9 +561,35 @@ public static class DomainAnalysis
     private static double DigitRatio(string s)
     {
         if (s.Length == 0) return 0;
-        int digits = 0;
-        foreach (char c in s) if (c is >= '0' and <= '9') digits++;
-        return (double)digits / s.Length;
+        if (!s.Contains('-'))
+        {
+            int digits = 0;
+            foreach (char c in s) if (c is >= '0' and <= '9') digits++;
+            return (double)digits / s.Length;
+        }
+
+        // In hyphenated infrastructure labels (sgtm-prod-985009374134, ec2-54-210-12-34),
+        // pure-numeric segments are project IDs, ports or IP octets rather than DGA digit-salting
+        // (kq3v9z7wxr). Only digits mixed with letters inside the same segment count as salting.
+        int mixedDigits = 0;
+        int start = 0;
+        while (start <= s.Length)
+        {
+            int dash = s.IndexOf('-', start);
+            int end = dash < 0 ? s.Length : dash;
+            bool hasLetter = false;
+            int segDigits = 0;
+            for (int i = start; i < end; i++)
+            {
+                char c = s[i];
+                if (c is >= 'a' and <= 'z') hasLetter = true;
+                else if (c is >= '0' and <= '9') segDigits++;
+            }
+            if (hasLetter) mixedDigits += segDigits;
+            if (dash < 0) break;
+            start = dash + 1;
+        }
+        return (double)mixedDigits / s.Length;
     }
 
     private static int LongestConsonantRun(string s)
@@ -562,7 +637,10 @@ public static class DomainAnalysis
             return true;
         }
 
-        if (left.Length >= 20)
+        // Hyphenated infrastructure names (e.g. sgtm-prod-985009374134) easily reach 20-32
+        // characters with moderate character variety; real encoded DNS tunnel blobs either omit
+        // hyphens (base32/base64url/hex) or run significantly longer.
+        if (left.Length >= 20 && (!left.Contains('-') || left.Length >= 36))
         {
             double h = Entropy(left);
             if (h >= 3.6)

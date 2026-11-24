@@ -478,4 +478,81 @@ public sealed class MapBuilderTests
 
         Assert.Contains(lines, l => l.Text.Contains("folder watcher cannot say who"));
     }
+
+    // ================================================================ cycles, caps and layout speed
+
+    private static MapResult BuildWithin(Func<MapResult> build)
+    {
+        var task = Task.Run(build);
+        Assert.True(task.Wait(TimeSpan.FromSeconds(10)), "the build did not finish: it is stuck in a loop");
+        return task.Result;
+    }
+
+    [Fact]
+    public void A_late_start_event_cannot_make_two_processes_each_others_parent()
+    {
+        // pid 1 is seen working before it is seen starting; pid 2 starts under it; then pid 1's own start names pid 2 as its parent.
+        var snap = Snap(Create(1, @"C:\w\a.bin", 0), Start(2, 1, "child.exe", 1), Start(1, 2, "late.exe", 2));
+
+        var byId = snap.Processes.ToDictionary(p => p.Id);
+        foreach (var p in snap.Processes)
+        {
+            var seen = new HashSet<int>();
+            for (var up = p; up.ParentId != 0 && byId.TryGetValue(up.ParentId, out var parent); up = parent)
+                Assert.True(seen.Add(up.Id), "the parent chain loops");
+        }
+        var r = BuildWithin(() => ProcessMapBuilder.Build(snap, new ProcessMapOptions { Filter = ProcessFilter.All }));
+        Assert.Equal(snap.Processes.Count, r.Shown);
+    }
+
+    [Fact]
+    public void A_trace_from_disk_with_a_parent_loop_still_builds()
+    {
+        var snap = Snap(Start(1, 0, "a.exe", 0), Start(2, 1, "b.exe", 1), Start(3, 2, "c.exe", 2));
+        int idA = snap.Processes.First(p => p.Pid == 1).Id, idC = snap.Processes.First(p => p.Pid == 3).Id;
+        var looped = snap with { Processes = snap.Processes.Select(p => p.Pid == 1 ? p with { ParentId = idC } : p).ToList() };
+
+        foreach (var filter in new[] { ProcessFilter.All, ProcessFilter.Live, ProcessFilter.Flagged })
+        {
+            var r = BuildWithin(() => ProcessMapBuilder.Build(looped, new ProcessMapOptions { Filter = filter }));
+            Assert.True(r.Root.Count() <= looped.Processes.Count + 1);   // no node is counted twice
+        }
+        var searched = BuildWithin(() => ProcessMapBuilder.Build(looped, new ProcessMapOptions { Search = "a.exe" }));
+        Assert.True(searched.Shown >= 1);
+        Assert.NotEqual(0, idA);
+    }
+
+    [Fact]
+    public void An_opened_group_stops_at_the_cap_and_still_says_how_many_are_left()
+    {
+        var signals = Enumerable.Range(0, 1200).Select(i => Create(0, $@"C:\work\drop\f{i}.bin", i * 0.01)).ToArray();
+        var snap = Snap(signals);
+        string key = "g:Created";
+        var opts = new FileMapOptions { Filter = FileFilter.All, Expanded = new HashSet<string> { key } };
+
+        var group = FileMapBuilder.Build(snap, opts).Root.Children.Single(g => g.Key == key);
+        var files = group.Children.Where(c => c.Kind == MapKind.File).ToList();
+        var more = group.Children.Single(c => c.Kind == MapKind.More);
+
+        Assert.True(snap.Files.Count >= 1000, $"setup made only {snap.Files.Count} files");
+        Assert.Equal(FileMapBuilder.MaxExpandedGroupItems, files.Count);
+        Assert.Equal($"+{snap.Files.Count - FileMapBuilder.MaxExpandedGroupItems} more", more.Label);
+    }
+
+    [Fact]
+    public void The_radial_layout_of_five_hundred_nodes_is_quick()
+    {
+        var root = new MapNode { Key = "root", Kind = MapKind.Root, Label = "root" };
+        for (int g = 0; g < 25; g++)
+        {
+            var parent = root.Add(new MapNode { Key = "g" + g, Kind = MapKind.Group, Label = "group " + g });
+            for (int i = 0; i < 20; i++) parent.Add(new MapNode { Key = $"f{g}_{i}", Kind = MapKind.File, Label = $"file {g}.{i}" });
+        }
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var bounds = MapLayout.Radial(root, n => (n.Kind == MapKind.Root ? 150 : 120, 36));
+        sw.Stop();
+
+        Assert.True(bounds.Width > 0 && bounds.Height > 0);
+        Assert.True(sw.ElapsedMilliseconds < 250, $"radial layout took {sw.ElapsedMilliseconds} ms");
+    }
 }
