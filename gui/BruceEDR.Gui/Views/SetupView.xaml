@@ -98,6 +98,29 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Row container for the virtualized baseline process & app trust list -->
+        <Style x:Key="BaselineRowItem" TargetType="ListBoxItem">
+            <Setter Property="Margin" Value="0,0,0,6"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Ring}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="bd" Background="{StaticResource Brush.InkRaised}" BorderBrush="{StaticResource Brush.Line}"
+                                BorderThickness="1" CornerRadius="8" Padding="12,9">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource Brush.PanelHover}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <Grid>
@@ -109,6 +132,7 @@
         <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Padding="24,24,24,16">
             <Grid MaxWidth="1040" HorizontalAlignment="Center">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
@@ -208,14 +232,70 @@
 
                     <Border Style="{StaticResource SectionCard}">
                         <StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                                <Border Style="{StaticResource StepNumber}"><TextBlock Text="2" Style="{StaticResource StepText}"/></Border>
-                                <TextBlock Text="Trusted publishers" Style="{StaticResource Text.Title}" VerticalAlignment="Center"/>
-                            </StackPanel>
-                            <TextBlock Text="One name per line, exactly as it appears on the signature."
-                                       Style="{StaticResource Caption}" Margin="32,0,0,12"/>
-                            <TextBox Style="{StaticResource Input}" Height="72" AcceptsReturn="True" TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto" Text="{Binding Setup.Publishers}"
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <Border Style="{StaticResource StepNumber}"><TextBlock Text="2" Style="{StaticResource StepText}"/></Border>
+                                    <TextBlock Text="Trusted publishers (signing authorities)" Style="{StaticResource Text.Title}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Style="{StaticResource Btn.Subtle}" Padding="10,4" FontSize="11"
+                                        Command="{Binding Setup.TrustVerifiedPublishersCommand}"
+                                        Visibility="{Binding Setup.HasDiscoveredPublishers, Converter={StaticResource BoolToVis}}"
+                                        ToolTip="Add every Authenticode signing authority found on admin-installed software on this PC">
+                                    <TextBlock Text="+ Add verified authorities"/>
+                                </Button>
+                            </Grid>
+                            <TextBlock Text="Pre-populated from signed software installed on this PC. Click a discovered authority below to toggle it, or edit one name per line."
+                                       Style="{StaticResource Caption}" Margin="32,0,0,10"/>
+
+                            <ItemsControl ItemsSource="{Binding Setup.DiscoveredPublishers}"
+                                          Visibility="{Binding Setup.HasDiscoveredPublishers, Converter={StaticResource BoolToVis}}"
+                                          Margin="0,0,0,10">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Command="{Binding TogglePublisherCommand}" ToolTip="{Binding ChipTooltip}"
+                                                Margin="0,0,6,6" Padding="9,3.5" FontSize="11">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource Chip}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsTrusted}" Value="True">
+                                                            <Setter Property="Background" Value="{StaticResource Brush.SafeDim}"/>
+                                                            <Setter Property="BorderBrush" Value="#6634D399"/>
+                                                            <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock FontFamily="{StaticResource Font.Icon}" FontSize="9.5" VerticalAlignment="Center" Margin="0,0,5,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="&#xE710;"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsTrusted}" Value="True">
+                                                                    <Setter Property="Text" Value="&#xE73E;"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding ChipLabel}"/>
+                                            </StackPanel>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBox Style="{StaticResource Input}" Height="82" AcceptsReturn="True" TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto" Text="{Binding Setup.Publishers, UpdateSourceTrigger=PropertyChanged}"
                                      AutomationProperties.Name="Trusted publishers"/>
                         </StackPanel>
                     </Border>
@@ -275,6 +355,7 @@
                             <ListBox ItemsSource="{Binding Setup.Scenarios}" SelectedItem="{Binding Setup.SelectedScenario, Mode=TwoWay}"
                                      ItemContainerStyle="{StaticResource ScenarioItem}" Background="Transparent" BorderThickness="0"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" Padding="0"
+                                     MouseDoubleClick="Scenarios_MouseDoubleClick"
                                      AutomationProperties.Name="Recorded scenarios">
                                 <ListBox.Template>
                                     <ControlTemplate TargetType="ListBox">
@@ -370,6 +451,235 @@
                         </StackPanel>
                     </Border>
                 </StackPanel>
+
+                <!-- Step 4: Full-width Baseline Process Tree & Installed Programs Trust Scanner -->
+                <Border Grid.Row="2" Grid.ColumnSpan="3" Style="{StaticResource SectionCard}" Margin="0,16,0,0">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Style="{StaticResource StepNumber}"><TextBlock Text="4" Style="{StaticResource StepText}"/></Border>
+                                    <TextBlock Text="Baseline running process tree &amp; installed programs" Style="{StaticResource Text.Title}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding Setup.BaselineSummary}" Style="{StaticResource Caption}" Foreground="{StaticResource Brush.Mist}" Margin="32,4,0,0"/>
+                                <TextBlock Text="{Binding Setup.BaselineSelectionSummary}" Style="{StaticResource Caption}" Margin="32,2,0,0"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                <Button Style="{StaticResource Btn.Subtle}" Padding="11,6" Command="{Binding Setup.ScanBaselineCommand}"
+                                        ToolTip="Re-scan currently running processes, parent tree and installed applications">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE72C;" FontFamily="{StaticResource Font.Icon}" FontSize="11" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                                        <TextBlock Text="Scan PC &amp; apps"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource Btn.Subtle}" Padding="11,6" Margin="8,0,0,0"
+                                        Command="{Binding Setup.TrustSignedAppsCommand}"
+                                        Visibility="{Binding Setup.HasBaselineItems, Converter={StaticResource BoolToVis}}"
+                                        ToolTip="Mark every Authenticode-signed third-party app discovered on this PC as Trusted">
+                                    <TextBlock Text="Trust signed apps"/>
+                                </Button>
+                                <Button Style="{StaticResource Btn.Subtle}" Padding="11,6" Margin="8,0,0,0"
+                                        Command="{Binding Setup.ResetBaselineChoicesCommand}"
+                                        Visibility="{Binding Setup.HasBaselineItems, Converter={StaticResource BoolToVis}}"
+                                        ToolTip="Reset Trusted / Untrusted overrides back to Default scoring">
+                                    <TextBlock Text="Reset choices"/>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Search + Filter chips -->
+                        <Grid Margin="0,12,0,10" Visibility="{Binding Setup.HasBaselineItems, Converter={StaticResource BoolToVis}}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="260"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Style="{StaticResource Input}"
+                                     Text="{Binding Setup.BaselineSearch, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="Filter by app name, process name, publisher or path"
+                                     AutomationProperties.Name="Search baseline processes and apps"/>
+                            <WrapPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,0,0,0">
+                                <Button Content="All" Command="{Binding Setup.SetBaselineFilterCommand}" CommandParameter="ALL" Margin="0,0,6,0">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource Chip}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Setup.FilterAll}" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                                                    <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <Button Content="Running tree" Command="{Binding Setup.SetBaselineFilterCommand}" CommandParameter="RUNNING" Margin="0,0,6,0">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource Chip}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Setup.FilterRunning}" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                                                    <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <Button Content="Installed apps" Command="{Binding Setup.SetBaselineFilterCommand}" CommandParameter="APPS" Margin="0,0,6,0">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource Chip}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Setup.FilterApps}" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                                                    <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <Button Content="Unsigned" Command="{Binding Setup.SetBaselineFilterCommand}" CommandParameter="UNSIGNED" Margin="0,0,6,0">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource Chip}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Setup.FilterUnsigned}" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource Brush.WatchDim}"/>
+                                                    <Setter Property="BorderBrush" Value="#66F2B33D"/>
+                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Watch}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <Button Content="Marked" Command="{Binding Setup.SetBaselineFilterCommand}" CommandParameter="MARKED">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource Chip}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Setup.FilterMarked}" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                                                    <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                            </WrapPanel>
+                        </Grid>
+
+                        <!-- Virtualized Process & App Trust List -->
+                        <ListBox ItemsSource="{Binding Setup.BaselineItems}"
+                                 ItemContainerStyle="{StaticResource BaselineRowItem}"
+                                 Visibility="{Binding Setup.HasBaselineItems, Converter={StaticResource BoolToVis}}"
+                                 MaxHeight="340" Background="Transparent" BorderThickness="0" Padding="0"
+                                 VirtualizingPanel.IsVirtualizing="True"
+                                 VirtualizingPanel.VirtualizationMode="Recycling"
+                                 ScrollViewer.CanContentScroll="True"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 AutomationProperties.Name="Discovered processes and installed programs">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid ToolTip="{Binding ImagePath}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" Margin="0,0,14,0">
+                                            <WrapPanel VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold"
+                                                           Foreground="{StaticResource Brush.Paper}" Margin="0,0,8,0"/>
+                                                <TextBlock Text="{Binding ProcessName}" FontFamily="{StaticResource Font.Data}" FontSize="11"
+                                                           Foreground="{StaticResource Brush.Mist}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                <Border Style="{StaticResource Pill}" Padding="7,0.5" Margin="0,0,8,0"
+                                                        Background="{StaticResource Brush.AccentDim}" BorderBrush="{StaticResource Brush.AccentLine}">
+                                                    <TextBlock Text="{Binding SourceBadge}" Style="{StaticResource Pill.Text}" FontSize="9"
+                                                               Foreground="{StaticResource Brush.Paper}"/>
+                                                </Border>
+                                                <TextBlock Text="{Binding TreeSummary}" FontFamily="{StaticResource Font.Data}" FontSize="10"
+                                                           Foreground="{StaticResource Brush.Faint}" VerticalAlignment="Center"/>
+                                            </WrapPanel>
+
+                                            <Grid Margin="0,4,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{Binding SignatureSummary}" FontSize="11" Margin="0,0,10,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource Text.Body}">
+                                                            <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Signed}" Value="False">
+                                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Watch}"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Grid.Column="1" Text="{Binding ImagePath}" FontFamily="{StaticResource Font.Data}"
+                                                           FontSize="10" Foreground="{StaticResource Brush.Faint}" TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </StackPanel>
+
+                                        <!-- 3-state Trust Toggle: Trusted / Default / Untrusted -->
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="Trusted" Command="{Binding SetTrustedCommand}" Padding="10,4" FontSize="11"
+                                                    ToolTip="Allow this program (by admin path, or SHA-256 if in a user-writable folder)">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource Chip}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsTrustedChoice}" Value="True">
+                                                                <Setter Property="Background" Value="{StaticResource Brush.SafeDim}"/>
+                                                                <Setter Property="BorderBrush" Value="#6634D399"/>
+                                                                <Setter Property="Foreground" Value="{StaticResource Brush.Safe}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+
+                                            <Button Content="Default" Command="{Binding SetDefaultCommand}" Padding="9,4" FontSize="11" Margin="5,0"
+                                                    ToolTip="Use normal behavioural rules and publisher trust">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource Chip}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsDefaultChoice}" Value="True">
+                                                                <Setter Property="Background" Value="{StaticResource Brush.AccentDim}"/>
+                                                                <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentLine}"/>
+                                                                <Setter Property="Foreground" Value="{StaticResource Brush.Paper}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+
+                                            <Button Content="Untrusted" Command="{Binding SetUntrustedCommand}" Padding="10,4" FontSize="11"
+                                                    IsEnabled="{Binding CanMarkUntrusted}" ToolTip="{Binding UntrustedTooltip}">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource Chip}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsUntrustedChoice}" Value="True">
+                                                                <Setter Property="Background" Value="{StaticResource Brush.ThreatDim}"/>
+                                                                <Setter Property="BorderBrush" Value="#66F2555A"/>
+                                                                <Setter Property="Foreground" Value="{StaticResource Brush.Threat}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </StackPanel>
+                </Border>
             </Grid>
         </ScrollViewer>
 
@@ -396,7 +706,15 @@
                                 </Setter>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding Setup.Enforce}" Value="True">
-                                        <Setter Property="Content" Value="Start in enforce mode"/>
+                                        <Setter Property="Content">
+                                            <Setter.Value>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xEA18;" FontFamily="{StaticResource Font.Icon}" FontSize="11"
+                                                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                    <TextBlock Text="Start in enforce mode"/>
+                                                </StackPanel>
+                                            </Setter.Value>
+                                        </Setter>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
