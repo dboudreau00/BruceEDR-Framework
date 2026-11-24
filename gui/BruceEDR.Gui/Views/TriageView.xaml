@@ -462,8 +462,12 @@
                     </Border>
                     <TextBlock Text="No detections yet" Style="{StaticResource Text.Title}" Margin="0,14,0,0"
                                HorizontalAlignment="Center"/>
-                    <TextBlock Text="Flagged processes are recorded here" Style="{StaticResource Text.Body}" Margin="0,5,0,0"
+                    <TextBlock Text="Start monitoring or replay a recorded attack from set-up to walk through a detection here."
+                               Style="{StaticResource Text.Body}" Margin="0,5,0,0" MaxWidth="360" TextWrapping="Wrap" TextAlignment="Center"
                                Foreground="{StaticResource Brush.Faint}" HorizontalAlignment="Center"/>
+                    <Button Content="Go to set-up" Style="{StaticResource Btn.Subtle}" Margin="0,14,0,0" HorizontalAlignment="Center"
+                            Command="{Binding DataContext.OpenSetupCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            Visibility="{Binding DataContext.ShowStartPrompt, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}"/>
                 </StackPanel>
             </Border>
 
@@ -498,6 +502,7 @@
                                  Background="Transparent" BorderThickness="0" Padding="6,8,6,4"
                                  HorizontalContentAlignment="Stretch"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 MouseDoubleClick="Incidents_MouseDoubleClick"
                                  AutomationProperties.Name="Detections">
                             <ListBox.Template>
                                 <ControlTemplate TargetType="ListBox">
@@ -980,8 +985,14 @@
                                         </Border>
                                         <TextBlock Text="No API key saved" Style="{StaticResource Text.Title}" Margin="0,12,0,0"
                                                    HorizontalAlignment="Center"/>
-                                        <TextBlock Text="Settings, Assistant" Style="{StaticResource Text.Body}" Margin="0,4,0,0"
+                                        <TextBlock Text="Settings, Assistant, or explain locally offline" Style="{StaticResource Text.Body}" Margin="0,4,0,0"
                                                    Foreground="{StaticResource Brush.Faint}" HorizontalAlignment="Center"/>
+                                        <Button Style="{StaticResource Btn.Primary}" Height="28" Padding="12,0" Margin="0,12,0,0"
+                                                HorizontalAlignment="Center"
+                                                Command="{Binding UseBuiltInExplainerCommand}"
+                                                AutomationProperties.Name="Use built-in explainer">
+                                            <TextBlock Text="Use built-in explainer" VerticalAlignment="Center"/>
+                                        </Button>
                                     </StackPanel>
                                 </Border>
 
@@ -1004,6 +1015,12 @@
                                         </StackPanel>
                                         <TextBlock Text="{Binding NarrationError}" Style="{StaticResource Narr.Text}" Margin="0,7,0,0"
                                                    Foreground="{StaticResource Brush.Paper}"/>
+                                        <Button Style="{StaticResource Btn.Subtle}" Height="26" Padding="10,0" Margin="0,10,0,0"
+                                                HorizontalAlignment="Left"
+                                                Command="{Binding UseBuiltInExplainerCommand}"
+                                                AutomationProperties.Name="Use built-in explainer">
+                                            <TextBlock Text="Use built-in explainer" VerticalAlignment="Center"/>
+                                        </Button>
                                     </StackPanel>
                                 </Border>
 
@@ -1025,8 +1042,14 @@
                                             <TextBlock Text="The model declined" Style="{StaticResource Text.Title}"
                                                        Foreground="{StaticResource Brush.Watch}"/>
                                         </StackPanel>
-                                        <TextBlock Text="Refresh to ask again, or pick another reader" Style="{StaticResource Narr.Text}"
+                                        <TextBlock Text="Refresh to ask again, pick another reader, or explain locally." Style="{StaticResource Narr.Text}"
                                                    Margin="0,7,0,0" Foreground="{StaticResource Brush.Paper}"/>
+                                        <Button Style="{StaticResource Btn.Subtle}" Height="26" Padding="10,0" Margin="0,10,0,0"
+                                                HorizontalAlignment="Left"
+                                                Command="{Binding UseBuiltInExplainerCommand}"
+                                                AutomationProperties.Name="Use built-in explainer">
+                                            <TextBlock Text="Use built-in explainer" VerticalAlignment="Center"/>
+                                        </Button>
                                     </StackPanel>
                                 </Border>
 

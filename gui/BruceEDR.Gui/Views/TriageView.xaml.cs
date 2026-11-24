@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using BruceEDR.Gui.Services;
 using BruceEDR.Gui.ViewModels;
@@ -51,5 +52,11 @@ public partial class TriageView : UserControl
         if (current is null || !current.IsExplained) { NarrationScroll.ScrollToTop(); return; }
         if (StepList.ItemContainerGenerator.ContainerFromItem(current) is FrameworkElement row)
             row.BringIntoView(new Rect(0, -40, row.ActualWidth, row.ActualHeight + 80));
+    }
+
+    private void Incidents_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_vm is not null && _vm.PlaySceneCommand.CanExecute(null))
+            _vm.PlaySceneCommand.Execute(null);
     }
 }

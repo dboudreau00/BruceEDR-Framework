@@ -169,6 +169,9 @@ public sealed class TriageViewModel : ViewModelBase
     /// <summary>Produces answers. The offscreen harness swaps in a scripted generator.</summary>
     public ITriageGenerator Generator { get; set; } = new TriageNarrator();
 
+    /// <summary>Pre-trained local persona explainer used when no cloud API key is configured or offline.</summary>
+    public ITriageGenerator BuiltInGenerator { get; set; } = new PretrainedTriageHarness();
+
     public AssistantSettings Assistant { get; }
 
     public ObservableCollection<IncidentItem> Incidents { get; } = new();
@@ -199,7 +202,8 @@ public sealed class TriageViewModel : ViewModelBase
         PrevStepCommand = new RelayCommand(() => Step(-1), () => IsSceneOpen && CurrentStep > 1);
         JumpToStepCommand = new RelayCommandP(p => { if (p is StepItem s) JumpTo(s.Number); });
         SetSpeedCommand = new RelayCommandP(p => { if (double.TryParse(p as string, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) Speed = v; });
-        RefreshCommand = new RelayCommand(() => Generate(force: true), () => IsSceneOpen && Assistant.HasKey && !IsGenerating);
+        RefreshCommand = new RelayCommand(() => { if (Assistant.HasKey) Generate(force: true); else GenerateBuiltIn(); }, () => IsSceneOpen && !IsGenerating);
+        UseBuiltInExplainerCommand = new RelayCommand(GenerateBuiltIn, () => IsSceneOpen && !IsGenerating);
         CopyAnswerCommand = new RelayCommand(CopyAnswer, () => NarrationText.Length > 0);
         DeleteIncidentCommand = new RelayCommandP(p => { if (p is IncidentItem i) Delete(i); });
         ClearHistoryCommand = new RelayCommand(ClearHistory, () => Incidents.Count > 0);
@@ -235,6 +239,7 @@ public sealed class TriageViewModel : ViewModelBase
     public ICommand JumpToStepCommand { get; }
     public ICommand SetSpeedCommand { get; }
     public ICommand RefreshCommand { get; }
+    public ICommand UseBuiltInExplainerCommand { get; }
     public ICommand CopyAnswerCommand { get; }
     public ICommand DeleteIncidentCommand { get; }
     public ICommand ClearHistoryCommand { get; }
@@ -574,15 +579,30 @@ public sealed class TriageViewModel : ViewModelBase
         Attach(run);
         var request = new TriageRequest(run.Provider, run.Model, key, run.Persona, item.Case, run.Redact);
         key = null;
-        _ = RunAsync(run, request);
+        _ = RunAsync(run, request, Generator, cacheResult: true);
     }
 
-    private async Task RunAsync(Run run, TriageRequest request)
+    public void GenerateBuiltIn()
+    {
+        var item = SceneIncident;
+        if (item is null || IsGenerating) return;
+
+        Detach();
+        ResetNarration();
+        string runKey = RunKey(item.Key, _persona.Id);
+        var run = new Run(runKey, item, _persona, Assistant.Provider, "Pre-trained guide", Assistant.Redact, isBuiltIn: true);
+        _runs[runKey] = run;
+        Attach(run);
+        var request = new TriageRequest(run.Provider, run.Model, "", run.Persona, item.Case, run.Redact);
+        _ = RunAsync(run, request, BuiltInGenerator, cacheResult: false);
+    }
+
+    private async Task RunAsync(Run run, TriageRequest request, ITriageGenerator generator, bool cacheResult)
     {
         TriageResult result;
         try
         {
-            result = await Task.Run(() => Generator.GenerateAsync(request, chunk =>
+            result = await Task.Run(() => generator.GenerateAsync(request, chunk =>
             {
                 lock (run.Buffer) run.Buffer.Append(chunk);
             }, run.Cancel.Token));
@@ -592,15 +612,15 @@ public sealed class TriageViewModel : ViewModelBase
             AppLog.Error("triage generate", ex);
             result = new TriageResult(run.Snapshot(), false, "", "The explanation failed: " + ex.Message);
         }
-        await _dispatcher.InvokeAsync(() => Complete(run, result));
+        await _dispatcher.InvokeAsync(() => Complete(run, result, cacheResult));
     }
 
-    private void Complete(Run run, TriageResult result)
+    private void Complete(Run run, TriageResult result, bool cacheResult)
     {
         run.Completed = true;
         run.Result = result;
         string text = result.Text;
-        if (text.Length > 0 && result.Error.Length == 0)
+        if (cacheResult && text.Length > 0 && result.Error.Length == 0)
         {
             var answer = new TriageAnswer
             {
@@ -628,7 +648,7 @@ public sealed class TriageViewModel : ViewModelBase
     private void Attach(Run run)
     {
         _attached = run;
-        AnswerSource = $"{LlmWire.DisplayName(run.Provider)} · {run.Model}" + (run.Redact ? " · redacted" : "");
+        AnswerSource = run.SourceDisplay + (run.Redact ? " · redacted" : "");
         NarrationState = "waiting";
         _revealTimer.Start();
     }
@@ -673,7 +693,7 @@ public sealed class TriageViewModel : ViewModelBase
         }
         else if (result.Refused && result.Text.Length == 0) NarrationState = "refused";
         else NarrationState = result.Refused ? "refused" : "done";
-        if (NarrationState == "done") AnswerSource = $"{LlmWire.DisplayName(run.Provider)} · {run.Model} · just now";
+        if (NarrationState == "done") AnswerSource = $"{run.SourceDisplay} · just now";
     }
 
     private void ApplyText(string text, bool streaming)
@@ -712,7 +732,7 @@ public sealed class TriageViewModel : ViewModelBase
 
     private sealed class Run
     {
-        public Run(string key, IncidentItem item, Persona persona, LlmProvider provider, string model, bool redact)
+        public Run(string key, IncidentItem item, Persona persona, LlmProvider provider, string model, bool redact, bool isBuiltIn = false)
         {
             Key = key;
             Item = item;
@@ -720,6 +740,7 @@ public sealed class TriageViewModel : ViewModelBase
             Provider = provider;
             Model = model;
             Redact = redact;
+            IsBuiltIn = isBuiltIn;
         }
 
         public string Key { get; }
@@ -728,6 +749,8 @@ public sealed class TriageViewModel : ViewModelBase
         public LlmProvider Provider { get; }
         public string Model { get; }
         public bool Redact { get; }
+        public bool IsBuiltIn { get; }
+        public string SourceDisplay => IsBuiltIn ? $"Built-in explainer · {Persona.Label}" : $"{LlmWire.DisplayName(Provider)} · {Model}";
         public DateTime StartedUtc { get; } = DateTime.UtcNow;
         public StringBuilder Buffer { get; } = new();
         public CancellationTokenSource Cancel { get; } = new();
