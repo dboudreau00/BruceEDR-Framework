@@ -109,6 +109,12 @@ public sealed class EngineDependencies
     public Func<int, string, Security.ImageStanding>? Standing { get; init; }
 
     /// <summary>
+    /// True under the neutral monitoring profile: a program reading a folder named after itself is not scored for it. Read on
+    /// every signal, so a profile change applies live. Null, the default, is the aggressive profile.
+    /// </summary>
+    public Func<bool>? OwnStoreExemption { get; init; }
+
+    /// <summary>
     /// The agent's own pid. Its signals are dropped: the triage collector writes csv files into a
     /// staging folder, and the agent's memory holds every IOC string it scans for, so scoring it
     /// only produces incidents about itself. 0, the default, ignores nothing.
@@ -538,6 +544,7 @@ public sealed class DetectionEngine
         // threshold in milliseconds -- suspending and firewall-blocking the user's browser.
         string? artifact = FirstMatch(IocDatabase.CredentialArtifacts, file);
         if (artifact is not null && !OwnsCredentialStore(p.ProcessName, file) && !OwnsWebViewStore(p, file)
+            && !(_deps.OwnStoreExemption?.Invoke() == true && OwnStores.IsOwn(p.ProcessName, p.ImagePath, s.FilePath))
             && p.FiredOnce.Add("credstore:" + artifact))
         {
             p.CredentialAccessUtc = s.TimestampUtc;
@@ -893,6 +900,7 @@ public sealed class DetectionEngine
                 : _deps.Tree.Ancestors(p.Pid).Select(a => a.Name).ToArray(),
             Score = p.Score,
             Trusted = p.Trusted,
+            OwnStoreExemption = _deps.OwnStoreExemption?.Invoke() == true,
             PlatformLookup = () => PlatformOf(p)
         };
 

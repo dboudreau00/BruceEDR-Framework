@@ -304,8 +304,24 @@
                         <StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
                                 <Border Style="{StaticResource StepNumber}"><TextBlock Text="3" Style="{StaticResource StepText}"/></Border>
-                                <TextBlock Text="Scores" Style="{StaticResource Text.Title}" VerticalAlignment="Center"/>
+                                <TextBlock Text="Sensitivity" Style="{StaticResource Text.Title}" VerticalAlignment="Center"/>
                             </StackPanel>
+                            <RadioButton GroupName="profile" Style="{StaticResource ModeOption}" IsChecked="{Binding Setup.IsAggressive}"
+                                         AutomationProperties.Name="Aggressive monitoring">
+                                <StackPanel>
+                                    <TextBlock Text="Aggressive" Style="{StaticResource Text.Body}" FontWeight="SemiBold"/>
+                                    <TextBlock Style="{StaticResource Caption}" Foreground="{StaticResource Brush.Mist}"
+                                               Text="Flags anything unusual, including a program reading its own data (warn at 40, contain at 70). How BruceEDR has always behaved. Expect more to review."/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton GroupName="profile" Style="{StaticResource ModeOption}" IsChecked="{Binding Setup.IsNeutral}"
+                                         AutomationProperties.Name="Neutral monitoring" Margin="0,0,0,14">
+                                <StackPanel>
+                                    <TextBlock Text="Neutral" Style="{StaticResource Text.Body}" FontWeight="SemiBold"/>
+                                    <TextBlock Style="{StaticResource Caption}" Foreground="{StaticResource Brush.Mist}"
+                                               Text="A program reading a folder named after itself, such as an app's own cookies, is not flagged. Scores need a little more evidence before they list (warn at 50, contain at 80)."/>
+                                </StackPanel>
+                            </RadioButton>
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -720,7 +736,10 @@
                             </Style>
                         </Button.Style>
                     </Button>
-                    <Button Content="All settings" Style="{StaticResource Btn.Subtle}" Margin="10,0,0,0"
+                    <Button Content="Set up again" Style="{StaticResource Btn.Subtle}" Margin="10,0,0,0"
+                            ToolTip="Put the mode, profile, scores and trusted publishers back to a fresh install's and scan again. Nothing is uninstalled; the config is backed up first."
+                            Command="{Binding Setup.SetUpAgainCommand}"/>
+                    <Button Content="All settings" Style="{StaticResource Btn.Subtle}" Margin="8,0,0,0"
                             ToolTip="Saves these choices and opens the full Settings page without starting anything"
                             Command="{Binding ReviewSettingsCommand}"/>
                     <Button Style="{StaticResource Btn.Subtle}" Margin="8,0,0,0" Command="{Binding ExploreHistoryCommand}"

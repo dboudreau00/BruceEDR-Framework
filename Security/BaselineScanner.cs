@@ -85,7 +85,7 @@ public sealed class BaselineScanResult
 /// </summary>
 public static class BaselineScanner
 {
-    private const string BaselineNoteTag = "[baseline]";
+    private const string BaselineNoteTag = SetupReset.BaselineNoteTag;
 
     private static readonly HashSet<string> IgnoredInstallerExeNames = new(StringComparer.OrdinalIgnoreCase)
     {

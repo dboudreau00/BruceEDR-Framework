@@ -68,6 +68,7 @@ public sealed class Composition : IDisposable
     private readonly RuleEngineHolder _ruleHolder;
     private readonly IocFeedHolder _intelHolder;
     private readonly WatchlistHolder _watchHolder;
+    private readonly ProfileHolder _profileHolder;
     private FileSystemWatcher? _configWatcher;
     private KernelSupervisor<MinifilterClient>? _kernel;
     /// <summary>Serialises the kernel part of a reload with a reconnect, so neither pushes a stale policy over the other.</summary>
@@ -95,8 +96,9 @@ public sealed class Composition : IDisposable
         AuthenticodeVerifier verifier, CompositeSink sink, IMemoryScanner scanner, BruceHost host,
         ApiSurfaceInventory surface, QuarantineVault? vault, RingBufferSink events,
         NetworkIsolation isolation, RuleEngineHolder ruleHolder, IocFeedHolder intelHolder,
-        WatchlistHolder watchHolder, ApiSafetyPolicy apiPolicy, ActivityModel activity)
+        WatchlistHolder watchHolder, ApiSafetyPolicy apiPolicy, ActivityModel activity, ProfileHolder profileHolder)
     {
+        _profileHolder = profileHolder;
         _configPath = configPath;
         Activity = activity;
         Config = config;
@@ -156,6 +158,7 @@ public sealed class Composition : IDisposable
         var watchHolder = new WatchlistHolder();
         var watchlist = LoadWatchlist(cfg.Watchlist, log);
         watchHolder.Set(watchlist);
+        var profileHolder = new ProfileHolder { OwnStores = MonitoringProfiles.ExemptsOwnStores(cfg.Detection.Profile) };
 
         var tree = new ProcessTree(clock);
         var beacons = cfg.Detection.EnableBeaconDetection
@@ -180,6 +183,7 @@ public sealed class Composition : IDisposable
             // holder alone carries the on/off state across a reload.
             IntelProvider = () => intelHolder.Feed,
             WatchlistProvider = () => watchHolder.List,
+            OwnStoreExemption = () => profileHolder.OwnStores,
             Surface = cfg.Api.EnableSurfaceInventory ? surface : null,
             // Wired unconditionally. This hasher serves BOTH indicator feeds and watchlist
             // hash entries; gating it on intel.enabled made every watchlist SHA-256 entry
@@ -231,7 +235,7 @@ public sealed class Composition : IDisposable
         var apiPolicy = BuildApiPolicy(cfg.Api.Studio);
 
         var comp = new Composition(configPath, cfg, log, verifier, sink, scanner, host,
-            surface, vault, events, isolation, ruleHolder, intelHolder, watchHolder, apiPolicy, activity)
+            surface, vault, events, isolation, ruleHolder, intelHolder, watchHolder, apiPolicy, activity, profileHolder)
         {
             Rules = ruleSet,
             Intel = feed,
@@ -735,6 +739,7 @@ public sealed class Composition : IDisposable
             }
 
             _verifier.UpdateAllowlist(next.Allowlist);
+            _profileHolder.OwnStores = MonitoringProfiles.ExemptsOwnStores(next.Detection.Profile);
             Host.ApplyDetectionConfig(
                 next.Detection.WarnThreshold, next.Detection.QuarantineThreshold,
                 next.Detection.CorrelationWindowSeconds, next.Detection.TrustDiscount,
@@ -1015,6 +1020,14 @@ internal sealed class IocFeedHolder
     private volatile IocFeed _feed = new();
     public IocFeed Feed => _feed;
     public void Set(IocFeed feed) => _feed = feed;
+}
+
+/// <summary>The monitoring profile's switches, atomic-swapped like the rules so a profile change applies on the next signal.</summary>
+internal sealed class ProfileHolder
+{
+    private volatile bool _ownStores;
+    /// <summary>The monitoring profile's own-store exemption, swapped in whole by a config reload.</summary>
+    public bool OwnStores { get => _ownStores; set => _ownStores = value; }
 }
 
 /// <summary>

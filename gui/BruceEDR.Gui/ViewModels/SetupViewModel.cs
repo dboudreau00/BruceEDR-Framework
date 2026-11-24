@@ -184,6 +184,7 @@ public sealed class SetupViewModel : ViewModelBase
         TrustVerifiedPublishersCommand = new RelayCommand(TrustAllVerifiedPublishers, () => DiscoveredPublishers.Count > 0);
         TrustSignedAppsCommand = new RelayCommand(TrustSignedNonSystemApps, () => BaselineItems.Count > 0);
         ResetBaselineChoicesCommand = new RelayCommand(ResetBaselineChoices, () => TrustedItemCount > 0 || UntrustedItemCount > 0);
+        SetUpAgainCommand = new RelayCommand(SetUpAgain, () => !IsScanningBaseline && LoadError.Length == 0);
         SetBaselineFilterCommand = new RelayCommandP(p => BaselineFilter = (p as string) ?? "ALL");
 
         _baselineView = CollectionViewSource.GetDefaultView(BaselineItems);
@@ -196,6 +197,8 @@ public sealed class SetupViewModel : ViewModelBase
     public ObservableCollection<BaselineItemRow> BaselineItems { get; } = new();
 
     public ICommand ScanBaselineCommand { get; }
+    /// <summary>Puts the set-up choices back to a fresh install's, without uninstalling. Asks first; the config is backed up.</summary>
+    public ICommand SetUpAgainCommand { get; }
     public ICommand TrustVerifiedPublishersCommand { get; }
     public ICommand TrustSignedAppsCommand { get; }
     public ICommand ResetBaselineChoicesCommand { get; }
@@ -229,6 +232,7 @@ public sealed class SetupViewModel : ViewModelBase
             Publishers = _loadedPublishers = string.Join(Environment.NewLine, c.Allowlist.Publishers);
             WarnThreshold = _loadedWarn = c.Detection.WarnThreshold;
             QuarantineThreshold = _loadedQuarantine = c.Detection.QuarantineThreshold;
+            Profile = _loadedProfile = MonitoringProfiles.Normalize(c.Detection.Profile);
             detection = c.Detection;
             watchlistEntries = c.Watchlist.Entries ?? Array.Empty<WatchlistEntryConfig>();
             LoadError = "";
@@ -437,6 +441,7 @@ public sealed class SetupViewModel : ViewModelBase
     private bool _loadedEnforce;
     private string _loadedPublishers = "";
     private int _loadedWarn, _loadedQuarantine;
+    private string _loadedProfile = MonitoringProfiles.Aggressive;
 
     /// <summary>What the file says now, as opposed to what is ticked on screen.</summary>
     public bool EnforceOnDisk => _loadedEnforce;
@@ -447,6 +452,7 @@ public sealed class SetupViewModel : ViewModelBase
         => Enforce != _loadedEnforce
         || WarnThreshold != _loadedWarn
         || QuarantineThreshold != _loadedQuarantine
+        || Profile != _loadedProfile
         || !SplitLines(Publishers).SequenceEqual(SplitLines(_loadedPublishers))
         || HasBaselineChanges;
 
@@ -481,6 +487,7 @@ public sealed class SetupViewModel : ViewModelBase
             onDisk.Allowlist.Publishers = SplitLines(Publishers);
             onDisk.Detection.WarnThreshold = WarnThreshold;
             onDisk.Detection.QuarantineThreshold = QuarantineThreshold;
+            onDisk.Detection.Profile = Profile;
 
             if (HasBaselineChanges && BaselineItems.Count > 0)
             {
@@ -500,6 +507,41 @@ public sealed class SetupViewModel : ViewModelBase
         {
             Message = "Could not save the settings: " + ex.Message;
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Asks, then resets the choices this screen makes to a fresh install's (see <see cref="SetupReset"/>), backs the
+    /// config up, and scans again as on a first start. Yes keeps the programs already marked trusted or untrusted; No clears those marks too.
+    /// </summary>
+    private void SetUpAgain()
+    {
+        var answer = MessageBox.Show(
+            "Set up BruceEDR again?\n\n" +
+            "The response mode, monitoring profile, scores and trusted publishers go back to how a new install starts, " +
+            "and the scan of what is installed runs again. Your telemetry, Assistant, API and watchlist rules are not touched. " +
+            "A dated copy of the current config is saved beside it first.\n\n" +
+            "Yes: keep the programs you marked trusted or untrusted.\n" +
+            "No: clear those marks too.\n" +
+            "Cancel: change nothing.",
+            "Set up again", MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
+        if (answer == MessageBoxResult.Cancel) return;
+
+        try
+        {
+            var result = SetupReset.Run(_configPath, clearTrustMarks: answer == MessageBoxResult.No);
+            if (_ui is not null) { _ui.BaselineInitialized = false; _ui.Save(); }
+            BaselineItems.Clear();
+            Load();
+            _ = ScanBaselineAsync(autoPrepopulatePublishers: true);
+            Message = result.TrustEntriesRemoved > 0
+                ? $"Set up again, and {result.TrustEntriesRemoved} trust mark{(result.TrustEntriesRemoved == 1 ? "" : "s")} cleared. The old config is saved as {Path.GetFileName(result.BackupPath)}."
+                : $"Set up again. The old config is saved as {Path.GetFileName(result.BackupPath)}.";
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("set up again", ex);
+            Message = "Not reset: " + ex.Message;
         }
     }
 
@@ -600,6 +642,34 @@ public sealed class SetupViewModel : ViewModelBase
             if (Set(ref _publishers, value))
                 SyncPublisherChips();
         }
+    }
+
+    private string _profile = MonitoringProfiles.Aggressive;
+    /// <summary>The monitoring profile id: <c>aggressive</c> or <c>neutral</c>. Picking one fills the two scores from its preset.</summary>
+    public string Profile
+    {
+        get => _profile;
+        private set
+        {
+            if (!Set(ref _profile, MonitoringProfiles.Normalize(value))) return;
+            OnPropertyChanged(nameof(IsAggressive));
+            OnPropertyChanged(nameof(IsNeutral));
+        }
+    }
+    public IReadOnlyList<MonitoringProfiles.Preset> Profiles => MonitoringProfiles.All;
+    /// <summary>Bound to the Aggressive card.</summary>
+    public bool IsAggressive { get => Profile == MonitoringProfiles.Aggressive; set { if (value) SelectProfile(MonitoringProfiles.Aggressive); } }
+    /// <summary>Bound to the Neutral card.</summary>
+    public bool IsNeutral { get => Profile == MonitoringProfiles.Neutral; set { if (value) SelectProfile(MonitoringProfiles.Neutral); } }
+
+    /// <summary>Chooses a profile and fills the scores from it. The scores stay editable afterwards.</summary>
+    public void SelectProfile(string id)
+    {
+        var preset = MonitoringProfiles.Get(id);
+        if (Profile == preset.Id) return;
+        Profile = preset.Id;
+        WarnThreshold = preset.WarnAt;
+        QuarantineThreshold = preset.ContainAt;
     }
 
     private int _warn; public int WarnThreshold { get => _warn; set => Set(ref _warn, value); }
