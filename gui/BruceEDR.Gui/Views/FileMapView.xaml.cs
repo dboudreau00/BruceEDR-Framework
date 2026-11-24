@@ -13,8 +13,12 @@ public partial class FileMapView : UserControl
         DataContextChanged += (_, e) =>
         {
             if (e.OldValue is FileMapViewModel old) { old.FitRequested -= Reframe; old.FitAllRequested -= FitAll; }
-            if (e.NewValue is FileMapViewModel now) { now.FitRequested += Reframe; now.FitAllRequested += FitAll; }
+            if (e.NewValue is FileMapViewModel now) { now.FitRequested += Reframe; now.FitAllRequested += FitAll; now.IsViewActive = IsVisible; }
         };
+        // A hidden tab does not rebuild on every live tick; it catches up when it is shown again.
+        IsVisibleChanged += (_, _) => { if (DataContext is FileMapViewModel vm) vm.IsViewActive = IsVisible; };
+        Unloaded += (_, _) => { if (DataContext is FileMapViewModel vm) vm.IsViewActive = false; };
+        Loaded += (_, _) => { if (DataContext is FileMapViewModel vm) vm.IsViewActive = IsVisible; };
     }
 
     private void Reframe() => Map.FocusView();

@@ -29,6 +29,7 @@ public sealed class ProcessDetail
     public string CommandLine { get; init; } = "";
     public bool HasCommandLine => CommandLine.Length > 0;
     public string Parent { get; init; } = "";
+    public bool HasParent => Parent.Length > 0;
     public string Timing { get; init; } = "";
     public IReadOnlyList<string> Reasons { get; init; } = Array.Empty<string>();
     public bool HasReasons => Reasons.Count > 0;
@@ -61,7 +62,7 @@ public sealed class ProcessMapViewModel : ViewModelBase
         _hub = hub;
         _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
         _debounce.Tick += (_, _) => { _debounce.Stop(); Rebuild(); };
-        _play = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
+        _play = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
         _play.Tick += (_, _) => StepPlay();
         hub.Changed += OnHubChanged;
 
@@ -168,7 +169,8 @@ public sealed class ProcessMapViewModel : ViewModelBase
             OnPropertyChanged(nameof(AtNow));
             OnPropertyChanged(nameof(ScrubLabel));
             _debounce.Stop();
-            _debounce.Start();
+            // While playing, every tick would restart the debounce and it would never fire: rebuild live instead.
+            if (_play.IsEnabled) Rebuild(); else _debounce.Start();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -193,14 +195,14 @@ public sealed class ProcessMapViewModel : ViewModelBase
     {
         if (_play.IsEnabled) { StopPlay(); return; }
         if (AtNow) _scrub = 0;
-        OnPropertyChanged(nameof(IsPlaying));
         _play.Start();
+        OnPropertyChanged(nameof(IsPlaying));
     }
 
     private void StepPlay()
     {
         // The whole session in about twelve seconds, however long it was.
-        ScrubValue += ScrubMax * 0.06 / 12;
+        ScrubValue += ScrubMax * 0.12 / 12;
         if (AtNow) StopPlay();
     }
 
@@ -217,17 +219,44 @@ public sealed class ProcessMapViewModel : ViewModelBase
     private void OnHubChanged()
     {
         _snap = _hub.Snapshot;
-        _byId = _snap.Processes.ToDictionary(p => p.Id);
+        _indexDirty = true;
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(HasData));
         OnPropertyChanged(nameof(CanScrub));
         if (!CanScrub && !AtNow) { StopPlay(); _scrub = ScrubMax; OnPropertyChanged(nameof(ScrubValue)); OnPropertyChanged(nameof(AtNow)); OnPropertyChanged(nameof(ScrubLabel)); }
         if (_hub.IsViewing) { _collapsed.Clear(); _expanded.Clear(); }
+        if (!_viewActive) { _dirty = true; return; }
         Rebuild();
+    }
+
+    private bool _viewActive = true;
+    private bool _dirty;
+    private bool _indexDirty;
+
+    private void EnsureIndexed()
+    {
+        if (!_indexDirty) return;
+        _indexDirty = false;
+        _byId = _snap.Processes.ToDictionary(p => p.Id);
+    }
+
+    /// <summary>False while the view is mounted but hidden: live ticks then only mark the map stale, and it is rebuilt when shown.
+    /// True by default, so a model with no window (the tests) behaves as before.</summary>
+    public bool IsViewActive
+    {
+        get => _viewActive;
+        set
+        {
+            if (_viewActive == value) return;
+            _viewActive = value;
+            if (value && _dirty) Rebuild();
+        }
     }
 
     private void Rebuild()
     {
+        _dirty = false;
+        EnsureIndexed();
         var result = ProcessMapBuilder.Build(_snap, new ProcessMapOptions
         {
             Filter = _filter, Search = _search, AtUtc = AtUtc, Collapsed = _collapsed, Expanded = _expanded
@@ -270,6 +299,7 @@ public sealed class ProcessMapViewModel : ViewModelBase
     /// <summary>Selects a process by node id, widening the view first if it is not in it (the jump from the file map).</summary>
     public void Select(int processId)
     {
+        EnsureIndexed();
         if (!_byId.ContainsKey(processId)) return;
         string key = ProcessMapBuilder.KeyOf(processId);
         if (Root is null || !Root.Walk(includeHidden: true).Any(n => n.Key == key))
@@ -280,13 +310,24 @@ public sealed class ProcessMapViewModel : ViewModelBase
             Rebuild();
         }
         // Open the branches above it so it is on screen.
-        for (var up = _byId[processId]; up.ParentId != 0 && _byId.TryGetValue(up.ParentId, out var parent); up = parent)
+        var hops = new HashSet<int> { processId };
+        for (var up = _byId[processId]; up.ParentId != 0 && hops.Count <= 128 && _byId.TryGetValue(up.ParentId, out var parent) && hops.Add(parent.Id); up = parent)
         {
             _collapsed.Remove(ProcessMapBuilder.KeyOf(parent.Id));
             _expanded.Add(ProcessMapBuilder.KeyOf(parent.Id));
         }
         Rebuild();
         SelectedKey = key;
+        FitRequested?.Invoke();
+    }
+
+    /// <summary>Selects the newest process instance matching an OS <paramref name="pid"/> (used by jumps from the Dashboard).</summary>
+    public void SelectPid(int pid)
+    {
+        if (pid <= 0) return;
+        EnsureIndexed();
+        var match = _snap.Processes.LastOrDefault(p => p.Pid == pid);
+        if (match is not null) Select(match.Id);
     }
 
     // ------------------------------------------------------------------ selection

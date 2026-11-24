@@ -160,7 +160,7 @@ public static class MapLayout
 
         double[] best = Array.Empty<double>();
         double bestPhase = 0;
-        for (double phase = 0; phase <= Math.PI + 1e-9; phase += Math.PI / 45)
+        for (double phase = 0; phase <= Math.PI + 1e-9; phase += Math.PI / 16)
         {
             var radii = Radii(phase);
             if (best.Length == 0 || radii[^1] < best[^1] - 1e-6) { best = radii; bestPhase = phase; }
@@ -170,7 +170,7 @@ public static class MapLayout
 
         // The ring maths looks at neighbours on a ring and at the ray out to the ring before; a node on another
         // ring at a slant can still clip, so any overlap left is cured by opening the circle a little at a time.
-        for (int tries = 0; tries < 60; tries++)
+        for (int tries = 0; tries < 16; tries++)
         {
             foreach (var n in nodes)
             {
@@ -178,7 +178,7 @@ public static class MapLayout
                 n.Y = radius[n.Depth] * Math.Sin(n.Angle);
             }
             if (nodes.Count > 1500 || !Overlaps(nodes)) break;
-            for (int d = 1; d < radius.Length; d++) radius[d] *= 1.05;
+            for (int d = 1; d < radius.Length; d++) radius[d] *= 1.12;
         }
         return Bounds(root);
 
@@ -188,7 +188,7 @@ public static class MapLayout
             var r = new double[rings.Count];
             for (int d = 1; d < rings.Count; d++)
             {
-                var ring = rings[d].OrderBy(n => n.Angle).ToList();
+                var ring = rings[d];   // already in walk order, which is angle order: no sorting per try
                 double sw = (maxW[d - 1] + maxW[d]) / 2 + 28, sh = (maxH[d - 1] + maxH[d]) / 2 + 22;
                 double step = 0;
                 foreach (var n in ring)
@@ -232,13 +232,23 @@ public static class MapLayout
         }
     }
 
-    private static bool Overlaps(List<MapNode> nodes)
+    /// <summary>Sweep over the nodes sorted by left edge: a node only needs checking against those that start before its right edge.</summary>
+    private static bool Overlaps(IReadOnlyList<MapNode> nodes)
     {
-        for (int i = 0; i < nodes.Count; i++)
-            for (int j = i + 1; j < nodes.Count; j++)
-                if (Math.Abs(nodes[i].X - nodes[j].X) < (nodes[i].Width + nodes[j].Width) / 2 + 2 &&
-                    Math.Abs(nodes[i].Y - nodes[j].Y) < (nodes[i].Height + nodes[j].Height) / 2 + 2)
+        var sorted = nodes.OrderBy(n => n.X - n.Width / 2).ToArray();
+        for (int i = 0; i < sorted.Length; i++)
+        {
+            var a = sorted[i];
+            double aRight = a.X + a.Width / 2;
+            for (int j = i + 1; j < sorted.Length; j++)
+            {
+                var b = sorted[j];
+                if (b.X - b.Width / 2 >= aRight + 2) break;
+                if (Math.Abs(a.X - b.X) < (a.Width + b.Width) / 2 + 2 &&
+                    Math.Abs(a.Y - b.Y) < (a.Height + b.Height) / 2 + 2)
                     return true;
+            }
+        }
         return false;
     }
 

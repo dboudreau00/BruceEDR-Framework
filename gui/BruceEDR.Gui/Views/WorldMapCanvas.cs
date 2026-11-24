@@ -167,7 +167,7 @@ public sealed class WorldMapCanvas : FrameworkElement
         var c = (WorldMapCanvas)d;
         if (e.OldValue is INotifyCollectionChanged oldCol) oldCol.CollectionChanged -= c.OnMarkersCollectionChanged;
         if (e.NewValue is INotifyCollectionChanged newCol) newCol.CollectionChanged += c.OnMarkersCollectionChanged;
-        c.Unsubscribe(e.OldValue as IEnumerable<MapMarker>);
+        c.Unsubscribe(c._subscribed.ToList());
         c.Subscribe(e.NewValue as IEnumerable<MapMarker>);
         c.UpdatePulse();
         c.InvalidateVisual();
@@ -175,24 +175,38 @@ public sealed class WorldMapCanvas : FrameworkElement
 
     private void OnMarkersCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        Unsubscribe(e.OldItems?.OfType<MapMarker>());
+        if (e.Action == NotifyCollectionChangedAction.Reset)
+            Unsubscribe(_subscribed.ToList());   // Clear() reports no OldItems: drop every handler we hold
+        else
+            Unsubscribe(e.OldItems?.OfType<MapMarker>());
         Subscribe(e.NewItems?.OfType<MapMarker>());
         UpdatePulse();
         InvalidateVisual();
     }
+
+    private readonly List<MapMarker> _subscribed = new();
 
     // Markers mutate in place across refreshes (that is what keeps a hover alive), so the
     // canvas listens to each one rather than only to the collection.
     private void Subscribe(IEnumerable<MapMarker>? markers)
     {
         if (markers is null) return;
-        foreach (var m in markers) m.PropertyChanged += OnMarkerPropertyChanged;
+        foreach (var m in markers)
+        {
+            if (_subscribed.Contains(m)) continue;
+            m.PropertyChanged += OnMarkerPropertyChanged;
+            _subscribed.Add(m);
+        }
     }
 
     private void Unsubscribe(IEnumerable<MapMarker>? markers)
     {
         if (markers is null) return;
-        foreach (var m in markers) m.PropertyChanged -= OnMarkerPropertyChanged;
+        foreach (var m in markers.ToList())
+        {
+            m.PropertyChanged -= OnMarkerPropertyChanged;
+            _subscribed.Remove(m);
+        }
     }
 
     private void OnMarkerPropertyChanged(object? sender, PropertyChangedEventArgs e)

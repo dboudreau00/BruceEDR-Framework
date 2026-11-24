@@ -71,8 +71,14 @@ public static class ProcessMapBuilder
 
         // Ancestors, so a chosen process is never an orphan floating off the root. They may be gone by now.
         foreach (var id in chosen.ToList())
-            for (var up = byId.GetValueOrDefault(id); up is not null && up.ParentId != 0; up = byId.GetValueOrDefault(up.ParentId))
+        {
+            var hops = new HashSet<int> { id };
+            for (var up = byId.GetValueOrDefault(id); up is not null && up.ParentId != 0 && hops.Count <= 128; up = byId.GetValueOrDefault(up.ParentId))
+            {
+                if (!hops.Add(up.ParentId)) break;   // a loop in a trace read from disk: stop, do not spin
                 chosen.Add(up.ParentId);
+            }
+        }
 
         int total = all.Count;
         var nodes = new Dictionary<int, MapNode>();
@@ -86,7 +92,12 @@ public static class ProcessMapBuilder
         {
             var p = (ProcessInfo)n.Tag!;
             var parent = p.ParentId != 0 && nodes.TryGetValue(p.ParentId, out var pn) ? pn : root;
-            parent.Add(n);
+            // A trace read from disk can hold a loop (a is b's parent and b is a's): never hang a node under its own descendant.
+            bool loops = false;
+            int depth = 0;
+            for (var up = parent; up is not null; up = up.Parent)
+                if (ReferenceEquals(up, n) || ++depth > 4096) { loops = true; break; }
+            (loops ? root : parent).Add(n);
         }
         if (nodes.Count > budget)
         {
@@ -95,8 +106,9 @@ public static class ProcessMapBuilder
         }
 
         Collapse(root, o, needle.Length > 0);
-        root.Sub = $"{root.Count() - 1:N0} process{(root.Count() == 2 ? "" : "es")}";
-        return new MapResult(root, root.Count() - 1, total, note);
+        int count = root.Count() - 1;
+        root.Sub = $"{count:N0} process{(count == 1 ? "" : "es")}";
+        return new MapResult(root, count, total, note);
     }
 
     private static HashSet<int> FileRelated(ActivitySnapshot snap)
@@ -113,11 +125,18 @@ public static class ProcessMapBuilder
 
     private static IEnumerable<int> Descendants(int id, Dictionary<int, List<ProcessInfo>> kids)
     {
-        if (!kids.TryGetValue(id, out var list)) yield break;
-        foreach (var c in list)
+        var seen = new HashSet<int> { id };
+        var stack = new Stack<int>();
+        stack.Push(id);
+        while (stack.Count > 0)
         {
-            yield return c.Id;
-            foreach (var d in Descendants(c.Id, kids)) yield return d;
+            if (!kids.TryGetValue(stack.Pop(), out var list)) continue;
+            foreach (var c in list)
+            {
+                if (!seen.Add(c.Id)) continue;
+                yield return c.Id;
+                stack.Push(c.Id);
+            }
         }
     }
 
@@ -163,12 +182,24 @@ public static class ProcessMapBuilder
 
     private static void Collapse(MapNode root, ProcessMapOptions o, bool searching)
     {
+        // One bottom-up pass: does anything below a node carry a flag? (No per-node walks of the whole subtree.)
+        var flaggedBelow = new Dictionary<MapNode, bool>();
+        bool Below(MapNode n)
+        {
+            bool any = false;
+            foreach (var c in n.Children)
+                if (Below(c) | FlaggedNode(c)) any = true;
+            flaggedBelow[n] = any;
+            return any;
+        }
+        Below(root);
+
         foreach (var n in root.Walk(includeHidden: true))
         {
             if (n.Kind != MapKind.Process || n.Children.Count == 0) continue;
             if (o.Collapsed?.Contains(n.Key) == true) n.Collapsed = true;
             else if (o.Expanded?.Contains(n.Key) == true) n.Collapsed = false;
-            else if (!searching && n.Children.Count > o.AutoCollapseOver && !n.Walk(includeHidden: true).Any(d => d != n && FlaggedNode(d)))
+            else if (!searching && n.Children.Count > o.AutoCollapseOver && !flaggedBelow[n])
                 n.Collapsed = true;
         }
     }
@@ -390,15 +421,19 @@ public static class FileMapBuilder
         return last?.ProcId ?? 0;
     }
 
+    /// <summary>The most files one opened group draws: each is a node with text to lay out, so thousands would freeze the window.</summary>
+    public const int MaxExpandedGroupItems = 250;
+
     private static void Fill(MapNode group, List<FileTrail> members, Dictionary<int, ProcessInfo> procs, FileMapOptions o)
     {
         bool all = o.Expanded?.Contains(group.Key) == true;
-        foreach (var f in members.Take(all ? int.MaxValue : o.MaxPerGroup)) group.Add(LeafFor(f, procs));
-        if (!all && members.Count > o.MaxPerGroup)
+        int take = all ? MaxExpandedGroupItems : o.MaxPerGroup;
+        foreach (var f in members.Take(take)) group.Add(LeafFor(f, procs));
+        if (members.Count > take)
             group.Add(new MapNode
             {
-                Key = group.Key + ":more", Kind = MapKind.More, Label = $"+{members.Count - o.MaxPerGroup} more", Mark = "…",
-                Sub = "double-click to show all", Level = group.Level, Tag = group.Key
+                Key = group.Key + ":more", Kind = MapKind.More, Label = $"+{members.Count - take} more", Mark = "…",
+                Sub = all ? $"showing the first {take}; search or filter to narrow" : "double-click to show all", Level = group.Level, Tag = group.Key
             });
     }
 

@@ -290,7 +290,8 @@ public sealed class ActivityModel
         }
         p.CommandLine = s.CommandLine ?? "";
         p.User = s.User ?? "";
-        p.ParentId = ParentFor(p)?.Id ?? 0;
+        var par = ParentFor(p);
+        p.ParentId = par is not null && !WouldCycle(p, par) ? par.Id : 0;
         Count(p, ActivityKind.ProcessStart, s.TimestampUtc);
 
         // The kernel's start event carries only the file name; the full path arrives with the image load.
@@ -319,6 +320,18 @@ public sealed class ActivityModel
             return parent;
         if (_live.ContainsKey(ppid)) return null;   // the pid has since moved on to another process: no honest parent to show
         return NewProc(ppid, 0, NameOfUnseen(ppid), "", child.Start, preExisting: true);
+    }
+
+    /// <summary>True when making <paramref name="parent"/> the parent of <paramref name="child"/> would close a loop.</summary>
+    private bool WouldCycle(Proc child, Proc parent)
+    {
+        var seen = new HashSet<long>();
+        for (Proc? a = parent; a is not null; a = ParentOf(a))
+        {
+            if (a.Id == child.Id) return true;
+            if (!seen.Add(a.Id) || seen.Count > 256) return true;
+        }
+        return false;
     }
 
     private Proc? ParentOf(Proc p) => p.ParentId != 0 && _nodes.TryGetValue(p.ParentId, out var parent) ? parent : null;

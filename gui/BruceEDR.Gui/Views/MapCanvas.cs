@@ -63,16 +63,20 @@ public sealed class MapCanvas : FrameworkElement
     private static readonly Pen LinkPen = Frozen(new Pen(Solid(Color.FromRgb(0x37, 0x41, 0x5A)), 1.6) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
     private static readonly Pen SelectPen = Frozen(new Pen(Solid(AccentC), 2));
     private static readonly Pen HoverPen = Frozen(new Pen(Solid(Color.FromArgb(0xB0, PaperC.R, PaperC.G, PaperC.B)), 1.2));
+    private static readonly Pen GlowPen = Frozen(new Pen(Solid(Color.FromArgb(0x55, AccentC.R, AccentC.G, AccentC.B)), 6));
+    private static readonly Pen StrikePen = Frozen(new Pen(Solid(Color.FromArgb(0xC0, FaintC.R, FaintC.G, FaintC.B)), 1.2));
+    private static readonly Brush FoldFill = Solid(Color.FromArgb(0x40, AccentC.R, AccentC.G, AccentC.B));
 
     private sealed class Ink
     {
         public readonly Color Color;
         public readonly Brush Core, Soft, Glow, Disc;
-        public readonly Pen Rim, RimGhost, Link, LinkGlow;
+        public readonly Pen Rim, RimGhost, Link, LinkGlow, Card;
 
         public Ink(Color c)
         {
             Color = c;
+            Card = Frozen(new Pen(Solid(Color.FromArgb(0xD0, c.R, c.G, c.B)), 1));
             Core = Solid(c);
             Soft = Solid(Color.FromArgb(0x30, c.R, c.G, c.B));
             Disc = Solid(Color.FromArgb(0x42, c.R, c.G, c.B));
@@ -481,8 +485,9 @@ public sealed class MapCanvas : FrameworkElement
         {
             _hover = over;
             Cursor = over is null ? Cursors.Arrow : Cursors.Hand;
+            Redraw();
         }
-        Redraw();
+        else if (over is not null) Redraw();   // the hover card follows the pointer; over empty canvas nothing changes, so nothing is drawn
     }
 
     protected override void OnMouseUp(MouseButtonEventArgs e)
@@ -541,14 +546,38 @@ public sealed class MapCanvas : FrameworkElement
         if (_hover is not null && !_dragging) DrawTip(dc, _hover, w, h);
     }
 
+    private DrawingBrush? _gridBrush;
+    private double _gridStep;
+
     private void DrawGrid(DrawingContext dc, double w, double h)
     {
         double step = 28 * Math.Clamp(_scale, 0.5, 2);
         if (step < 14) step *= 2;
+        // One tile of one dot, repeated by the brush: the cost per frame does not grow with the window.
+        if (_gridBrush is null || Math.Abs(_gridStep - step) > 0.01)
+        {
+            var tile = new DrawingGroup();
+            using (var tdc = tile.Open())
+            {
+                tdc.DrawRectangle(Brushes.Transparent, null, new Rect(0, 0, step, step));
+                tdc.DrawRectangle(Dot, null, new Rect(0, 0, 1.2, 1.2));
+            }
+            tile.Freeze();
+            var brush = new DrawingBrush(tile)
+            {
+                TileMode = TileMode.Tile, ViewportUnits = BrushMappingMode.Absolute, ViewboxUnits = BrushMappingMode.Absolute,
+                Viewport = new Rect(0, 0, step, step), Viewbox = new Rect(0, 0, step, step)
+            };
+            brush.Freeze();
+            _gridBrush = brush;
+            _gridStep = step;
+        }
         double ox = _tx % step, oy = _ty % step;
-        for (double x = ox; x < w; x += step)
-            for (double y = oy; y < h; y += step)
-                dc.DrawRectangle(Dot, null, new Rect(x, y, 1.2, 1.2));
+        if (ox < 0) ox += step;
+        if (oy < 0) oy += step;
+        dc.PushTransform(new TranslateTransform(ox, oy));
+        dc.DrawRectangle(_gridBrush, null, new Rect(-step, -step, w + 2 * step, h + 2 * step));
+        dc.Pop();
     }
 
     private static Point CubicAt(Point a, Point b, Point c, Point d, double t)
@@ -694,7 +723,7 @@ public sealed class MapCanvas : FrameworkElement
             : ink.Rim;
         dc.DrawRoundedRectangle(fill, hover && !selected ? HoverPen : border, r, radius, radius);
         if (selected)
-            dc.DrawRoundedRectangle(null, new Pen(Solid(Color.FromArgb(0x55, AccentC.R, AccentC.G, AccentC.B)), 6), new Rect(r.X - 3, r.Y - 3, r.Width + 6, r.Height + 6), radius + 3, radius + 3);
+            dc.DrawRoundedRectangle(null, GlowPen, new Rect(r.X - 3, r.Y - 3, r.Width + 6, r.Height + 6), radius + 3, radius + 3);
 
         // The disc (a process's initial, a group's count) or the extension tag of a file.
         double midY = r.Y + r.Height / 2;
@@ -723,7 +752,7 @@ public sealed class MapCanvas : FrameworkElement
         if (n.Strike)
         {
             double sy = ty + v.Label.Height * 0.55;
-            dc.DrawLine(new Pen(Solid(Color.FromArgb(0xC0, FaintC.R, FaintC.G, FaintC.B)), 1.2), new Point(textX, sy), new Point(textX + Math.Min(v.Label.Width, 230), sy));
+            dc.DrawLine(StrikePen, new Point(textX, sy), new Point(textX + Math.Min(v.Label.Width, 230), sy));
         }
         if (two) dc.DrawText(v.Sub, new Point(textX, ty + v.Label.Height - 1));
 
@@ -733,7 +762,7 @@ public sealed class MapCanvas : FrameworkElement
             double bw = v.Badge.Width + 12;
             var br = new Rect(r.Right - bw - 8, midY - 9, bw, 18);
             bool fold = n.Collapsed && n.Hidden > 0;
-            dc.DrawRoundedRectangle(fold ? Solid(Color.FromArgb(0x40, AccentC.R, AccentC.G, AccentC.B)) : ink.Disc, fold ? SelectPen : null, br, 9, 9);
+            dc.DrawRoundedRectangle(fold ? FoldFill : ink.Disc, fold ? SelectPen : null, br, 9, 9);
             v.Badge.SetForegroundBrush(fold ? Paper : ink.Core);
             dc.DrawText(v.Badge, new Point(br.X + 6, br.Y + (br.Height - v.Badge.Height) / 2));
         }
@@ -776,7 +805,7 @@ public sealed class MapCanvas : FrameworkElement
         if (x + cw > w - 8) x = _mouse.X - cw - 12;
         if (y + ch > h - 8) y = _mouse.Y - ch - 12;
         var card = new Rect(Math.Max(8, x), Math.Max(8, y), cw, ch);
-        dc.DrawRoundedRectangle(CardFill, new Pen(InkOf(n.Level).Rim.Brush, 1), card, 9, 9);
+        dc.DrawRoundedRectangle(CardFill, InkOf(n.Level).Card, card, 9, 9);
         dc.DrawText(title, new Point(card.X + 12, card.Y + 10));
         if (body.Length > 0) dc.DrawText(text, new Point(card.X + 12, card.Y + 10 + title.Height + 6));
     }
