@@ -202,6 +202,21 @@ order and `Ctrl+,` opens Settings.
 The app opens on a **set-up screen** and monitors nothing until you press **Start
 monitoring**. **Stop monitoring** in the status bar returns to set-up, and offers to resume
 any process BruceEDR suspended (stopping never resumes them by itself).
+
+Step 3 of the set-up screen is the **monitoring profile**: **Aggressive** (warn at 40, contain at
+70; flags a program even for reading its own cookies or settings, as BruceEDR always did) or
+**Neutral** (warn at 50, contain at 80; a program reading a folder named after itself, such as
+`AppData\Roaming\Example Bot\Network\Cookies` for `Example Bot.exe`, is not flagged). Choosing one fills the
+two scores, which you can still edit. Neutral still flags that program for reading a browser's or
+another app's cookies.
+
+**Set up again** (bottom bar) is for starting over without uninstalling. It asks first, then puts
+the response mode (monitor), profile (aggressive), scores (40 and 70) and trusted publishers back to a fresh
+install's, scans what is installed again as on a first start, and saves the config you had as
+`bruce.config.json.bak-<date>-<time>` beside it. **Yes** keeps the programs you marked trusted or
+untrusted (and the watchlist rules you wrote); **No** also clears those marks. Telemetry, the
+Assistant, API Studio, kernel settings and your own watchlist rules are never touched.
+
 Build the solution (section 3), then run it either way:
 - **Visual Studio:** right-click **BruceEDR.Gui** in Solution Explorer ->
   **Set as Startup Project**, then **Debug -> Start** (F5). It requests administrator

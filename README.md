@@ -15,7 +15,7 @@ your machine actually talks to.**
 [![License: MIT](https://img.shields.io/badge/License-MIT-3FA9B8.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0E1621.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-2859%20passing-3FA9B8.svg)](#verifying-a-build)
+[![Tests](https://img.shields.io/badge/tests-2865%20passing-3FA9B8.svg)](#verifying-a-build)
 
 
 Integrate it into whatever you want, partially or in full, credit or none, as long as it ruins a TA's day.
@@ -113,7 +113,7 @@ Grab `BruceEDR-v<version>-win-x64.msi` from the
 [latest release](https://github.com/dboudreau00/BruceEDR-Framework/releases/latest) and run it.
 It installs to `C:\Program Files\BruceEDR` and adds a **BruceEDR** shortcut to the Start Menu
 and the desktop. Installing starts nothing. The app opens on a **set-up screen** (response mode,
-trusted publishers, scores) and only goes live when you press **Start monitoring**; **Stop
+trusted publishers, a monitoring profile and its scores) and only goes live when you press **Start monitoring**; **Stop
 monitoring** in the status bar takes it back to set-up, and offers to resume anything BruceEDR
 suspended. **Replay a recorded attack** on the same screen runs a shipped trace through the real
 engine with no monitors and every action off, which is the safe way to see the app working.
@@ -123,6 +123,14 @@ engine with no monitors and every action off, which is the safe way to see the a
   automatically. Switch to **Enforce** on the set-up screen or in Settings once monitor mode
   looks right on that machine. Developer and gaming PCs run plenty of unsigned software that
   can score high. For a program you trust, select it on the Dashboard and press **Allow**.
+- **Two monitoring profiles.** **Aggressive** flags anything unusual, including a program reading its
+  own cookies or settings (warn at 40, contain at 70); it is how BruceEDR always behaved, and the
+  default for an existing config. **Neutral** does not flag a program for reading a folder named
+  after itself, which every Electron app does, and wants a little more evidence before listing a
+  process (warn at 50, contain at 80). Pick one on the set-up screen; the scores stay editable.
+- **Set up again** on the set-up screen puts the mode, profile, scores and trusted publishers back to
+  a fresh install's and scans again, without uninstalling. The config is copied to a dated backup
+  first, and your telemetry, Assistant, API and watchlist rules are left alone.
 - The installer never installs the Windows service. Uninstalling removes every firewall block
   BruceEDR added (and the service, if you installed it), and leaves your config, logs and
   quarantine vault in the install folder.
@@ -334,7 +342,7 @@ That false-positive guard matters as much as the malicious ones.
 Builds the solution, runs the full xUnit suite, validates every rule pack, and replays every
 detection scenario. As of this commit:
 
-- **2,859 tests passing**, 0 skipped
+- **2,865 tests passing**, 0 skipped
 - **0 build warnings**
 - 72 rules loading with 0 validation errors
 - 4/4 replay scenarios meeting their expectations
