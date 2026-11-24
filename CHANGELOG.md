@@ -2,6 +2,44 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.4.6] - 2026-11-24
+
+Two ready-made monitoring profiles, a way to set BruceEDR up again without uninstalling, and an end to
+flagging a program for reading its own storage.
+
+### Added
+
+- **Monitoring profiles.** Step 3 of the set-up screen now offers **Aggressive** (warn at 40, contain at
+  70) and **Neutral** (warn at 50, contain at 80). Choosing one fills the two scores, which stay editable.
+  Aggressive is how BruceEDR has always behaved and is what an existing config keeps: nothing changes
+  until you pick Neutral. The choice is `detection.profile` in `bruce.config.json` and applies to a running
+  agent without a restart.
+- **Set up again** on the set-up screen, for starting over without uninstalling. It asks first, then puts
+  the response mode (monitor), profile (aggressive), scores and trusted publishers back to a fresh
+  install's, scans what is installed as on a first start, and saves the config you had as
+  `bruce.config.json.bak-<date>-<time>` beside it. Yes keeps the programs you marked trusted or untrusted;
+  No clears those marks too. Telemetry, the Assistant, API Studio, kernel settings and the watchlist rules
+  you wrote are never touched, and a trust mark is only an entry the baseline scan or the Dashboard's Allow
+  button made.
+- A rule field, **`ownStore`**: `true` under the neutral profile when the file is under an AppData or
+  ProgramData folder named after the process itself (or after the folder it is installed in), otherwise
+  `false`.
+
+### Fixed
+
+- **A program was flagged for reading its own storage.** Electron and WebView apps keep their cookies and
+  logins in `AppData\Roaming\<app name>`, and the browser-store rules took any `Network\Cookies` outside a
+  short list of browsers for theft: `Example Bot.exe` reading `AppData\Roaming\Example Bot\Network\Cookies` scored
+  40, and its next connection a further 15. The four browser-store rules (saved logins, cookies, Firefox
+  credentials, Chromium's local state key) and the built-in credential-store check now skip a program's own
+  folder under the neutral profile. The same program reading a browser's or another app's folder is still
+  flagged under both profiles, and so is a program reading a folder named after a different program.
+
+### Known limit
+
+- The own-folder check is by name, not proof of identity: a stealer that names itself after the folder it
+  reads is excused for that folder, which is its own. It never excuses a read of another app's folder.
+
 ## [3.4.5] - 2026-11-24
 
 Fewer false positives from everyday software (browsers, Notepad and the other inbox apps), an offline
