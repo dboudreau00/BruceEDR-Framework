@@ -2,6 +2,73 @@
 
 All notable changes to BruceEDR. This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.4.5] - 2026-11-24
+
+Fewer false positives from everyday software (browsers, Notepad and the other inbox apps), an offline
+explainer for incident triage that needs no key, a first-start scan of what is on the machine so each
+program can be marked trusted or untrusted, and a first round of work on maps that stall on big runs.
+
+### Added
+
+- **Offline incident explanation.** With no assistant key, or offline, triage can explain an incident
+  locally in all five reader styles, from the same steps the cloud path gets. Nothing leaves the machine.
+  The five reader styles also carry a role rubric into the cloud prompt, so a "Mom" answer and a "SOC
+  analyst" answer differ in vocabulary and detail, not just in length.
+- **Baseline scan on the set-up screen.** On start-up the app lists the running process tree and the
+  installed programs with who signed each, and lets you mark each one **Trusted** (an `allow` watchlist
+  entry: by path when only administrators can write to its folder, otherwise by SHA-256), **Default**, or
+  **Untrusted** (a `quarantine` entry: reported in monitor mode, contained in enforce mode). The signers it
+  found appear as chips that add or remove a trusted publisher. **On the first start only**, publishers
+  that are validly signed and installed where only administrators can write are added to the publishers
+  box on that screen; nothing is saved until you start, and you can remove any of them first.
+- Empty states with a way out on the process list, the events list and the endpoint list ("No matching
+  processes", "Clear filter"), and two entries in the process list's menu: **Explain in incident triage**
+  and **Show on process map**. Double-clicking a replay scenario or an incident starts it.
+
+### Changed
+
+- **Catalog-signed Windows files now verify.** Most inbox binaries (`notepad.exe`, `svchost.exe`,
+  `cmd.exe`) carry no signature of their own and are signed through a Windows security catalog, which was
+  not looked at, so they counted as unsigned. The signer is now read from the catalog.
+- `C:\Program Files\WindowsApps`, which denies even elevated administrators permission to read its ACL, no
+  longer makes every program under it count as not installed where only administrators can write; the file,
+  its package folder and `C:\Program Files` are still checked.
+- Windows 11 inbox apps (Notepad, Terminal, Paint, Snipping Tool) start through an alias that hands off to
+  the packaged program under `WindowsApps` with the same name. The packaged program is now recognised as
+  the app.
+- Detection rules: services are watched under `ControlSet001` to `ControlSet009` as well as
+  `CurrentControlSet`, and a COM hijack in another user's hive (`HKU\<SID>`) is caught; the scheduled
+  task, archive and document rules ignore read-only opens and folder listings; `notepad.exe` and
+  `wordpad.exe` join the programs that may write documents to temp folders. That last list is by name, as
+  it already was for Word and the browsers.
+- Discord PTB and Canary count as Discord (`discordptb.exe`, `discordcanary.exe` and their folders), and
+  Discord's local storage folder is a watched credential store.
+- Suspicious-import and anti-analysis lists no longer count APIs every desktop program imports
+  (`GetClipboardData`, `BitBlt`, `GetKeyboardState`, `IsDebuggerPresent`, `GetTickCount64`,
+  `OutputDebugStringA`).
+- Maps: opening a group with "+N more" shows at most 250 files; a map on a tab you are not looking at is
+  rebuilt when you open the tab instead of on every tick; the radial overlap check is faster; the grid
+  behind the map costs the same at any window size. This is a first step, not a fix for every large run:
+  Radial still grows with the number of files.
+
+### Fixed
+
+- **Browsers scored for ordinary browsing.** A browser that is validly signed and installed where only
+  administrators can write was scored by the DGA and DNS-tunnel heuristics for the CDNs, ad networks and
+  cloud hostnames on normal web pages. Its lookups are still recorded for the endpoint inventory and the
+  indicator feed. An unsigned copy, or one in a folder a standard user can write, named `firefox.exe` still
+  scores, and a real browser that opens LSASS or reaches an indicator domain still flags (tests cover all
+  three). Managed CDN and cloud zones (CloudFront, Cloud Run, Azure edge, Akamai, Fastly, Cloudflare's CDN)
+  are no longer treated as generated names; developer-tunnel zones are still scored.
+- Two processes could become each other's parent when a late start event arrived, or when a recorded trace
+  held a loop, which hung the map builder. A node is never hung under its own descendant now.
+- A one-slice donut (everything in one category) drew nothing; it draws a full ring. The hover card on the
+  Insights charts is drawn last, so rows below it cannot paint over it.
+- A process that first appears through an image-load event now has its path checked against the indicator
+  feed once; before, the check could be tried on the bare name, fail, and never run again.
+- Numbered bullets in the NEXT section of an assistant answer no longer replace its numbered steps.
+- "Started by" is hidden on a process with no known parent.
+
 ## [3.4.4] - 2026-11-16
 
 3.4.3 did not start on an ordinary desktop. Use this release instead.
